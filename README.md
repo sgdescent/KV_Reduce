@@ -77,6 +77,13 @@ Important output columns:
 - `top1_match`: whether the argmax token stayed the same
 - `gen_prefix_match_len`: how many greedy-generated tokens remain identical before first divergence
 
+Sanity check: the `alpha=0` rows are a built-in correctness check. Because the baseline
+and all perturbed forward passes use the same cache reconstruction path (legacy round-trip)
+and the same explicit `cache_position` / `attention_mask`, the alpha=0 row must produce
+near-zero divergence (`kl≈0`, `js≈0`, `accept_mass≈1`, `top1_match≈1`,
+`gen_exact_match≈1`). If it does not, there is a cache-format or decode-position mismatch
+in the environment.
+
 ## 2) Fit a linear KV translator
 
 Single GPU:
@@ -150,8 +157,12 @@ Most important metrics to watch in `next_token_rows.csv` / `summary.json`:
 
 ## What would count as a promising result?
 
-- Small perturbations leave `accept_mass` close to `1.0` and `top1_match` high.
-- Learned linear translation beats the identity baseline.
+- `alpha=0` rows are exact identity (sanity check, see above).
+- Small perturbations (`alpha ≤ 0.01`) leave `accept_mass` and `top1_match` close to their
+  alpha=0 values, with a sharp drop only at larger noise levels.
+- Value perturbations are more robust than key perturbations — keys drive attention routing
+  so errors there compound faster.
+- Learned linear translation beats the identity baseline on `k_cos` / `v_cos`.
 - `translated_vs_big_accept_mass` improves over `native_vs_big_accept_mass`.
 - Per-layer reconstruction is especially good in early/mid layers.
 

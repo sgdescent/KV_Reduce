@@ -58,7 +58,8 @@ def perturb_legacy_cache(
 ):
     perturbed = []
     selected = None if layer_indices is None else set(layer_indices)
-    for layer_idx, (k, v) in enumerate(legacy_cache):
+    for layer_idx, layer_cache in enumerate(legacy_cache):
+        k, v = layer_cache[0], layer_cache[1]
         new_k = k.clone()
         new_v = v.clone()
         if selected is None or layer_idx in selected:
@@ -185,13 +186,31 @@ def main() -> None:
         context = ids[:, :-1]
         current = ids[:, -1:]
 
+        # Build decode-position tensors that are identical for every forward call
+        # on this block, regardless of which cache object is passed.
+        T = context.shape[1]
+        cache_position = torch.arange(T, T + current.shape[1], device=args.device)
+        attention_mask = torch.ones(
+            (ids.shape[0], T + current.shape[1]), dtype=torch.long, device=args.device
+        )
+
         with torch.no_grad():
             context_out = model(input_ids=context, use_cache=True)
-            context_cache = context_out.past_key_values
-            baseline_out = model(input_ids=current, past_key_values=context_cache, use_cache=True)
+            # Convert immediately to the legacy tuple format. Everything that
+            # follows — baseline included — will use a cache rebuilt from this
+            # representation, so the round-trip is identical for alpha=0 and
+            # alpha>0. That makes the alpha=0 row a true identity baseline.
+            baseline_cache_legacy = as_legacy_cache(context_out.past_key_values)
+            baseline_cache = legacy_to_cache(baseline_cache_legacy)
+            baseline_out = model(
+                input_ids=current,
+                attention_mask=attention_mask,
+                past_key_values=baseline_cache,
+                use_cache=True,
+                cache_position=cache_position,
+            )
             baseline_logits = baseline_out.logits[:, -1, :]
 
-        baseline_cache_legacy = as_legacy_cache(context_cache)
         baseline_continuation = greedy_continue_from_state(
             model=model,
             first_logits=baseline_logits,
@@ -217,7 +236,13 @@ def main() -> None:
                     )
                     pert_cache = legacy_to_cache(pert_legacy)
                     with torch.no_grad():
-                        pert_out = model(input_ids=current, past_key_values=pert_cache, use_cache=True)
+                        pert_out = model(
+                            input_ids=current,
+                            attention_mask=attention_mask,
+                            past_key_values=pert_cache,
+                            use_cache=True,
+                            cache_position=cache_position,
+                        )
                         pert_logits = pert_out.logits[:, -1, :]
 
                     metrics = distribution_metrics(baseline_logits, pert_logits, topk=args.topk)

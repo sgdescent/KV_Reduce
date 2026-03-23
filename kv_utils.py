@@ -9,7 +9,11 @@ import torch
 import torch.nn.functional as F
 
 try:
-    from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    try:
+        from transformers import DynamicCache
+    except ImportError:
+        DynamicCache = None
 except ImportError as e:
     raise ImportError(
         "transformers is required for these experiments. Install it with: pip install transformers accelerate sentencepiece safetensors"
@@ -103,21 +107,34 @@ def depth_layer_map(num_big_layers: int, num_small_layers: int) -> List[int]:
 
 
 def as_legacy_cache(past_key_values):
+    """Return past_key_values as a plain tuple-of-tuples ((k, v), ...) regardless of transformers version."""
     if past_key_values is None:
         return None
+    # transformers 5.x: DynamicCache has .layers with .keys/.values per layer
+    if hasattr(past_key_values, "layers"):
+        return tuple((layer.keys, layer.values) for layer in past_key_values.layers)
+    # transformers 4.36-4.x: DynamicCache with to_legacy_cache()
     if hasattr(past_key_values, "to_legacy_cache"):
         return past_key_values.to_legacy_cache()
+    # transformers < 4.36: already a plain tuple
     return past_key_values
 
 
-
 def legacy_to_cache(legacy_cache):
+    """Convert a legacy tuple-of-tuples ((k, v), ...) back to whatever cache object the model expects."""
+    if DynamicCache is None:
+        # transformers < 4.36: model accepts a plain tuple directly
+        return tuple((layer_cache[0], layer_cache[1]) for layer_cache in legacy_cache)
+    # transformers 5.x: use ddp_cache_data constructor
+    if hasattr(DynamicCache, "layers") or not hasattr(DynamicCache, "from_legacy_cache"):
+        return DynamicCache(ddp_cache_data=legacy_cache)
+    # transformers 4.36-4.x
     return DynamicCache.from_legacy_cache(legacy_cache)
 
 
 
 def clone_legacy_cache(legacy_cache) -> Tuple[Tuple[torch.Tensor, torch.Tensor], ...]:
-    return tuple((k.clone(), v.clone()) for (k, v) in legacy_cache)
+    return tuple((layer_cache[0].clone(), layer_cache[1].clone()) for layer_cache in legacy_cache)
 
 
 
