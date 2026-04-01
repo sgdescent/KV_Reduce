@@ -29,10 +29,8 @@ from kv_utils import (
 )
 
 
-
 def mean_cosine_rows(x: torch.Tensor, y: torch.Tensor) -> float:
     return float(F.cosine_similarity(x.float(), y.float(), dim=-1).mean().item())
-
 
 
 def write_csv(rows: List[Dict], path: str) -> None:
@@ -45,7 +43,6 @@ def write_csv(rows: List[Dict], path: str) -> None:
         writer.writerows(rows)
 
 
-
 def solve_accumulators(accumulators: List[RidgeAccumulator]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
     weights, biases = [], []
     for acc in accumulators:
@@ -53,7 +50,6 @@ def solve_accumulators(accumulators: List[RidgeAccumulator]) -> Tuple[List[torch
         weights.append(w)
         biases.append(b)
     return weights, biases
-
 
 
 def translate_legacy_cache(
@@ -85,7 +81,6 @@ def translate_legacy_cache(
     return tuple(translated)
 
 
-
 def identity_translate_legacy_cache(
     big_legacy_cache,
     layer_map: List[int],
@@ -106,6 +101,42 @@ def identity_translate_legacy_cache(
     return tuple(translated)
 
 
+def merge_legacy_caches(
+    native_small_legacy,
+    translated_small_legacy,
+    translated_k_layers: Optional[List[int]] = None,
+    translated_v_layers: Optional[List[int]] = None,
+):
+    num_layers = len(native_small_legacy)
+    if translated_k_layers is None:
+        translated_k_layers = list(range(num_layers))
+    if translated_v_layers is None:
+        translated_v_layers = list(range(num_layers))
+
+    translated_k_layers = set(translated_k_layers)
+    translated_v_layers = set(translated_v_layers)
+
+    merged = []
+    for layer_idx in range(num_layers):
+        k_native, v_native = native_small_legacy[layer_idx]
+        k_trans, v_trans = translated_small_legacy[layer_idx]
+
+        k_out = k_trans if layer_idx in translated_k_layers else k_native
+        v_out = v_trans if layer_idx in translated_v_layers else v_native
+        merged.append((k_out, v_out))
+    return tuple(merged)
+
+
+def metric_prefix_dict(prefix: str, ref_logits: torch.Tensor, test_logits: torch.Tensor, topk: int) -> Dict[str, float]:
+    metrics = distribution_metrics(ref_logits, test_logits, topk=topk)
+    out = {
+        f"{prefix}_top1_match": float(
+            (test_logits.argmax(dim=-1) == ref_logits.argmax(dim=-1)).float().mean().item()
+        )
+    }
+    out.update({f"{prefix}_{k}": v for k, v in metrics.items()})
+    return out
+
 
 def aggregate_metric_rows(rows: List[Dict], exclude: Optional[List[str]] = None) -> Dict[str, float]:
     exclude = set(exclude or [])
@@ -118,7 +149,6 @@ def aggregate_metric_rows(rows: List[Dict], exclude: Optional[List[str]] = None)
         if vals:
             out[key] = float(sum(vals) / len(vals))
     return out
-
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -147,7 +177,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow_incompatible_tokenizers", action="store_true")
     parser.add_argument("--out_dir", type=str, default="outputs/kv_linear_probe")
     return parser
-
 
 
 def main() -> None:
@@ -350,6 +379,8 @@ def main() -> None:
             )
 
         big_context_legacy = as_legacy_cache(big_context_out.past_key_values)
+        small_context_legacy = as_legacy_cache(small_context_out.past_key_values)
+
         translated_context_legacy = translate_legacy_cache(
             big_legacy_cache=big_context_legacy,
             layer_map=layer_map,
@@ -362,14 +393,41 @@ def main() -> None:
             out_device=args.small_device,
             out_dtype=small_model_dtype,
         )
-        translated_context_cache = legacy_to_cache(translated_context_legacy)
 
-        with torch.no_grad():
-            small_translated_next_out = small_model(
-                input_ids=current_small,
-                past_key_values=translated_context_cache,
-                use_cache=True,
-            )
+        all_layers = list(range(num_small_layers))
+        later_layers = list(range(1, num_small_layers))
+
+        eval_caches = {
+            "translated": translated_context_legacy,
+            "konly": merge_legacy_caches(
+                native_small_legacy=small_context_legacy,
+                translated_small_legacy=translated_context_legacy,
+                translated_k_layers=all_layers,
+                translated_v_layers=[],
+            ),
+            "vonly": merge_legacy_caches(
+                native_small_legacy=small_context_legacy,
+                translated_small_legacy=translated_context_legacy,
+                translated_k_layers=[],
+                translated_v_layers=all_layers,
+            ),
+            "layer0k_native": merge_legacy_caches(
+                native_small_legacy=small_context_legacy,
+                translated_small_legacy=translated_context_legacy,
+                translated_k_layers=later_layers,
+                translated_v_layers=all_layers,
+            ),
+        }
+
+        eval_outputs = {}
+        for mode_name, mode_legacy in eval_caches.items():
+            mode_cache = legacy_to_cache(mode_legacy)
+            with torch.no_grad():
+                eval_outputs[mode_name] = small_model(
+                    input_ids=current_small,
+                    past_key_values=mode_cache,
+                    use_cache=True,
+                )
 
         identity_metrics = {}
         if identity_possible:
@@ -389,40 +447,36 @@ def main() -> None:
                     use_cache=True,
                 )
             identity_logits = small_identity_next_out.logits[:, -1, :]
-            identity_metrics = {
-                "identity_vs_big_top1_match": float(
-                    (identity_logits.argmax(dim=-1) == big_next_out.logits[:, -1, :].to(identity_logits.device).argmax(dim=-1)).float().mean().item()
-                ),
-                **{
-                    f"identity_vs_big_{k}": v
-                    for k, v in distribution_metrics(
-                        big_next_out.logits[:, -1, :].to(identity_logits.device), identity_logits, topk=args.topk
-                    ).items()
-                },
-            }
+            identity_metrics = metric_prefix_dict(
+                "identity_vs_big",
+                big_next_out.logits[:, -1, :].to(identity_logits.device),
+                identity_logits,
+                topk=args.topk,
+            )
 
         big_logits = big_next_out.logits[:, -1, :].to(args.small_device)
         small_native_logits = small_native_next_out.logits[:, -1, :]
-        small_translated_logits = small_translated_next_out.logits[:, -1, :]
 
-        native_vs_big = distribution_metrics(big_logits, small_native_logits, topk=args.topk)
-        translated_vs_big = distribution_metrics(big_logits, small_translated_logits, topk=args.topk)
-        translated_vs_native = distribution_metrics(small_native_logits, small_translated_logits, topk=args.topk)
+        translated_logits = eval_outputs["translated"].logits[:, -1, :]
+        konly_logits = eval_outputs["konly"].logits[:, -1, :]
+        vonly_logits = eval_outputs["vonly"].logits[:, -1, :]
+        layer0k_native_logits = eval_outputs["layer0k_native"].logits[:, -1, :]
 
         next_row = {
             "eval_idx": eval_idx,
-            "native_vs_big_top1_match": float(
-                (small_native_logits.argmax(dim=-1) == big_logits.argmax(dim=-1)).float().mean().item()
-            ),
-            "translated_vs_big_top1_match": float(
-                (small_translated_logits.argmax(dim=-1) == big_logits.argmax(dim=-1)).float().mean().item()
-            ),
-            "translated_vs_native_top1_match": float(
-                (small_translated_logits.argmax(dim=-1) == small_native_logits.argmax(dim=-1)).float().mean().item()
-            ),
-            **{f"native_vs_big_{k}": v for k, v in native_vs_big.items()},
-            **{f"translated_vs_big_{k}": v for k, v in translated_vs_big.items()},
-            **{f"translated_vs_native_{k}": v for k, v in translated_vs_native.items()},
+            **metric_prefix_dict("native_vs_big", big_logits, small_native_logits, topk=args.topk),
+            **metric_prefix_dict("translated_vs_big", big_logits, translated_logits, topk=args.topk),
+            **metric_prefix_dict("translated_vs_native", small_native_logits, translated_logits, topk=args.topk),
+
+            **metric_prefix_dict("konly_vs_big", big_logits, konly_logits, topk=args.topk),
+            **metric_prefix_dict("konly_vs_native", small_native_logits, konly_logits, topk=args.topk),
+
+            **metric_prefix_dict("vonly_vs_big", big_logits, vonly_logits, topk=args.topk),
+            **metric_prefix_dict("vonly_vs_native", small_native_logits, vonly_logits, topk=args.topk),
+
+            **metric_prefix_dict("layer0k_native_vs_big", big_logits, layer0k_native_logits, topk=args.topk),
+            **metric_prefix_dict("layer0k_native_vs_native", small_native_logits, layer0k_native_logits, topk=args.topk),
+
             **identity_metrics,
         }
         next_token_rows.append(next_row)
