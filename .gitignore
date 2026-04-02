@@ -1,3 +1,6 @@
 # Add .venv and __pycache__ to the gitignore
 .venv/
 __pycache__/
+
+# Experiment artifacts (regenerate with probe scripts)
+outputs/

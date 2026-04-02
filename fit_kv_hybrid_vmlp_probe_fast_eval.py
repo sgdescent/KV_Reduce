@@ -6,7 +6,9 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
+from tqdm import tqdm
 
 from kv_utils import (
     RidgeAccumulator,
@@ -14,6 +16,7 @@ from kv_utils import (
     as_legacy_cache,
     depth_layer_map,
     distribution_metrics,
+    first_mismatch_position,
     flatten_kv,
     get_head_dim,
     get_kv_dim,
@@ -43,6 +46,24 @@ def write_csv(rows: List[Dict], path: str) -> None:
         writer.writerows(rows)
 
 
+class ResidualMLP(nn.Module):
+    def __init__(self, dim: int, hidden_dim: int, dropout: float = 0.0):
+        super().__init__()
+        self.ln = nn.LayerNorm(dim)
+        self.net = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, dim),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.net(self.ln(x))
+
+
 def solve_accumulators(accumulators: List[RidgeAccumulator]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
     weights, biases = [], []
     for acc in accumulators:
@@ -52,7 +73,7 @@ def solve_accumulators(accumulators: List[RidgeAccumulator]) -> Tuple[List[torch
     return weights, biases
 
 
-def translate_legacy_cache(
+def translate_ridge_legacy_cache(
     big_legacy_cache,
     layer_map: List[int],
     k_weights: List[torch.Tensor],
@@ -81,6 +102,34 @@ def translate_legacy_cache(
     return tuple(translated)
 
 
+def translate_hybrid_legacy_cache(
+    big_legacy_cache,
+    layer_map: List[int],
+    k_weights: List[torch.Tensor],
+    k_biases: List[torch.Tensor],
+    v_mlps: List[nn.Module],
+    small_num_kv_heads: int,
+    small_head_dim: int,
+    out_device: str,
+    out_dtype: torch.dtype,
+):
+    translated = []
+    for small_layer_idx, big_layer_idx in enumerate(layer_map):
+        k_big, v_big = big_legacy_cache[big_layer_idx]
+        bsz, _, seqlen, _ = k_big.shape
+
+        xk = flatten_kv(k_big).to(device=out_device, dtype=torch.float32)
+        xv = flatten_kv(v_big).to(device=out_device, dtype=torch.float32)
+
+        yk = affine_apply(xk, k_weights[small_layer_idx].to(out_device), k_biases[small_layer_idx].to(out_device))
+        yv = v_mlps[small_layer_idx](xv)
+
+        k_small = unflatten_kv(yk.to(dtype=out_dtype), bsz, seqlen, small_num_kv_heads, small_head_dim)
+        v_small = unflatten_kv(yv.to(dtype=out_dtype), bsz, seqlen, small_num_kv_heads, small_head_dim)
+        translated.append((k_small, v_small))
+    return tuple(translated)
+
+
 def identity_translate_legacy_cache(
     big_legacy_cache,
     layer_map: List[int],
@@ -99,30 +148,6 @@ def identity_translate_legacy_cache(
         v_small = unflatten_kv(xv.to(dtype=out_dtype), bsz, seqlen, small_num_kv_heads, small_head_dim)
         translated.append((k_small, v_small))
     return tuple(translated)
-
-
-def merge_translated_k_identity_v_legacy(
-    big_legacy_cache,
-    translated_small_legacy,
-    layer_map: List[int],
-    small_num_kv_heads: int,
-    small_head_dim: int,
-    out_device: str,
-    out_dtype: torch.dtype,
-):
-    """K from the learned translator; V from big cache via reshape-only identity map.
-
-    Requires big and small flattened KV width to match (same as ``identity_translate_legacy_cache``).
-    """
-    merged = []
-    for small_layer_idx, big_layer_idx in enumerate(layer_map):
-        k_trans, _ = translated_small_legacy[small_layer_idx]
-        _, v_big = big_legacy_cache[big_layer_idx]
-        bsz, _, seqlen, _ = v_big.shape
-        xv = flatten_kv(v_big).to(device=out_device)
-        v_id = unflatten_kv(xv.to(dtype=out_dtype), bsz, seqlen, small_num_kv_heads, small_head_dim)
-        merged.append((k_trans, v_id))
-    return tuple(merged)
 
 
 def merge_legacy_caches(
@@ -150,18 +175,6 @@ def merge_legacy_caches(
         merged.append((k_out, v_out))
     return tuple(merged)
 
-
-def metric_prefix_dict(prefix: str, ref_logits: torch.Tensor, test_logits: torch.Tensor, topk: int) -> Dict[str, float]:
-    metrics = distribution_metrics(ref_logits, test_logits, topk=topk)
-    out = {
-        f"{prefix}_top1_match": float(
-            (test_logits.argmax(dim=-1) == ref_logits.argmax(dim=-1)).float().mean().item()
-        )
-    }
-    out.update({f"{prefix}_{k}": v for k, v in metrics.items()})
-    return out
-
-
 def aggregate_metric_rows(rows: List[Dict], exclude: Optional[List[str]] = None) -> Dict[str, float]:
     exclude = set(exclude or [])
     out = {}
@@ -175,8 +188,18 @@ def aggregate_metric_rows(rows: List[Dict], exclude: Optional[List[str]] = None)
     return out
 
 
+def metric_prefix_dict(prefix: str, ref_logits: torch.Tensor, test_logits: torch.Tensor, topk: int) -> Dict[str, float]:
+    # Fast eval path: only compute top-1 token agreement.
+    return {
+        f"{prefix}_top1_match": float(
+            (test_logits.argmax(dim=-1) == ref_logits.argmax(dim=-1)).float().mean().item()
+        )
+    }
+
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Fit a layerwise linear KV-cache translator from a big model to a small model.")
+    parser = argparse.ArgumentParser(description="Fit ridge K + MLP V KV-cache translator from a big model to a small model.")
     parser.add_argument("--big_model", type=str, default="Qwen/Qwen2.5-3B")
     parser.add_argument("--small_model", type=str, default="Qwen/Qwen2.5-1.5B")
     parser.add_argument("--big_device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu")
@@ -199,8 +222,177 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--shuffle_train", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--allow_incompatible_tokenizers", action="store_true")
-    parser.add_argument("--out_dir", type=str, default="outputs/kv_linear_probe")
+    parser.add_argument("--generate_steps", type=int, default=16, help="Ignored in this fast-eval version; kept only for CLI compatibility.")
+
+    parser.add_argument("--v_rows_per_layer", type=int, default=25000)
+    parser.add_argument("--v_hidden_dim", type=int, default=1024)
+    parser.add_argument("--v_dropout", type=float, default=0.0)
+    parser.add_argument("--v_epochs", type=int, default=5)
+    parser.add_argument("--v_batch_size", type=int, default=1024)
+    parser.add_argument("--v_lr", type=float, default=1e-3)
+    parser.add_argument("--v_weight_decay", type=float, default=1e-4)
+    parser.add_argument("--v_cos_loss_weight", type=float, default=0.1)
+    parser.add_argument("--v_val_frac", type=float, default=0.05)
+
+    parser.add_argument("--out_dir", type=str, default="outputs/kv_hybrid_vmlp_probe")
     return parser
+
+
+def train_v_mlps(
+    v_x_by_layer: List[torch.Tensor],
+    v_y_by_layer: List[torch.Tensor],
+    device: str,
+    dim: int,
+    hidden_dim: int,
+    dropout: float,
+    epochs: int,
+    batch_size: int,
+    lr: float,
+    weight_decay: float,
+    cos_loss_weight: float,
+    val_frac: float,
+) -> Tuple[List[nn.Module], List[Dict[str, float]]]:
+    models: List[nn.Module] = []
+    summaries: List[Dict[str, float]] = []
+    num_layers = len(v_x_by_layer)
+
+    layer_bar = tqdm(
+        enumerate(zip(v_x_by_layer, v_y_by_layer)),
+        total=num_layers,
+        desc="V-MLP layers",
+        unit="layer",
+    )
+    for layer_idx, (x_cpu, y_cpu) in layer_bar:
+        if x_cpu.numel() == 0:
+            raise ValueError(f"No V training rows collected for layer {layer_idx}. Increase --v_rows_per_layer or train data.")
+
+        n = x_cpu.shape[0]
+        n_val = 0 if n < 20 else max(1, int(val_frac * n))
+        perm = torch.randperm(n)
+        val_idx = perm[:n_val]
+        train_idx = perm[n_val:]
+
+        x_train = x_cpu[train_idx]
+        y_train = y_cpu[train_idx]
+        x_val = x_cpu[val_idx] if n_val > 0 else None
+        y_val = y_cpu[val_idx] if n_val > 0 else None
+
+        model = ResidualMLP(dim=dim, hidden_dim=hidden_dim, dropout=dropout).to(device)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+        best_state = None
+        best_val = float("inf")
+        best_at_epoch = -1
+        last_train = float("nan")
+        first_train = float("nan")
+        first_val = float("nan")
+        final_val = float("nan")
+
+        epoch_bar = tqdm(
+            range(epochs),
+            desc=f"  layer {layer_idx + 1}/{num_layers}",
+            leave=False,
+            unit="epoch",
+        )
+        for epoch in epoch_bar:
+            model.train()
+            order = torch.randperm(x_train.shape[0])
+            total_train_loss = 0.0
+            total_train_rows = 0
+
+            for start in range(0, x_train.shape[0], batch_size):
+                idx = order[start : start + batch_size]
+                xb = x_train[idx].to(device=device, dtype=torch.float32, non_blocking=True)
+                yb = y_train[idx].to(device=device, dtype=torch.float32, non_blocking=True)
+
+                pred = model(xb)
+                mse = F.mse_loss(pred, yb)
+                cos = 1.0 - F.cosine_similarity(pred, yb, dim=-1).mean()
+                loss = mse + cos_loss_weight * cos
+
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                optimizer.step()
+
+                total_train_loss += float(loss.item()) * xb.shape[0]
+                total_train_rows += int(xb.shape[0])
+
+            last_train = total_train_loss / max(1, total_train_rows)
+            if epoch == 0:
+                first_train = last_train
+
+            model.eval()
+            if n_val > 0:
+                total_val_loss = 0.0
+                total_val_rows = 0
+                with torch.no_grad():
+                    for start in range(0, x_val.shape[0], batch_size):
+                        xb = x_val[start : start + batch_size].to(device=device, dtype=torch.float32, non_blocking=True)
+                        yb = y_val[start : start + batch_size].to(device=device, dtype=torch.float32, non_blocking=True)
+                        pred = model(xb)
+                        mse = F.mse_loss(pred, yb)
+                        cos = 1.0 - F.cosine_similarity(pred, yb, dim=-1).mean()
+                        loss = mse + cos_loss_weight * cos
+                        total_val_loss += float(loss.item()) * xb.shape[0]
+                        total_val_rows += int(xb.shape[0])
+                val_loss = total_val_loss / max(1, total_val_rows)
+            else:
+                val_loss = last_train
+
+            if epoch == 0:
+                first_val = val_loss
+            final_val = val_loss
+
+            improved = val_loss < best_val
+            if improved:
+                best_val = val_loss
+                best_at_epoch = epoch
+                best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+            epoch_bar.set_postfix(
+                train=f"{last_train:.5f}",
+                val=f"{val_loss:.5f}",
+                best=f"{best_val:.5f}",
+                ep_best=best_at_epoch,
+                ok="*" if improved else "",
+                refresh=True,
+            )
+
+        epoch_bar.close()
+
+        if best_state is not None:
+            model.load_state_dict(best_state)
+        model.eval()
+        models.append(model)
+
+        train_delta = float(first_train - last_train) if first_train == first_train else float("nan")
+        val_delta = float(first_val - final_val) if (n_val > 0 and first_val == first_val) else float("nan")
+        layer_bar.set_postfix(
+            best=f"{best_val:.5f}",
+            d_trn=f"{train_delta:.5f}",
+            d_val=(f"{val_delta:.5f}" if n_val > 0 else "n/a"),
+        )
+
+        summaries.append(
+            {
+                "layer_idx": layer_idx,
+                "num_rows": int(n),
+                "num_train_rows": int(x_train.shape[0]),
+                "num_val_rows": int(n_val),
+                "epochs_ran": int(epochs),
+                "first_train_loss": float(first_train),
+                "last_train_loss": float(last_train),
+                "train_loss_drop": float(train_delta),
+                "first_val_loss": float(first_val) if n_val > 0 else float("nan"),
+                "last_val_loss": float(final_val) if n_val > 0 else float("nan"),
+                "val_loss_drop": float(val_delta) if n_val > 0 else float("nan"),
+                "best_val_loss": float(best_val),
+                "best_at_epoch": int(best_at_epoch),
+            }
+        )
+
+    layer_bar.close()
+    return models, summaries
 
 
 def main() -> None:
@@ -209,6 +401,8 @@ def main() -> None:
         raise ValueError("seq_len must be at least 2")
     if args.position_stride < 1:
         raise ValueError("position_stride must be >= 1")
+    if args.v_rows_per_layer < 1:
+        raise ValueError("v_rows_per_layer must be >= 1")
 
     os.makedirs(args.out_dir, exist_ok=True)
     set_seed(args.seed)
@@ -248,7 +442,11 @@ def main() -> None:
     k_accs = [RidgeAccumulator(big_kv_dim, small_kv_dim, lambda_reg=args.lambda_reg) for _ in range(num_small_layers)]
     v_accs = [RidgeAccumulator(big_kv_dim, small_kv_dim, lambda_reg=args.lambda_reg) for _ in range(num_small_layers)]
 
-    print("\nCollecting train statistics for ridge fit...")
+    v_x_parts: List[List[torch.Tensor]] = [[] for _ in range(num_small_layers)]
+    v_y_parts: List[List[torch.Tensor]] = [[] for _ in range(num_small_layers)]
+    v_counts = [0 for _ in range(num_small_layers)]
+
+    print("\nCollecting train statistics for ridge K/ridge V + sampled rows for MLP V...")
     train_iter = iter_token_blocks(
         tokenizer=big_tokenizer,
         seq_len=args.seq_len,
@@ -274,19 +472,58 @@ def main() -> None:
         for small_layer_idx, big_layer_idx in enumerate(layer_map):
             k_big, v_big = big_legacy[big_layer_idx]
             k_small, v_small = small_legacy[small_layer_idx]
+
             xk = flatten_kv(k_big).float()[:: args.position_stride]
             xv = flatten_kv(v_big).float()[:: args.position_stride]
             yk = flatten_kv(k_small).float()[:: args.position_stride]
             yv = flatten_kv(v_small).float()[:: args.position_stride]
+
             k_accs[small_layer_idx].update(xk, yk)
             v_accs[small_layer_idx].update(xv, yv)
 
+            remaining = args.v_rows_per_layer - v_counts[small_layer_idx]
+            if remaining > 0:
+                take = min(remaining, xv.shape[0])
+                # xv from big cache (big_device) vs yv from small cache (small_device): index on CPU.
+                xv_cpu = xv.detach().cpu()
+                yv_cpu = yv.detach().cpu()
+                if take < xv.shape[0]:
+                    perm = torch.randperm(xv.shape[0])[:take]
+                    xv_keep = xv_cpu[perm]
+                    yv_keep = yv_cpu[perm]
+                else:
+                    xv_keep = xv_cpu
+                    yv_keep = yv_cpu
+                v_x_parts[small_layer_idx].append(xv_keep.to(torch.float16))
+                v_y_parts[small_layer_idx].append(yv_keep.to(torch.float16))
+                v_counts[small_layer_idx] += int(take)
+
         if train_idx % 20 == 0:
-            print(f"  train sequence {train_idx + 1} / {args.train_sequences}")
+            filled = sum(int(c >= args.v_rows_per_layer) for c in v_counts)
+            print(f"  train sequence {train_idx + 1} / {args.train_sequences} | sampled V layers filled: {filled}/{num_small_layers}")
 
     print("\nSolving ridge regressions...")
     k_weights, k_biases = solve_accumulators(k_accs)
     v_weights, v_biases = solve_accumulators(v_accs)
+
+    v_x_by_layer = [torch.cat(parts, dim=0).to(torch.float32) if parts else torch.empty(0, big_kv_dim, dtype=torch.float32) for parts in v_x_parts]
+    v_y_by_layer = [torch.cat(parts, dim=0).to(torch.float32) if parts else torch.empty(0, small_kv_dim, dtype=torch.float32) for parts in v_y_parts]
+
+    print("\nTraining per-layer MLPs for V...")
+    v_mlps, v_mlp_summaries = train_v_mlps(
+        v_x_by_layer=v_x_by_layer,
+        v_y_by_layer=v_y_by_layer,
+        device=args.small_device,
+        dim=small_kv_dim,
+        hidden_dim=args.v_hidden_dim,
+        dropout=args.v_dropout,
+        epochs=args.v_epochs,
+        batch_size=args.v_batch_size,
+        lr=args.v_lr,
+        weight_decay=args.v_weight_decay,
+        cos_loss_weight=args.v_cos_loss_weight,
+        val_frac=args.v_val_frac,
+    )
 
     translator_state = {
         "big_model": args.big_model,
@@ -299,13 +536,17 @@ def main() -> None:
         "lambda_reg": args.lambda_reg,
         "k_weights": [w.cpu() for w in k_weights],
         "k_biases": [b.cpu() for b in k_biases],
-        "v_weights": [w.cpu() for w in v_weights],
-        "v_biases": [b.cpu() for b in v_biases],
+        "ridge_v_weights": [w.cpu() for w in v_weights],
+        "ridge_v_biases": [b.cpu() for b in v_biases],
+        "v_mlp_hidden_dim": args.v_hidden_dim,
+        "v_mlp_dropout": args.v_dropout,
+        "v_mlp_state_dicts": [{k: v.detach().cpu() for k, v in m.state_dict().items()} for m in v_mlps],
     }
-    translator_path = os.path.join(args.out_dir, "translator.pt")
+    translator_path = os.path.join(args.out_dir, "hybrid_translator.pt")
     torch.save(translator_state, translator_path)
+    write_csv(v_mlp_summaries, os.path.join(args.out_dir, "v_mlp_train_summary.csv"))
 
-    print("\nEvaluating reconstruction + next-token behavior...")
+    print("\nEvaluating reconstruction + next-token behavior + rollout behavior...")
     recon_rows = []
     next_token_rows = []
     eval_iter = iter_token_blocks(
@@ -323,23 +564,37 @@ def main() -> None:
 
     identity_possible = big_kv_dim == small_kv_dim
 
+    # Keep V MLPs on device for eval.
+    v_mlps = [m.to(args.small_device).eval() for m in v_mlps]
+
     for eval_idx, block in enumerate(eval_iter):
         full_ids_big = block.unsqueeze(0).to(args.big_device)
         full_ids_small = block.unsqueeze(0).to(args.small_device)
 
-        # Full-sequence caches for reconstruction metrics.
         with torch.no_grad():
             big_full_out = big_model(input_ids=full_ids_big, use_cache=True)
             small_full_out = small_model(input_ids=full_ids_small, use_cache=True)
         big_full_legacy = as_legacy_cache(big_full_out.past_key_values)
         small_full_legacy = as_legacy_cache(small_full_out.past_key_values)
-        translated_full_legacy = translate_legacy_cache(
+
+        ridge_full_legacy = translate_ridge_legacy_cache(
             big_legacy_cache=big_full_legacy,
             layer_map=layer_map,
             k_weights=k_weights,
             k_biases=k_biases,
             v_weights=v_weights,
             v_biases=v_biases,
+            small_num_kv_heads=small_num_kv_heads,
+            small_head_dim=small_head_dim,
+            out_device=args.small_device,
+            out_dtype=small_model_dtype,
+        )
+        hybrid_full_legacy = translate_hybrid_legacy_cache(
+            big_legacy_cache=big_full_legacy,
+            layer_map=layer_map,
+            k_weights=k_weights,
+            k_biases=k_biases,
+            v_mlps=v_mlps,
             small_num_kv_heads=small_num_kv_heads,
             small_head_dim=small_head_dim,
             out_device=args.small_device,
@@ -357,36 +612,38 @@ def main() -> None:
             )
 
         for layer_idx in range(num_small_layers):
-            k_hat, v_hat = translated_full_legacy[layer_idx]
             k_ref, v_ref = small_full_legacy[layer_idx]
-            xk = flatten_kv(k_hat)
-            xv = flatten_kv(v_hat)
+            ridge_k, ridge_v = ridge_full_legacy[layer_idx]
+            hybrid_k, hybrid_v = hybrid_full_legacy[layer_idx]
+
             yk = flatten_kv(k_ref)
             yv = flatten_kv(v_ref)
+            ridge_xk = flatten_kv(ridge_k)
+            ridge_xv = flatten_kv(ridge_v)
+            hybrid_xv = flatten_kv(hybrid_v)
+
             row = {
                 "eval_idx": eval_idx,
                 "layer_idx": layer_idx,
                 "big_layer_idx": layer_map[layer_idx],
-                "k_mse": float(F.mse_loss(xk.float(), yk.float()).item()),
-                "v_mse": float(F.mse_loss(xv.float(), yv.float()).item()),
-                "k_cos": mean_cosine_rows(xk, yk),
-                "v_cos": mean_cosine_rows(xv, yv),
+                "ridge_k_mse": float(F.mse_loss(ridge_xk.float(), yk.float()).item()),
+                "ridge_v_mse": float(F.mse_loss(ridge_xv.float(), yv.float()).item()),
+                "ridge_k_cos": mean_cosine_rows(ridge_xk, yk),
+                "ridge_v_cos": mean_cosine_rows(ridge_xv, yv),
+                "hybrid_v_mse": float(F.mse_loss(hybrid_xv.float(), yv.float()).item()),
+                "hybrid_v_cos": mean_cosine_rows(hybrid_xv, yv),
             }
             if identity_possible:
-                k_id, v_id = identity_full_legacy[layer_idx]
-                xk_id = flatten_kv(k_id)
+                _, v_id = identity_full_legacy[layer_idx]
                 xv_id = flatten_kv(v_id)
                 row.update(
                     {
-                        "k_mse_identity": float(F.mse_loss(xk_id.float(), yk.float()).item()),
-                        "v_mse_identity": float(F.mse_loss(xv_id.float(), yv.float()).item()),
-                        "k_cos_identity": mean_cosine_rows(xk_id, yk),
-                        "v_cos_identity": mean_cosine_rows(xv_id, yv),
+                        "identity_v_mse": float(F.mse_loss(xv_id.float(), yv.float()).item()),
+                        "identity_v_cos": mean_cosine_rows(xv_id, yv),
                     }
                 )
             recon_rows.append(row)
 
-        # Context-only cache test for the actual use case.
         context_big = full_ids_big[:, :-1]
         context_small = full_ids_small[:, :-1]
         current_big = full_ids_big[:, -1:]
@@ -405,7 +662,7 @@ def main() -> None:
         big_context_legacy = as_legacy_cache(big_context_out.past_key_values)
         small_context_legacy = as_legacy_cache(small_context_out.past_key_values)
 
-        translated_context_legacy = translate_legacy_cache(
+        ridge_context_legacy = translate_ridge_legacy_cache(
             big_legacy_cache=big_context_legacy,
             layer_map=layer_map,
             k_weights=k_weights,
@@ -417,69 +674,44 @@ def main() -> None:
             out_device=args.small_device,
             out_dtype=small_model_dtype,
         )
-
-        id_context_legacy = None
-        ktrans_vid_legacy = None
-        if identity_possible:
-            id_context_legacy = identity_translate_legacy_cache(
-                big_legacy_cache=big_context_legacy,
-                layer_map=layer_map,
-                small_num_kv_heads=small_num_kv_heads,
-                small_head_dim=small_head_dim,
-                out_device=args.small_device,
-                out_dtype=small_model_dtype,
-            )
-            ktrans_vid_legacy = merge_translated_k_identity_v_legacy(
-                big_legacy_cache=big_context_legacy,
-                translated_small_legacy=translated_context_legacy,
-                layer_map=layer_map,
-                small_num_kv_heads=small_num_kv_heads,
-                small_head_dim=small_head_dim,
-                out_device=args.small_device,
-                out_dtype=small_model_dtype,
-            )
-            for l in [0, 5, 10, 20]:
-                if l >= num_small_layers:
-                    continue
-                assert torch.allclose(
-                    ktrans_vid_legacy[l][0],
-                    translated_context_legacy[l][0],
-                    atol=1e-5,
-                    rtol=1e-4,
-                )
-                assert torch.allclose(
-                    ktrans_vid_legacy[l][1],
-                    id_context_legacy[l][1],
-                    atol=1e-5,
-                    rtol=1e-4,
-                )
+        hybrid_context_legacy = translate_hybrid_legacy_cache(
+            big_legacy_cache=big_context_legacy,
+            layer_map=layer_map,
+            k_weights=k_weights,
+            k_biases=k_biases,
+            v_mlps=v_mlps,
+            small_num_kv_heads=small_num_kv_heads,
+            small_head_dim=small_head_dim,
+            out_device=args.small_device,
+            out_dtype=small_model_dtype,
+        )
 
         all_layers = list(range(num_small_layers))
-        later_layers = list(range(1, num_small_layers))
-
         eval_caches = {
-            "translated": translated_context_legacy,
+            "ridge": ridge_context_legacy,
+            "hybrid": hybrid_context_legacy,
             "konly": merge_legacy_caches(
                 native_small_legacy=small_context_legacy,
-                translated_small_legacy=translated_context_legacy,
+                translated_small_legacy=ridge_context_legacy,
                 translated_k_layers=all_layers,
                 translated_v_layers=[],
             ),
-            "vonly": merge_legacy_caches(
+            "mlpvonly": merge_legacy_caches(
                 native_small_legacy=small_context_legacy,
-                translated_small_legacy=translated_context_legacy,
+                translated_small_legacy=hybrid_context_legacy,
                 translated_k_layers=[],
-                translated_v_layers=all_layers,
-            ),
-            "layer0k_native": merge_legacy_caches(
-                native_small_legacy=small_context_legacy,
-                translated_small_legacy=translated_context_legacy,
-                translated_k_layers=later_layers,
                 translated_v_layers=all_layers,
             ),
         }
         if identity_possible:
-            eval_caches["ktrans_vid"] = ktrans_vid_legacy
+            eval_caches["identity"] = identity_translate_legacy_cache(
+                big_legacy_cache=big_context_legacy,
+                layer_map=layer_map,
+                small_num_kv_heads=small_num_kv_heads,
+                small_head_dim=small_head_dim,
+                out_device=args.small_device,
+                out_dtype=small_model_dtype,
+            )
 
         eval_outputs = {}
         for mode_name, mode_legacy in eval_caches.items():
@@ -491,57 +723,31 @@ def main() -> None:
                     use_cache=True,
                 )
 
-        identity_metrics = {}
-        if identity_possible:
-            identity_context_cache = legacy_to_cache(id_context_legacy)
-            with torch.no_grad():
-                small_identity_next_out = small_model(
-                    input_ids=current_small,
-                    past_key_values=identity_context_cache,
-                    use_cache=True,
-                )
-            identity_logits = small_identity_next_out.logits[:, -1, :]
-            identity_metrics = metric_prefix_dict(
-                "identity_vs_big",
-                big_next_out.logits[:, -1, :].to(identity_logits.device),
-                identity_logits,
-                topk=args.topk,
-            )
-
         big_logits = big_next_out.logits[:, -1, :].to(args.small_device)
         small_native_logits = small_native_next_out.logits[:, -1, :]
-
-        translated_logits = eval_outputs["translated"].logits[:, -1, :]
+        ridge_logits = eval_outputs["ridge"].logits[:, -1, :]
+        hybrid_logits = eval_outputs["hybrid"].logits[:, -1, :]
         konly_logits = eval_outputs["konly"].logits[:, -1, :]
-        vonly_logits = eval_outputs["vonly"].logits[:, -1, :]
-        layer0k_native_logits = eval_outputs["layer0k_native"].logits[:, -1, :]
-
-        ktrans_vid_metrics = {}
-        if identity_possible:
-            ktrans_vid_logits = eval_outputs["ktrans_vid"].logits[:, -1, :]
-            ktrans_vid_metrics = {
-                **metric_prefix_dict("ktrans_vid_vs_big", big_logits, ktrans_vid_logits, topk=args.topk),
-                **metric_prefix_dict("ktrans_vid_vs_native", small_native_logits, ktrans_vid_logits, topk=args.topk),
-            }
+        mlpvonly_logits = eval_outputs["mlpvonly"].logits[:, -1, :]
 
         next_row = {
             "eval_idx": eval_idx,
             **metric_prefix_dict("native_vs_big", big_logits, small_native_logits, topk=args.topk),
-            **metric_prefix_dict("translated_vs_big", big_logits, translated_logits, topk=args.topk),
-            **metric_prefix_dict("translated_vs_native", small_native_logits, translated_logits, topk=args.topk),
-
+            **metric_prefix_dict("ridge_vs_big", big_logits, ridge_logits, topk=args.topk),
+            **metric_prefix_dict("ridge_vs_native", small_native_logits, ridge_logits, topk=args.topk),
+            **metric_prefix_dict("hybrid_vs_big", big_logits, hybrid_logits, topk=args.topk),
+            **metric_prefix_dict("hybrid_vs_native", small_native_logits, hybrid_logits, topk=args.topk),
             **metric_prefix_dict("konly_vs_big", big_logits, konly_logits, topk=args.topk),
             **metric_prefix_dict("konly_vs_native", small_native_logits, konly_logits, topk=args.topk),
-
-            **metric_prefix_dict("vonly_vs_big", big_logits, vonly_logits, topk=args.topk),
-            **metric_prefix_dict("vonly_vs_native", small_native_logits, vonly_logits, topk=args.topk),
-
-            **metric_prefix_dict("layer0k_native_vs_big", big_logits, layer0k_native_logits, topk=args.topk),
-            **metric_prefix_dict("layer0k_native_vs_native", small_native_logits, layer0k_native_logits, topk=args.topk),
-
-            **ktrans_vid_metrics,
-            **identity_metrics,
+            **metric_prefix_dict("mlpvonly_vs_big", big_logits, mlpvonly_logits, topk=args.topk),
+            **metric_prefix_dict("mlpvonly_vs_native", small_native_logits, mlpvonly_logits, topk=args.topk),
         }
+
+        if identity_possible:
+            identity_logits = eval_outputs["identity"].logits[:, -1, :]
+            next_row.update(metric_prefix_dict("identity_vs_big", big_logits, identity_logits, topk=args.topk))
+
+
         next_token_rows.append(next_row)
 
         if eval_idx % 10 == 0:
@@ -583,6 +789,7 @@ def main() -> None:
 
     print("\nSaved:")
     print(f"  {translator_path}")
+    print(f"  {os.path.join(args.out_dir, 'v_mlp_train_summary.csv')}")
     print(f"  {os.path.join(args.out_dir, 'summary.json')}")
     print(f"  {os.path.join(args.out_dir, 'reconstruction_rows.csv')}")
     print(f"  {os.path.join(args.out_dir, 'reconstruction_per_layer.csv')}")
