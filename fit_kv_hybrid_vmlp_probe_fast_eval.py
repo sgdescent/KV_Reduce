@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import argparse
+import atexit
 import csv
 import os
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -235,7 +236,37 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--v_val_frac", type=float, default=0.05)
 
     parser.add_argument("--out_dir", type=str, default="outputs/kv_hybrid_vmlp_probe")
+
+    parser.add_argument("--wandb", action="store_true", help="Log metrics to Weights & Biases (set WANDB_API_KEY in the environment).")
+    parser.add_argument("--wandb_project", type=str, default="kv-reduce", help="W&B project name.")
+    parser.add_argument("--wandb_run_name", type=str, default=None, help="W&B run name (default: auto).")
+    parser.add_argument("--wandb_entity", type=str, default=None, help="W&B entity (team or user). Optional.")
+    parser.add_argument("--wandb_group", type=str, default=None, help="Optional W&B group for sweeps / grouping runs.")
     return parser
+
+
+def init_wandb(args: argparse.Namespace) -> Optional[Any]:
+    if not args.wandb:
+        return None
+    try:
+        import wandb
+    except ImportError as e:
+        raise ImportError("W&B logging requested but wandb is not installed. Install with: pip install wandb") from e
+
+    run = wandb.init(
+        project=args.wandb_project,
+        name=args.wandb_run_name,
+        entity=args.wandb_entity,
+        group=args.wandb_group,
+        config=vars(args),
+    )
+
+    def _finish_wandb() -> None:
+        if run is not None:
+            run.finish()
+
+    atexit.register(_finish_wandb)
+    return run
 
 
 def train_v_mlps(
@@ -251,6 +282,8 @@ def train_v_mlps(
     weight_decay: float,
     cos_loss_weight: float,
     val_frac: float,
+    wandb_run: Optional[Any] = None,
+    wandb_log_step_offset: int = 0,
 ) -> Tuple[List[nn.Module], List[Dict[str, float]]]:
     models: List[nn.Module] = []
     summaries: List[Dict[str, float]] = []
@@ -358,6 +391,18 @@ def train_v_mlps(
                 refresh=True,
             )
 
+            if wandb_run is not None:
+                # Offset so V-MLP curves appear after data-collection steps on the same W&B x-axis.
+                step = wandb_log_step_offset + layer_idx * epochs + epoch
+                wandb_run.log(
+                    {
+                        f"v_mlp/layer_{layer_idx}/train_loss": last_train,
+                        f"v_mlp/layer_{layer_idx}/val_loss": val_loss,
+                        f"v_mlp/layer_{layer_idx}/best_val_loss": best_val,
+                    },
+                    step=step,
+                )
+
         epoch_bar.close()
 
         if best_state is not None:
@@ -406,6 +451,8 @@ def main() -> None:
 
     os.makedirs(args.out_dir, exist_ok=True)
     set_seed(args.seed)
+
+    wandb_run = init_wandb(args)
 
     print("Loading models and tokenizers...")
     big_tokenizer = load_tokenizer(args.big_model)
@@ -460,7 +507,9 @@ def main() -> None:
         seed=args.seed,
     )
 
+    train_idx_last = -1
     for train_idx, block in enumerate(train_iter):
+        train_idx_last = train_idx
         full_ids_big = block.unsqueeze(0).to(args.big_device)
         full_ids_small = block.unsqueeze(0).to(args.small_device)
         with torch.no_grad():
@@ -501,6 +550,18 @@ def main() -> None:
         if train_idx % 20 == 0:
             filled = sum(int(c >= args.v_rows_per_layer) for c in v_counts)
             print(f"  train sequence {train_idx + 1} / {args.train_sequences} | sampled V layers filled: {filled}/{num_small_layers}")
+            if wandb_run is not None:
+                wandb_run.log(
+                    {
+                        "collection/sequence_idx": train_idx + 1,
+                        "collection/v_layers_filled": filled,
+                        "collection/v_layer_counts_min": min(v_counts) if v_counts else 0,
+                    },
+                    step=train_idx,
+                )
+
+    num_train_sequences = train_idx_last + 1 if train_idx_last >= 0 else 0
+    print(f"  Data collection done: {num_train_sequences} sequence(s) of length {args.seq_len} (full dataset pass or --train_sequences cap).")
 
     print("\nSolving ridge regressions...")
     k_weights, k_biases = solve_accumulators(k_accs)
@@ -523,6 +584,8 @@ def main() -> None:
         weight_decay=args.v_weight_decay,
         cos_loss_weight=args.v_cos_loss_weight,
         val_frac=args.v_val_frac,
+        wandb_run=wandb_run,
+        wandb_log_step_offset=num_train_sequences,
     )
 
     translator_state = {
@@ -755,6 +818,28 @@ def main() -> None:
 
     recon_summary = aggregate_metric_rows(recon_rows, exclude=["eval_idx", "layer_idx", "big_layer_idx"])
     next_summary = aggregate_metric_rows(next_token_rows, exclude=["eval_idx"])
+
+    if wandb_run is not None:
+        eval_log: Dict[str, float] = {}
+        for k, v in recon_summary.items():
+            if isinstance(v, (int, float)) and v == v:
+                wandb_run.summary[f"eval/recon/{k}"] = v
+                eval_log[f"eval/recon/{k}"] = float(v)
+        for k, v in next_summary.items():
+            if isinstance(v, (int, float)) and v == v:
+                wandb_run.summary[f"eval/next_token/{k}"] = v
+                eval_log[f"eval/next_token/{k}"] = float(v)
+        for row in v_mlp_summaries:
+            li = int(row["layer_idx"])
+            for k, v in row.items():
+                if k == "layer_idx":
+                    continue
+                if isinstance(v, (int, float)) and v == v:
+                    wandb_run.summary[f"v_mlp/final/layer_{li}/{k}"] = v
+
+        eval_step = num_train_sequences + num_small_layers * args.v_epochs
+        if eval_log:
+            wandb_run.log(eval_log, step=eval_step)
 
     per_layer_summary = []
     layer_groups = defaultdict(list)

@@ -4,3 +4,5 @@ __pycache__/
 
 # Experiment artifacts (regenerate with probe scripts)
 outputs/
+logs/
+wandb/
