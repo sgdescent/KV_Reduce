@@ -12,6 +12,13 @@ This mini bundle gives you two runnable experiments for the project idea:
      - cache reconstruction quality
      - functional quality: how the small model behaves when you replace its native prefix KV cache with translated KV from the big model.
 
+3. `fit_kv_factorized_probe.py`
+   - Trains a **streamed low-rank neural translator** for the KV cache with a bottleneck of shape `D -> R -> D` per layer (separate K/V modules).
+   - Designed for much larger Hugging Face corpora by reading token blocks online instead of materializing the full split in memory.
+   - Evaluates both:
+     - per-layer cache reconstruction
+     - next-token behavior when the small model consumes translated big-model KV
+
 ## Recommended starter pair
 
 A very convenient pair is:
@@ -172,3 +179,57 @@ Most important metrics to watch in `next_token_rows.csv` / `summary.json`:
 - try low-rank translators instead of full affine maps
 - learn layer alignment instead of fixed depth alignment
 - test draft acceptance over multi-token speculative blocks instead of one-step proxies
+
+## 3) Train a streamed low-rank KV translator
+
+This trainer is intended for the "more data + fewer parameters" version of the project:
+
+- it supports Hugging Face streaming datasets
+- it trains a separate low-rank residual network per layer
+- each translator is approximately `D x R + R x D` parameters per target (plus optional bias / layernorm)
+
+Example command:
+
+```bash
+python fit_kv_factorized_probe.py \
+  --big_model Qwen/Qwen2.5-3B \
+  --small_model Qwen/Qwen2.5-1.5B \
+  --big_device cuda:0 \
+  --small_device cuda:1 \
+  --dataset_name wikitext \
+  --dataset_config wikitext-2-raw-v1 \
+  --train_split train \
+  --eval_split validation \
+  --stream_train \
+  --seq_len 256 \
+  --train_sequences 20000 \
+  --eval_sequences 128 \
+  --shuffle_train \
+  --shuffle_buffer_size 10000 \
+  --position_stride 2 \
+  --max_rows_per_layer_per_block 128 \
+  --rank 64 \
+  --lr 3e-4 \
+  --weight_decay 1e-4 \
+  --cos_loss_weight 0.1 \
+  --out_dir outputs/qwen25_3b_to_15b_factorized_stream
+```
+
+For a much larger corpus, replace `--dataset_name` / `--dataset_config` with your preferred Hugging Face dataset and keep `--stream_train` enabled.
+
+Most useful outputs:
+
+- `factorized_translator.pt`
+  - learned low-rank per-layer translator weights
+- `parameter_summary.csv`
+  - parameter counts per layer for K, V, and total
+- `train_log.csv`
+  - rolling training metrics
+- `train_per_layer.csv`
+  - average train losses / cosine scores per layer
+- `reconstruction_per_layer.csv`
+  - per-layer reconstruction metrics on the eval split
+- `next_token_rows.csv`
+  - functional behavior when the small model consumes translated big-model KV
+- `summary.json`
+  - aggregate metrics and run metadata

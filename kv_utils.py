@@ -244,9 +244,14 @@ def iter_token_blocks(
     add_eos_between_examples: bool = True,
     shuffle: bool = False,
     seed: int = 0,
+    streaming: bool = False,
+    shuffle_buffer_size: int = 10_000,
 ) -> Iterator[torch.Tensor]:
     if text_file is None and dataset_name is None:
         raise ValueError("Provide either --text_file or --dataset_name.")
+
+    if isinstance(dataset_config, str) and dataset_config.strip().lower() in {"", "none", "null"}:
+        dataset_config = None
 
     if text_file is not None:
         with open(text_file, "r", encoding="utf-8") as f:
@@ -256,14 +261,30 @@ def iter_token_blocks(
             from datasets import load_dataset
         except ImportError as e:
             raise ImportError("The datasets package is required when using --dataset_name. Install it with: pip install datasets") from e
-        dataset = load_dataset(dataset_name, dataset_config, split=split)
-        if shuffle:
-            dataset = dataset.shuffle(seed=seed)
-        if len(dataset) == 0:
-            raise ValueError("Dataset split is empty.")
-        first = dataset[0]
-        column = text_column or find_text_column(first)
-        texts = dataset[column]
+        dataset = load_dataset(dataset_name, dataset_config, split=split, streaming=streaming)
+        if streaming:
+            if shuffle:
+                dataset = dataset.shuffle(buffer_size=shuffle_buffer_size, seed=seed)
+            iterator = iter(dataset)
+            first = next(iterator, None)
+            if first is None:
+                raise ValueError("Dataset split is empty.")
+            column = text_column or find_text_column(first)
+
+            def iter_texts():
+                yield first.get(column)
+                for example in iterator:
+                    yield example.get(column)
+
+            texts = iter_texts()
+        else:
+            if shuffle:
+                dataset = dataset.shuffle(seed=seed)
+            if len(dataset) == 0:
+                raise ValueError("Dataset split is empty.")
+            first = dataset[0]
+            column = text_column or find_text_column(first)
+            texts = dataset[column]
 
     buffer: List[int] = []
     yielded = 0
