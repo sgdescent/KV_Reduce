@@ -2,6 +2,7 @@ import json
 import math
 import os
 import random
+import warnings
 from dataclasses import dataclass
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
@@ -246,9 +247,13 @@ def iter_token_blocks(
     seed: int = 0,
     streaming: bool = False,
     shuffle_buffer_size: int = 10_000,
+    split_fallbacks: Optional[Sequence[str]] = None,
+    skip_blocks: int = 0,
 ) -> Iterator[torch.Tensor]:
     if text_file is None and dataset_name is None:
         raise ValueError("Provide either --text_file or --dataset_name.")
+    if skip_blocks < 0:
+        raise ValueError("skip_blocks must be >= 0")
 
     if isinstance(dataset_config, str) and dataset_config.strip().lower() in {"", "none", "null"}:
         dataset_config = None
@@ -261,7 +266,33 @@ def iter_token_blocks(
             from datasets import load_dataset
         except ImportError as e:
             raise ImportError("The datasets package is required when using --dataset_name. Install it with: pip install datasets") from e
-        dataset = load_dataset(dataset_name, dataset_config, split=split, streaming=streaming)
+        split_candidates = [split]
+        for fallback in split_fallbacks or []:
+            if fallback and fallback not in split_candidates:
+                split_candidates.append(fallback)
+
+        dataset = None
+        used_split = split
+        last_error = None
+        for candidate_split in split_candidates:
+            try:
+                dataset = load_dataset(dataset_name, dataset_config, split=candidate_split, streaming=streaming)
+                used_split = candidate_split
+                break
+            except ValueError as e:
+                last_error = e
+                if "Unknown split" not in str(e):
+                    raise
+
+        if dataset is None:
+            raise last_error
+
+        if used_split != split:
+            warnings.warn(
+                f'Dataset split "{split}" was unavailable for {dataset_name}; using "{used_split}" instead.',
+                stacklevel=2,
+            )
+
         if streaming:
             if shuffle:
                 dataset = dataset.shuffle(buffer_size=shuffle_buffer_size, seed=seed)
@@ -288,6 +319,7 @@ def iter_token_blocks(
 
     buffer: List[int] = []
     yielded = 0
+    seen_blocks = 0
     eos_id = tokenizer.eos_token_id
 
     for text in texts:
@@ -304,10 +336,12 @@ def iter_token_blocks(
             buffer.append(eos_id)
         while len(buffer) >= seq_len:
             block = torch.tensor(buffer[:seq_len], dtype=torch.long)
-            yield block
-            yielded += 1
-            if yielded >= max_blocks:
-                return
+            if seen_blocks >= skip_blocks:
+                yield block
+                yielded += 1
+                if yielded >= max_blocks:
+                    return
+            seen_blocks += 1
             buffer = buffer[seq_len:]
 
 

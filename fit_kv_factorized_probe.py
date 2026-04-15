@@ -421,6 +421,309 @@ def log_wandb_artifact(
     wandb_run.log_artifact(artifact)
 
 
+def parse_csv_items(value: Optional[str]) -> List[str]:
+    if value is None:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def resolve_resume_path(args: argparse.Namespace) -> Optional[str]:
+    if args.resume_from is not None:
+        if args.resume_from == "latest":
+            return os.path.join(args.out_dir, "latest_training_state.pt")
+        if args.resume_from == "best":
+            return os.path.join(args.out_dir, "best_train_loss_state.pt")
+        if args.resume_from in {"best_val", "best_validation"}:
+            return os.path.join(args.out_dir, "best_validation_state.pt")
+        return args.resume_from
+
+    if not args.auto_resume:
+        return None
+
+    for candidate in [
+        os.path.join(args.out_dir, "latest_training_state.pt"),
+        os.path.join(args.out_dir, "best_train_loss_state.pt"),
+        os.path.join(args.out_dir, "factorized_translator.pt"),
+    ]:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def save_training_checkpoint(
+    path: str,
+    translator: nn.Module,
+    optimizer: Optional[torch.optim.Optimizer],
+    checkpoint_meta: Dict[str, Any],
+) -> None:
+    state = {
+        "checkpoint_type": "training_state",
+        "state_dict": {k: v.detach().cpu() for k, v in translator.state_dict().items()},
+        "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
+        "meta": checkpoint_meta,
+    }
+    torch.save(state, path)
+
+
+def select_validation_score(next_summary: Dict[str, float]) -> Tuple[str, float]:
+    for key in [
+        "translated_vs_native_accept_mass",
+        "translated_vs_big_accept_mass",
+        "translated_vs_native_top1_match",
+    ]:
+        if key in next_summary:
+            return key, float(next_summary[key])
+    for key in [
+        "translated_vs_native_js",
+        "translated_vs_big_js",
+    ]:
+        if key in next_summary:
+            return key, -float(next_summary[key])
+    return "unavailable", float("nan")
+
+
+@torch.no_grad()
+def run_eval_pass(
+    *,
+    tokenizer,
+    seq_len: int,
+    max_blocks: int,
+    dataset_name: Optional[str],
+    dataset_config: Optional[str],
+    split: str,
+    text_file: Optional[str],
+    text_column: Optional[str],
+    streaming: bool,
+    shuffle_buffer_size: int,
+    split_fallbacks: Optional[List[str]],
+    skip_blocks: int,
+    big_model,
+    small_model,
+    translator: nn.Module,
+    layer_map: List[int],
+    train_keys: bool,
+    train_values: bool,
+    small_num_kv_heads: int,
+    small_head_dim: int,
+    small_model_dtype: torch.dtype,
+    big_kv_dim: int,
+    args: argparse.Namespace,
+    progress_desc: str,
+    leave_progress: bool = False,
+) -> Dict[str, Any]:
+    translator = translator.to(args.small_device).eval()
+    identity_possible = big_kv_dim == get_kv_dim(small_model.config)
+
+    recon_rows: List[Dict[str, float]] = []
+    next_token_rows: List[Dict[str, float]] = []
+    eval_iter = iter_token_blocks(
+        tokenizer=tokenizer,
+        seq_len=seq_len,
+        max_blocks=max_blocks,
+        dataset_name=dataset_name,
+        dataset_config=dataset_config,
+        split=split,
+        text_file=text_file,
+        text_column=text_column,
+        shuffle=False,
+        seed=args.seed,
+        streaming=streaming,
+        shuffle_buffer_size=shuffle_buffer_size,
+        split_fallbacks=split_fallbacks,
+        skip_blocks=skip_blocks,
+    )
+
+    eval_bar = tqdm(eval_iter, total=max_blocks, desc=progress_desc, unit="block", leave=leave_progress)
+    eval_idx_last = -1
+    num_small_layers = len(layer_map)
+    for eval_idx, block in enumerate(eval_bar):
+        eval_idx_last = eval_idx
+        full_ids_big = block.unsqueeze(0).to(args.big_device)
+        full_ids_small = block.unsqueeze(0).to(args.small_device)
+
+        big_full_out = big_model(input_ids=full_ids_big, use_cache=True)
+        small_full_out = small_model(input_ids=full_ids_small, use_cache=True)
+        big_full_legacy = as_legacy_cache(big_full_out.past_key_values)
+        small_full_legacy = as_legacy_cache(small_full_out.past_key_values)
+        translated_full_legacy = translator.translate_legacy_cache(
+            big_legacy_cache=big_full_legacy,
+            native_small_legacy=small_full_legacy,
+            layer_map=layer_map,
+            small_num_kv_heads=small_num_kv_heads,
+            small_head_dim=small_head_dim,
+            out_dtype=small_model_dtype,
+        )
+        identity_full_legacy = None
+        if identity_possible:
+            identity_full_legacy = identity_translate_legacy_cache(
+                big_legacy_cache=big_full_legacy,
+                native_small_legacy=small_full_legacy,
+                layer_map=layer_map,
+                small_num_kv_heads=small_num_kv_heads,
+                small_head_dim=small_head_dim,
+                out_device=translator.module_device(),
+                out_dtype=small_model_dtype,
+                translate_keys=train_keys,
+                translate_values=train_values,
+            )
+
+        for layer_idx in range(num_small_layers):
+            row: Dict[str, float] = {
+                "eval_idx": int(eval_idx),
+                "layer_idx": int(layer_idx),
+                "big_layer_idx": int(layer_map[layer_idx]),
+            }
+            k_ref, v_ref = small_full_legacy[layer_idx]
+            k_hat, v_hat = translated_full_legacy[layer_idx]
+
+            if train_keys:
+                xk = flatten_kv(k_hat)
+                yk = flatten_kv(k_ref)
+                row["k_mse"] = float(F.mse_loss(xk.float(), yk.float()).item())
+                row["k_cos"] = mean_cosine_rows(xk, yk)
+                if identity_possible:
+                    k_id, _ = identity_full_legacy[layer_idx]
+                    xk_id = flatten_kv(k_id)
+                    row["k_mse_identity"] = float(F.mse_loss(xk_id.float(), yk.float()).item())
+                    row["k_cos_identity"] = mean_cosine_rows(xk_id, yk)
+
+            if train_values:
+                xv = flatten_kv(v_hat)
+                yv = flatten_kv(v_ref)
+                row["v_mse"] = float(F.mse_loss(xv.float(), yv.float()).item())
+                row["v_cos"] = mean_cosine_rows(xv, yv)
+                if identity_possible:
+                    _, v_id = identity_full_legacy[layer_idx]
+                    xv_id = flatten_kv(v_id)
+                    row["v_mse_identity"] = float(F.mse_loss(xv_id.float(), yv.float()).item())
+                    row["v_cos_identity"] = mean_cosine_rows(xv_id, yv)
+
+            recon_rows.append(row)
+
+        context_big = full_ids_big[:, :-1]
+        context_small = full_ids_small[:, :-1]
+        current_big = full_ids_big[:, -1:]
+        current_small = full_ids_small[:, -1:]
+
+        big_context_out = big_model(input_ids=context_big, use_cache=True)
+        small_context_out = small_model(input_ids=context_small, use_cache=True)
+        big_next_out = big_model(
+            input_ids=current_big,
+            past_key_values=big_context_out.past_key_values,
+            use_cache=True,
+        )
+        small_native_next_out = small_model(
+            input_ids=current_small,
+            past_key_values=small_context_out.past_key_values,
+            use_cache=True,
+        )
+
+        big_context_legacy = as_legacy_cache(big_context_out.past_key_values)
+        small_context_legacy = as_legacy_cache(small_context_out.past_key_values)
+        translated_context_legacy = translator.translate_legacy_cache(
+            big_legacy_cache=big_context_legacy,
+            native_small_legacy=small_context_legacy,
+            layer_map=layer_map,
+            small_num_kv_heads=small_num_kv_heads,
+            small_head_dim=small_head_dim,
+            out_dtype=small_model_dtype,
+        )
+
+        eval_caches = {"translated": translated_context_legacy}
+        if train_keys and train_values:
+            all_layers = list(range(num_small_layers))
+            eval_caches["konly"] = merge_legacy_caches(
+                native_small_legacy=small_context_legacy,
+                translated_small_legacy=translated_context_legacy,
+                translated_k_layers=all_layers,
+                translated_v_layers=[],
+            )
+            eval_caches["vonly"] = merge_legacy_caches(
+                native_small_legacy=small_context_legacy,
+                translated_small_legacy=translated_context_legacy,
+                translated_k_layers=[],
+                translated_v_layers=all_layers,
+            )
+
+        if identity_possible:
+            eval_caches["identity"] = identity_translate_legacy_cache(
+                big_legacy_cache=big_context_legacy,
+                native_small_legacy=small_context_legacy,
+                layer_map=layer_map,
+                small_num_kv_heads=small_num_kv_heads,
+                small_head_dim=small_head_dim,
+                out_device=translator.module_device(),
+                out_dtype=small_model_dtype,
+                translate_keys=train_keys,
+                translate_values=train_values,
+            )
+
+        eval_outputs = {}
+        for mode_name, mode_legacy in eval_caches.items():
+            eval_outputs[mode_name] = small_model(
+                input_ids=current_small,
+                past_key_values=legacy_to_cache(mode_legacy),
+                use_cache=True,
+            )
+
+        big_logits = big_next_out.logits[:, -1, :].to(args.small_device)
+        small_native_logits = small_native_next_out.logits[:, -1, :]
+        translated_logits = eval_outputs["translated"].logits[:, -1, :]
+
+        next_row: Dict[str, float] = {
+            "eval_idx": int(eval_idx),
+            **metric_prefix_dict("native_vs_big", big_logits, small_native_logits, topk=args.topk),
+            **metric_prefix_dict("translated_vs_big", big_logits, translated_logits, topk=args.topk),
+            **metric_prefix_dict("translated_vs_native", small_native_logits, translated_logits, topk=args.topk),
+        }
+        if "konly" in eval_outputs:
+            konly_logits = eval_outputs["konly"].logits[:, -1, :]
+            next_row.update(metric_prefix_dict("konly_vs_big", big_logits, konly_logits, topk=args.topk))
+            next_row.update(metric_prefix_dict("konly_vs_native", small_native_logits, konly_logits, topk=args.topk))
+        if "vonly" in eval_outputs:
+            vonly_logits = eval_outputs["vonly"].logits[:, -1, :]
+            next_row.update(metric_prefix_dict("vonly_vs_big", big_logits, vonly_logits, topk=args.topk))
+            next_row.update(metric_prefix_dict("vonly_vs_native", small_native_logits, vonly_logits, topk=args.topk))
+        if "identity" in eval_outputs:
+            identity_logits = eval_outputs["identity"].logits[:, -1, :]
+            next_row.update(metric_prefix_dict("identity_vs_big", big_logits, identity_logits, topk=args.topk))
+            next_row.update(metric_prefix_dict("identity_vs_native", small_native_logits, identity_logits, topk=args.topk))
+
+        next_token_rows.append(next_row)
+
+    eval_bar.close()
+
+    num_eval_sequences = eval_idx_last + 1 if eval_idx_last >= 0 else 0
+    if num_eval_sequences == 0:
+        raise ValueError("Evaluation produced zero token blocks. Check your eval split arguments.")
+
+    recon_summary = aggregate_metric_rows(recon_rows, exclude=["eval_idx", "layer_idx", "big_layer_idx"])
+    next_summary = aggregate_metric_rows(next_token_rows, exclude=["eval_idx"])
+
+    reconstruction_per_layer = []
+    per_layer_groups: Dict[int, List[Dict[str, float]]] = defaultdict(list)
+    for row in recon_rows:
+        per_layer_groups[int(row["layer_idx"])].append(row)
+    for layer_idx in sorted(per_layer_groups.keys()):
+        summary = aggregate_metric_rows(
+            per_layer_groups[layer_idx],
+            exclude=["eval_idx", "layer_idx", "big_layer_idx"],
+        )
+        summary["layer_idx"] = int(layer_idx)
+        summary["big_layer_idx"] = int(layer_map[layer_idx])
+        reconstruction_per_layer.append(summary)
+
+    return {
+        "recon_rows": recon_rows,
+        "next_token_rows": next_token_rows,
+        "reconstruction_per_layer": reconstruction_per_layer,
+        "reconstruction_summary": recon_summary,
+        "next_token_summary": next_summary,
+        "num_eval_sequences": int(num_eval_sequences),
+        "identity_possible": bool(identity_possible),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Train a streamed low-rank neural KV translator from a big model cache into a small model cache."
@@ -438,6 +741,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--text_column", type=str, default=None)
     parser.add_argument("--train_split", type=str, default="train")
     parser.add_argument("--eval_split", type=str, default="validation")
+    parser.add_argument("--eval_dataset_name", type=str, default=None)
+    parser.add_argument("--eval_dataset_config", type=str, default=None)
+    parser.add_argument("--eval_text_file", type=str, default=None)
+    parser.add_argument("--eval_text_column", type=str, default=None)
+    parser.add_argument("--eval_split_fallbacks", type=str, default="test,train")
+    parser.add_argument("--train_skip_blocks", type=int, default=0)
+    parser.add_argument("--eval_skip_blocks", type=int, default=0)
+    parser.add_argument(
+        "--same_dataset_holdout_blocks",
+        type=int,
+        default=0,
+        help="Reserve the first N token blocks of the training source for validation and skip them during training.",
+    )
     parser.add_argument("--stream_train", dest="stream_train", action="store_true")
     parser.add_argument("--no_stream_train", dest="stream_train", action="store_false")
     parser.set_defaults(stream_train=True)
@@ -469,9 +785,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmup_steps", type=int, default=100)
     parser.add_argument("--min_lr_ratio", type=float, default=0.1)
     parser.add_argument("--log_every", type=int, default=20)
+    parser.add_argument("--checkpoint_every_sequences", type=int, default=1000)
+    parser.add_argument("--eval_every_sequences", type=int, default=0, help="Run validation every N training blocks. 0 disables periodic validation.")
+    parser.add_argument("--periodic_eval_sequences", type=int, default=0, help="Number of eval blocks for periodic validation. 0 uses --eval_sequences.")
     parser.add_argument("--topk", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--allow_incompatible_tokenizers", action="store_true")
+    parser.add_argument("--resume_from", type=str, default=None, help='Checkpoint path, or "latest"/"best"/"best_val".')
+    parser.add_argument("--auto_resume", action="store_true", help="Resume automatically from a checkpoint in out_dir if one exists.")
+    parser.add_argument("--resume_optimizer", dest="resume_optimizer", action="store_true")
+    parser.add_argument("--no_resume_optimizer", dest="resume_optimizer", action="store_false")
+    parser.set_defaults(resume_optimizer=True)
 
     parser.add_argument("--out_dir", type=str, default="outputs/kv_factorized_probe")
 
@@ -497,10 +821,59 @@ def main() -> None:
         raise ValueError("grad_accum_sequences must be >= 1")
     if args.shuffle_buffer_size < 1:
         raise ValueError("shuffle_buffer_size must be >= 1")
+    if args.checkpoint_every_sequences < 0:
+        raise ValueError("checkpoint_every_sequences must be >= 0")
+    if args.eval_every_sequences < 0:
+        raise ValueError("eval_every_sequences must be >= 0")
+    if args.periodic_eval_sequences < 0:
+        raise ValueError("periodic_eval_sequences must be >= 0")
+    if args.train_skip_blocks < 0:
+        raise ValueError("train_skip_blocks must be >= 0")
+    if args.eval_skip_blocks < 0:
+        raise ValueError("eval_skip_blocks must be >= 0")
+    if args.same_dataset_holdout_blocks < 0:
+        raise ValueError("same_dataset_holdout_blocks must be >= 0")
 
     train_keys, train_values = parse_target_spec(args.train_targets)
     k_rank = args.k_rank if args.k_rank is not None else args.rank
     v_rank = args.v_rank if args.v_rank is not None else args.rank
+    eval_dataset_name = args.eval_dataset_name or args.dataset_name
+    eval_dataset_config = args.eval_dataset_config if args.eval_dataset_config is not None else args.dataset_config
+    eval_text_file = args.eval_text_file or args.text_file
+    eval_text_column = args.eval_text_column or args.text_column
+    eval_split_fallbacks = parse_csv_items(args.eval_split_fallbacks)
+    periodic_eval_sequences = args.periodic_eval_sequences if args.periodic_eval_sequences > 0 else args.eval_sequences
+    train_skip_blocks = args.train_skip_blocks
+    eval_skip_blocks = args.eval_skip_blocks
+    using_same_eval_source = (
+        eval_dataset_name == args.dataset_name
+        and eval_dataset_config == args.dataset_config
+        and eval_text_file == args.text_file
+        and eval_text_column == args.text_column
+        and args.eval_split == args.train_split
+    )
+
+    if args.same_dataset_holdout_blocks > 0:
+        if not using_same_eval_source:
+            raise ValueError("--same_dataset_holdout_blocks requires eval source to match the training source and split.")
+        if args.shuffle_train:
+            raise ValueError(
+                "--same_dataset_holdout_blocks cannot be combined with --shuffle_train, "
+                "because shuffling would mix held-out blocks back into the training stream."
+            )
+        train_skip_blocks = max(train_skip_blocks, args.same_dataset_holdout_blocks)
+        max_needed_eval_blocks = max(args.eval_sequences, periodic_eval_sequences if args.eval_every_sequences > 0 else 0)
+        if eval_skip_blocks + max_needed_eval_blocks > args.same_dataset_holdout_blocks:
+            raise ValueError(
+                "same_dataset_holdout_blocks is too small for the requested eval slices. "
+                "Increase --same_dataset_holdout_blocks or reduce eval_sequences / periodic_eval_sequences."
+            )
+
+    if args.eval_every_sequences > 0 and (args.eval_every_sequences % args.grad_accum_sequences != 0):
+        print(
+            "Warning: eval_every_sequences is not a multiple of grad_accum_sequences, "
+            "so periodic validation will run on the last fully-updated weights."
+        )
 
     os.makedirs(args.out_dir, exist_ok=True)
     set_seed(args.seed)
@@ -572,8 +945,51 @@ def main() -> None:
         wandb_run.summary["data/train_streaming"] = bool(args.stream_train)
         wandb_run.summary["data/train_targets_keys"] = bool(train_keys)
         wandb_run.summary["data/train_targets_values"] = bool(train_values)
+        wandb_run.summary["data/train_skip_blocks"] = int(train_skip_blocks)
+        wandb_run.summary["data/eval_skip_blocks"] = int(eval_skip_blocks)
+        wandb_run.summary["data/same_dataset_holdout_blocks"] = int(args.same_dataset_holdout_blocks)
+        wandb_run.summary["validation/eval_every_sequences"] = int(args.eval_every_sequences)
+        wandb_run.summary["validation/periodic_eval_sequences"] = int(periodic_eval_sequences)
 
     optimizer = torch.optim.AdamW(translator.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    resume_path = resolve_resume_path(args)
+    resume_info = {
+        "resumed": False,
+        "resume_path": resume_path,
+        "optimizer_state_loaded": False,
+    }
+    best_logged_train_loss = float("inf")
+
+    if resume_path is not None and os.path.isfile(resume_path):
+        print(f"Resuming from checkpoint: {resume_path}")
+        resume_state = torch.load(resume_path, map_location="cpu")
+        state_dict = resume_state.get("state_dict")
+        if state_dict is None:
+            raise ValueError(f"Checkpoint {resume_path} does not contain a translator state_dict.")
+        translator.load_state_dict(state_dict, strict=True)
+
+        checkpoint_meta = resume_state.get("meta", {})
+        checkpoint_big_model = resume_state.get("big_model", checkpoint_meta.get("big_model"))
+        checkpoint_small_model = resume_state.get("small_model", checkpoint_meta.get("small_model"))
+        if checkpoint_big_model is not None and checkpoint_big_model != args.big_model:
+            raise ValueError(f"Checkpoint big_model={checkpoint_big_model} does not match current big_model={args.big_model}")
+        if checkpoint_small_model is not None and checkpoint_small_model != args.small_model:
+            raise ValueError(f"Checkpoint small_model={checkpoint_small_model} does not match current small_model={args.small_model}")
+
+        if args.resume_optimizer and resume_state.get("optimizer_state_dict") is not None:
+            optimizer.load_state_dict(resume_state["optimizer_state_dict"])
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = args.lr
+                param_group["weight_decay"] = args.weight_decay
+            resume_info["optimizer_state_loaded"] = True
+
+        best_logged_train_loss = float(checkpoint_meta.get("best_logged_train_loss", float("inf")))
+        best_validation_score = float(checkpoint_meta.get("best_validation_score", float("-inf")))
+        best_validation_metric = str(checkpoint_meta.get("best_validation_metric", "translated_vs_native_accept_mass"))
+        resume_info["resumed"] = True
+    elif resume_path is not None:
+        print(f"Resume requested but checkpoint was not found: {resume_path}. Starting fresh.")
+
     total_optimizer_steps = math.ceil(args.train_sequences / args.grad_accum_sequences)
     scheduler = build_scheduler(
         optimizer=optimizer,
@@ -596,15 +1012,44 @@ def main() -> None:
         seed=args.seed,
         streaming=args.stream_train,
         shuffle_buffer_size=args.shuffle_buffer_size,
+        skip_blocks=train_skip_blocks,
     )
 
     optimizer.zero_grad(set_to_none=True)
     log_window = defaultdict(float)
     layer_train_stats = [defaultdict(float) for _ in range(num_small_layers)]
     train_log_rows = []
+    validation_log_rows = []
     pending_updates = 0
     optimizer_step = 0
     train_idx_last = -1
+    latest_training_state_path = os.path.join(args.out_dir, "latest_training_state.pt")
+    best_training_state_path = os.path.join(args.out_dir, "best_train_loss_state.pt")
+    best_validation_state_path = os.path.join(args.out_dir, "best_validation_state.pt")
+    best_validation_score = float("-inf")
+    best_validation_metric = "translated_vs_native_accept_mass"
+
+    def build_checkpoint_meta(sequence_idx: int, current_optimizer_step: int) -> Dict[str, Any]:
+        return {
+            "args": vars(args),
+            "big_model": args.big_model,
+            "small_model": args.small_model,
+            "layer_map": layer_map,
+            "big_kv_dim": big_kv_dim,
+            "small_kv_dim": small_kv_dim,
+            "small_num_kv_heads": small_num_kv_heads,
+            "small_head_dim": small_head_dim,
+            "train_keys": train_keys,
+            "train_values": train_values,
+            "k_rank": k_rank,
+            "v_rank": v_rank,
+            "parameter_summary": parameter_summary,
+            "sequence_idx": int(sequence_idx),
+            "optimizer_step": int(current_optimizer_step),
+            "best_logged_train_loss": float(best_logged_train_loss),
+            "best_validation_score": float(best_validation_score),
+            "best_validation_metric": str(best_validation_metric),
+        }
 
     train_bar = tqdm(train_iter, total=args.train_sequences, desc="Train blocks", unit="block")
     for train_idx, block in enumerate(train_bar):
@@ -703,6 +1148,14 @@ def main() -> None:
             optimizer_step += 1
             pending_updates = 0
 
+            if args.checkpoint_every_sequences > 0 and ((train_idx + 1) % args.checkpoint_every_sequences == 0):
+                save_training_checkpoint(
+                    path=latest_training_state_path,
+                    translator=translator,
+                    optimizer=optimizer,
+                    checkpoint_meta=build_checkpoint_meta(train_idx + 1, optimizer_step),
+                )
+
         should_log = ((train_idx + 1) % args.log_every == 0) or ((train_idx + 1) == args.train_sequences)
         if should_log and log_window["num_sequences"] > 0:
             window_sequences = log_window["num_sequences"]
@@ -736,7 +1189,83 @@ def main() -> None:
                 wandb_log = {f"train/{k}": v for k, v in row.items()}
                 wandb_run.log(wandb_log, step=train_idx + 1)
 
+            if row["avg_total_loss"] < best_logged_train_loss:
+                best_logged_train_loss = float(row["avg_total_loss"])
+                save_training_checkpoint(
+                    path=best_training_state_path,
+                    translator=translator,
+                    optimizer=optimizer if args.resume_optimizer else None,
+                    checkpoint_meta=build_checkpoint_meta(train_idx + 1, optimizer_step),
+                )
+
             log_window = defaultdict(float)
+
+        if args.eval_every_sequences > 0 and ((train_idx + 1) % args.eval_every_sequences == 0):
+            periodic_eval = run_eval_pass(
+                tokenizer=big_tokenizer,
+                seq_len=args.seq_len,
+                max_blocks=periodic_eval_sequences,
+                dataset_name=eval_dataset_name,
+                dataset_config=eval_dataset_config,
+                split=args.eval_split,
+                text_file=eval_text_file,
+                text_column=eval_text_column,
+                streaming=args.stream_eval,
+                shuffle_buffer_size=args.shuffle_buffer_size,
+                split_fallbacks=eval_split_fallbacks,
+                skip_blocks=eval_skip_blocks,
+                big_model=big_model,
+                small_model=small_model,
+                translator=translator,
+                layer_map=layer_map,
+                train_keys=train_keys,
+                train_values=train_values,
+                small_num_kv_heads=small_num_kv_heads,
+                small_head_dim=small_head_dim,
+                small_model_dtype=small_model_dtype,
+                big_kv_dim=big_kv_dim,
+                args=args,
+                progress_desc=f"Val@{train_idx + 1}",
+                leave_progress=False,
+            )
+            validation_metric_name, validation_score = select_validation_score(periodic_eval["next_token_summary"])
+            validation_row: Dict[str, float] = {
+                "sequence_idx": int(train_idx + 1),
+                "optimizer_step": int(optimizer_step),
+                "num_eval_sequences": int(periodic_eval["num_eval_sequences"]),
+                "validation_score": float(validation_score),
+            }
+            for key, value in periodic_eval["reconstruction_summary"].items():
+                validation_row[f"recon_{key}"] = value
+            for key, value in periodic_eval["next_token_summary"].items():
+                validation_row[f"next_{key}"] = value
+            validation_log_rows.append(validation_row)
+
+            if wandb_run is not None:
+                wandb_log = {
+                    "validation/num_eval_sequences": int(periodic_eval["num_eval_sequences"]),
+                    "validation/score": float(validation_score),
+                }
+                for key, value in periodic_eval["reconstruction_summary"].items():
+                    wandb_log[f"validation/reconstruction/{key}"] = value
+                for key, value in periodic_eval["next_token_summary"].items():
+                    wandb_log[f"validation/next_token/{key}"] = value
+                wandb_run.log(wandb_log, step=train_idx + 1)
+
+            if validation_score == validation_score and validation_score > best_validation_score:
+                best_validation_score = float(validation_score)
+                best_validation_metric = validation_metric_name
+                save_training_checkpoint(
+                    path=best_validation_state_path,
+                    translator=translator,
+                    optimizer=optimizer if args.resume_optimizer else None,
+                    checkpoint_meta=build_checkpoint_meta(train_idx + 1, optimizer_step),
+                )
+                if wandb_run is not None:
+                    wandb_run.summary["validation/best_score"] = best_validation_score
+                    wandb_run.summary["validation/best_metric"] = best_validation_metric
+
+            translator.train()
 
     train_bar.close()
 
@@ -752,6 +1281,13 @@ def main() -> None:
     num_train_sequences = train_idx_last + 1 if train_idx_last >= 0 else 0
     if num_train_sequences == 0:
         raise ValueError("Training produced zero token blocks. Check your dataset arguments.")
+
+    save_training_checkpoint(
+        path=latest_training_state_path,
+        translator=translator,
+        optimizer=optimizer,
+        checkpoint_meta=build_checkpoint_meta(num_train_sequences, optimizer_step),
+    )
 
     if log_window["num_sequences"] > 0:
         window_sequences = log_window["num_sequences"]
@@ -783,6 +1319,14 @@ def main() -> None:
         if wandb_run is not None:
             wandb_log = {f"train/{k}": v for k, v in row.items()}
             wandb_run.log(wandb_log, step=num_train_sequences)
+        if row["avg_total_loss"] < best_logged_train_loss:
+            best_logged_train_loss = float(row["avg_total_loss"])
+            save_training_checkpoint(
+                path=best_training_state_path,
+                translator=translator,
+                optimizer=optimizer if args.resume_optimizer else None,
+                checkpoint_meta=build_checkpoint_meta(num_train_sequences, optimizer_step),
+            )
 
     translator.eval()
 
@@ -838,207 +1382,42 @@ def main() -> None:
 
     print("\nEvaluating reconstruction + next-token behavior...")
     translator = translator.to(args.small_device).eval()
-    identity_possible = big_kv_dim == small_kv_dim
-
-    recon_rows = []
-    next_token_rows = []
-    eval_iter = iter_token_blocks(
+    final_eval = run_eval_pass(
         tokenizer=big_tokenizer,
         seq_len=args.seq_len,
         max_blocks=args.eval_sequences,
-        dataset_name=args.dataset_name,
-        dataset_config=args.dataset_config,
+        dataset_name=eval_dataset_name,
+        dataset_config=eval_dataset_config,
         split=args.eval_split,
-        text_file=args.text_file,
-        text_column=args.text_column,
-        shuffle=False,
-        seed=args.seed,
+        text_file=eval_text_file,
+        text_column=eval_text_column,
         streaming=args.stream_eval,
         shuffle_buffer_size=args.shuffle_buffer_size,
+        split_fallbacks=eval_split_fallbacks,
+        skip_blocks=eval_skip_blocks,
+        big_model=big_model,
+        small_model=small_model,
+        translator=translator,
+        layer_map=layer_map,
+        train_keys=train_keys,
+        train_values=train_values,
+        small_num_kv_heads=small_num_kv_heads,
+        small_head_dim=small_head_dim,
+        small_model_dtype=small_model_dtype,
+        big_kv_dim=big_kv_dim,
+        args=args,
+        progress_desc="Eval blocks",
+        leave_progress=False,
     )
-
-    eval_bar = tqdm(eval_iter, total=args.eval_sequences, desc="Eval blocks", unit="block")
-    eval_idx_last = -1
-    for eval_idx, block in enumerate(eval_bar):
-        eval_idx_last = eval_idx
-        full_ids_big = block.unsqueeze(0).to(args.big_device)
-        full_ids_small = block.unsqueeze(0).to(args.small_device)
-
-        with torch.no_grad():
-            big_full_out = big_model(input_ids=full_ids_big, use_cache=True)
-            small_full_out = small_model(input_ids=full_ids_small, use_cache=True)
-        big_full_legacy = as_legacy_cache(big_full_out.past_key_values)
-        small_full_legacy = as_legacy_cache(small_full_out.past_key_values)
-        translated_full_legacy = translator.translate_legacy_cache(
-            big_legacy_cache=big_full_legacy,
-            native_small_legacy=small_full_legacy,
-            layer_map=layer_map,
-            small_num_kv_heads=small_num_kv_heads,
-            small_head_dim=small_head_dim,
-            out_dtype=small_model_dtype,
-        )
-        identity_full_legacy = None
-        if identity_possible:
-            identity_full_legacy = identity_translate_legacy_cache(
-                big_legacy_cache=big_full_legacy,
-                native_small_legacy=small_full_legacy,
-                layer_map=layer_map,
-                small_num_kv_heads=small_num_kv_heads,
-                small_head_dim=small_head_dim,
-                out_device=translator.module_device(),
-                out_dtype=small_model_dtype,
-                translate_keys=train_keys,
-                translate_values=train_values,
-            )
-
-        for layer_idx in range(num_small_layers):
-            row = {
-                "eval_idx": int(eval_idx),
-                "layer_idx": int(layer_idx),
-                "big_layer_idx": int(layer_map[layer_idx]),
-            }
-            k_ref, v_ref = small_full_legacy[layer_idx]
-            k_hat, v_hat = translated_full_legacy[layer_idx]
-
-            if train_keys:
-                xk = flatten_kv(k_hat)
-                yk = flatten_kv(k_ref)
-                row["k_mse"] = float(F.mse_loss(xk.float(), yk.float()).item())
-                row["k_cos"] = mean_cosine_rows(xk, yk)
-                if identity_possible:
-                    k_id, _ = identity_full_legacy[layer_idx]
-                    xk_id = flatten_kv(k_id)
-                    row["k_mse_identity"] = float(F.mse_loss(xk_id.float(), yk.float()).item())
-                    row["k_cos_identity"] = mean_cosine_rows(xk_id, yk)
-
-            if train_values:
-                xv = flatten_kv(v_hat)
-                yv = flatten_kv(v_ref)
-                row["v_mse"] = float(F.mse_loss(xv.float(), yv.float()).item())
-                row["v_cos"] = mean_cosine_rows(xv, yv)
-                if identity_possible:
-                    _, v_id = identity_full_legacy[layer_idx]
-                    xv_id = flatten_kv(v_id)
-                    row["v_mse_identity"] = float(F.mse_loss(xv_id.float(), yv.float()).item())
-                    row["v_cos_identity"] = mean_cosine_rows(xv_id, yv)
-
-            recon_rows.append(row)
-
-        context_big = full_ids_big[:, :-1]
-        context_small = full_ids_small[:, :-1]
-        current_big = full_ids_big[:, -1:]
-        current_small = full_ids_small[:, -1:]
-
-        with torch.no_grad():
-            big_context_out = big_model(input_ids=context_big, use_cache=True)
-            small_context_out = small_model(input_ids=context_small, use_cache=True)
-            big_next_out = big_model(
-                input_ids=current_big,
-                past_key_values=big_context_out.past_key_values,
-                use_cache=True,
-            )
-            small_native_next_out = small_model(
-                input_ids=current_small,
-                past_key_values=small_context_out.past_key_values,
-                use_cache=True,
-            )
-
-        big_context_legacy = as_legacy_cache(big_context_out.past_key_values)
-        small_context_legacy = as_legacy_cache(small_context_out.past_key_values)
-
-        translated_context_legacy = translator.translate_legacy_cache(
-            big_legacy_cache=big_context_legacy,
-            native_small_legacy=small_context_legacy,
-            layer_map=layer_map,
-            small_num_kv_heads=small_num_kv_heads,
-            small_head_dim=small_head_dim,
-            out_dtype=small_model_dtype,
-        )
-
-        eval_caches = {"translated": translated_context_legacy}
-        if train_keys and train_values:
-            all_layers = list(range(num_small_layers))
-            eval_caches["konly"] = merge_legacy_caches(
-                native_small_legacy=small_context_legacy,
-                translated_small_legacy=translated_context_legacy,
-                translated_k_layers=all_layers,
-                translated_v_layers=[],
-            )
-            eval_caches["vonly"] = merge_legacy_caches(
-                native_small_legacy=small_context_legacy,
-                translated_small_legacy=translated_context_legacy,
-                translated_k_layers=[],
-                translated_v_layers=all_layers,
-            )
-
-        if identity_possible:
-            eval_caches["identity"] = identity_translate_legacy_cache(
-                big_legacy_cache=big_context_legacy,
-                native_small_legacy=small_context_legacy,
-                layer_map=layer_map,
-                small_num_kv_heads=small_num_kv_heads,
-                small_head_dim=small_head_dim,
-                out_device=translator.module_device(),
-                out_dtype=small_model_dtype,
-                translate_keys=train_keys,
-                translate_values=train_values,
-            )
-
-        eval_outputs = {}
-        for mode_name, mode_legacy in eval_caches.items():
-            with torch.no_grad():
-                eval_outputs[mode_name] = small_model(
-                    input_ids=current_small,
-                    past_key_values=legacy_to_cache(mode_legacy),
-                    use_cache=True,
-                )
-
-        big_logits = big_next_out.logits[:, -1, :].to(args.small_device)
-        small_native_logits = small_native_next_out.logits[:, -1, :]
-        translated_logits = eval_outputs["translated"].logits[:, -1, :]
-
-        next_row = {
-            "eval_idx": int(eval_idx),
-            **metric_prefix_dict("native_vs_big", big_logits, small_native_logits, topk=args.topk),
-            **metric_prefix_dict("translated_vs_big", big_logits, translated_logits, topk=args.topk),
-            **metric_prefix_dict("translated_vs_native", small_native_logits, translated_logits, topk=args.topk),
-        }
-        if "konly" in eval_outputs:
-            konly_logits = eval_outputs["konly"].logits[:, -1, :]
-            next_row.update(metric_prefix_dict("konly_vs_big", big_logits, konly_logits, topk=args.topk))
-            next_row.update(metric_prefix_dict("konly_vs_native", small_native_logits, konly_logits, topk=args.topk))
-        if "vonly" in eval_outputs:
-            vonly_logits = eval_outputs["vonly"].logits[:, -1, :]
-            next_row.update(metric_prefix_dict("vonly_vs_big", big_logits, vonly_logits, topk=args.topk))
-            next_row.update(metric_prefix_dict("vonly_vs_native", small_native_logits, vonly_logits, topk=args.topk))
-        if "identity" in eval_outputs:
-            identity_logits = eval_outputs["identity"].logits[:, -1, :]
-            next_row.update(metric_prefix_dict("identity_vs_big", big_logits, identity_logits, topk=args.topk))
-            next_row.update(metric_prefix_dict("identity_vs_native", small_native_logits, identity_logits, topk=args.topk))
-
-        next_token_rows.append(next_row)
-
-    eval_bar.close()
-
-    num_eval_sequences = eval_idx_last + 1 if eval_idx_last >= 0 else 0
-    if num_eval_sequences == 0:
-        raise ValueError("Evaluation produced zero token blocks. Check your eval split arguments.")
-
-    recon_summary = aggregate_metric_rows(recon_rows, exclude=["eval_idx", "layer_idx", "big_layer_idx"])
-    next_summary = aggregate_metric_rows(next_token_rows, exclude=["eval_idx"])
-
-    reconstruction_per_layer = []
-    per_layer_groups = defaultdict(list)
-    for row in recon_rows:
-        per_layer_groups[int(row["layer_idx"])].append(row)
-    for layer_idx in sorted(per_layer_groups.keys()):
-        summary = aggregate_metric_rows(
-            per_layer_groups[layer_idx],
-            exclude=["eval_idx", "layer_idx", "big_layer_idx"],
-        )
-        summary["layer_idx"] = int(layer_idx)
-        summary["big_layer_idx"] = int(layer_map[layer_idx])
-        reconstruction_per_layer.append(summary)
+    recon_rows = final_eval["recon_rows"]
+    next_token_rows = final_eval["next_token_rows"]
+    reconstruction_per_layer = final_eval["reconstruction_per_layer"]
+    recon_summary = final_eval["reconstruction_summary"]
+    next_summary = final_eval["next_token_summary"]
+    num_eval_sequences = final_eval["num_eval_sequences"]
+    identity_possible = final_eval["identity_possible"]
+    best_validation_score_out = float(best_validation_score) if validation_log_rows else float("nan")
+    best_validation_metric_out = str(best_validation_metric) if validation_log_rows else "unavailable"
 
     summary = {
         "args": vars(args),
@@ -1050,6 +1429,14 @@ def main() -> None:
         "small_num_layers": num_small_layers,
         "big_kv_dim": big_kv_dim,
         "small_kv_dim": small_kv_dim,
+        "eval_dataset_name": eval_dataset_name,
+        "eval_dataset_config": eval_dataset_config,
+        "eval_split": args.eval_split,
+        "eval_split_fallbacks": eval_split_fallbacks,
+        "train_skip_blocks": int(train_skip_blocks),
+        "eval_skip_blocks": int(eval_skip_blocks),
+        "same_dataset_holdout_blocks": int(args.same_dataset_holdout_blocks),
+        "periodic_eval_sequences": int(periodic_eval_sequences),
         "train_targets": {
             "keys": bool(train_keys),
             "values": bool(train_values),
@@ -1059,6 +1446,12 @@ def main() -> None:
         "num_eval_sequences": int(num_eval_sequences),
         "optimizer_steps": int(optimizer_step),
         "translator_path": translator_path,
+        "latest_training_state_path": latest_training_state_path,
+        "best_training_state_path": best_training_state_path,
+        "best_validation_state_path": best_validation_state_path,
+        "resume_info": resume_info,
+        "best_validation_score": best_validation_score_out,
+        "best_validation_metric": best_validation_metric_out,
         "identity_possible": bool(identity_possible),
         "reconstruction_summary": recon_summary,
         "next_token_summary": next_summary,
@@ -1066,6 +1459,7 @@ def main() -> None:
 
     write_csv(parameter_rows, os.path.join(args.out_dir, "parameter_summary.csv"))
     write_csv(train_log_rows, os.path.join(args.out_dir, "train_log.csv"))
+    write_csv(validation_log_rows, os.path.join(args.out_dir, "validation_log.csv"))
     write_csv(train_per_layer_rows, os.path.join(args.out_dir, "train_per_layer.csv"))
     write_csv(recon_rows, os.path.join(args.out_dir, "reconstruction_rows.csv"))
     write_csv(reconstruction_per_layer, os.path.join(args.out_dir, "reconstruction_per_layer.csv"))
@@ -1085,6 +1479,12 @@ def main() -> None:
         wandb_run.summary["data/num_eval_sequences"] = int(num_eval_sequences)
         wandb_run.summary["optimization/optimizer_steps"] = int(optimizer_step)
         wandb_run.summary["artifacts/out_dir"] = args.out_dir
+        wandb_run.summary["resume/resumed"] = bool(resume_info["resumed"])
+        wandb_run.summary["resume/optimizer_state_loaded"] = bool(resume_info["optimizer_state_loaded"])
+        wandb_run.summary["validation/best_score"] = best_validation_score_out
+        wandb_run.summary["validation/best_metric"] = best_validation_metric_out
+        if resume_info["resume_path"] is not None:
+            wandb_run.summary["resume/path"] = str(resume_info["resume_path"])
 
         for row in train_per_layer_rows:
             layer_idx = int(row["layer_idx"])
@@ -1101,6 +1501,7 @@ def main() -> None:
                 wandb_run.summary[f"eval_per_layer/layer_{layer_idx}/{key}"] = value
 
         log_wandb_table(wandb_run, "tables/parameter_summary", parameter_rows)
+        log_wandb_table(wandb_run, "tables/validation_log", validation_log_rows)
         log_wandb_table(wandb_run, "tables/train_per_layer", train_per_layer_rows)
         log_wandb_table(wandb_run, "tables/reconstruction_per_layer", reconstruction_per_layer)
         log_wandb_table(wandb_run, "tables/next_token_rows", next_token_rows)
@@ -1110,8 +1511,12 @@ def main() -> None:
             artifact_name=f"kv-factorized-{wandb_run.id}",
             file_paths=[
                 translator_path,
+                latest_training_state_path,
+                best_training_state_path,
+                best_validation_state_path,
                 os.path.join(args.out_dir, "parameter_summary.csv"),
                 os.path.join(args.out_dir, "train_log.csv"),
+                os.path.join(args.out_dir, "validation_log.csv"),
                 os.path.join(args.out_dir, "train_per_layer.csv"),
                 os.path.join(args.out_dir, "reconstruction_rows.csv"),
                 os.path.join(args.out_dir, "reconstruction_per_layer.csv"),
@@ -1130,8 +1535,12 @@ def main() -> None:
 
     print("\nSaved:")
     print(f"  {translator_path}")
+    print(f"  {latest_training_state_path}")
+    print(f"  {best_training_state_path}")
+    print(f"  {best_validation_state_path}")
     print(f"  {os.path.join(args.out_dir, 'parameter_summary.csv')}")
     print(f"  {os.path.join(args.out_dir, 'train_log.csv')}")
+    print(f"  {os.path.join(args.out_dir, 'validation_log.csv')}")
     print(f"  {os.path.join(args.out_dir, 'train_per_layer.csv')}")
     print(f"  {os.path.join(args.out_dir, 'reconstruction_rows.csv')}")
     print(f"  {os.path.join(args.out_dir, 'reconstruction_per_layer.csv')}")
