@@ -14,6 +14,7 @@ This mini bundle gives you two runnable experiments for the project idea:
 
 3. `fit_kv_factorized_probe.py`
    - Trains a **streamed low-rank neural translator** for the KV cache with a bottleneck of shape `D -> R -> D` per layer (separate K/V modules).
+   - Can optionally deepen the per-layer MLP to `D -> R -> ... -> R -> D`, including V-only extra depth if values seem harder to translate than keys.
    - Designed for much larger Hugging Face corpora by reading token blocks online instead of materializing the full split in memory.
    - Evaluates both:
      - per-layer cache reconstruction
@@ -209,6 +210,7 @@ python fit_kv_factorized_probe.py \
   --position_stride 2 \
   --max_rows_per_layer_per_block 128 \
   --rank 64 \
+  --v_hidden_layers 1 \
   --lr 3e-4 \
   --weight_decay 1e-4 \
   --cos_loss_weight 0.1 \
@@ -216,6 +218,17 @@ python fit_kv_factorized_probe.py \
 ```
 
 For a much larger corpus, replace `--dataset_name` / `--dataset_config` with your preferred Hugging Face dataset and keep `--stream_train` enabled.
+
+If you want a deeper value translator while keeping the key path shallow, use:
+
+```bash
+python fit_kv_factorized_probe.py \
+  ... \
+  --k_hidden_layers 0 \
+  --v_hidden_layers 1
+```
+
+This changes the value modules from `D -> R -> D` to `D -> R -> R -> D`.
 
 Most useful outputs:
 

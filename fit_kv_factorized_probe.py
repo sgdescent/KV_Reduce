@@ -168,6 +168,7 @@ class LowRankResidualTranslator(nn.Module):
         d_in: int,
         d_out: int,
         rank: int,
+        hidden_layers: int = 0,
         dropout: float = 0.0,
         use_layernorm: bool = False,
         use_bias: bool = False,
@@ -176,12 +177,18 @@ class LowRankResidualTranslator(nn.Module):
         super().__init__()
         if rank < 1:
             raise ValueError("rank must be >= 1")
+        if hidden_layers < 0:
+            raise ValueError("hidden_layers must be >= 0")
         self.d_in = d_in
         self.d_out = d_out
         self.rank = rank
+        self.hidden_layers = hidden_layers
         self.use_residual = residual and d_in == d_out
         self.norm = nn.LayerNorm(d_in) if use_layernorm else nn.Identity()
         self.down = nn.Linear(d_in, rank, bias=use_bias)
+        self.hidden = nn.ModuleList(
+            [nn.Linear(rank, rank, bias=use_bias) for _ in range(hidden_layers)]
+        )
         self.up = nn.Linear(rank, d_out, bias=use_bias)
         self.act = nn.GELU()
         self.dropout = nn.Dropout(dropout)
@@ -191,6 +198,11 @@ class LowRankResidualTranslator(nn.Module):
         nn.init.xavier_uniform_(self.down.weight)
         if self.down.bias is not None:
             nn.init.zeros_(self.down.bias)
+
+        for layer in self.hidden:
+            nn.init.xavier_uniform_(layer.weight)
+            if layer.bias is not None:
+                nn.init.zeros_(layer.bias)
 
         if self.use_residual:
             nn.init.zeros_(self.up.weight)
@@ -207,6 +219,10 @@ class LowRankResidualTranslator(nn.Module):
         h = self.down(h)
         h = self.act(h)
         h = self.dropout(h)
+        for layer in self.hidden:
+            h = layer(h)
+            h = self.act(h)
+            h = self.dropout(h)
         h = self.up(h)
         if residual is not None:
             h = h + residual
@@ -221,6 +237,8 @@ class FactorizedKVTranslator(nn.Module):
         d_out: int,
         k_rank: Optional[int],
         v_rank: Optional[int],
+        k_hidden_layers: int,
+        v_hidden_layers: int,
         dropout: float,
         use_layernorm: bool,
         use_bias: bool,
@@ -237,6 +255,7 @@ class FactorizedKVTranslator(nn.Module):
                     d_in=d_in,
                     d_out=d_out,
                     rank=int(k_rank),
+                    hidden_layers=int(k_hidden_layers),
                     dropout=dropout,
                     use_layernorm=use_layernorm,
                     use_bias=use_bias,
@@ -251,6 +270,7 @@ class FactorizedKVTranslator(nn.Module):
                     d_in=d_in,
                     d_out=d_out,
                     rank=int(v_rank),
+                    hidden_layers=int(v_hidden_layers),
                     dropout=dropout,
                     use_layernorm=use_layernorm,
                     use_bias=use_bias,
@@ -772,6 +792,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rank", type=int, default=64)
     parser.add_argument("--k_rank", type=int, default=None)
     parser.add_argument("--v_rank", type=int, default=None)
+    parser.add_argument("--hidden_layers", type=int, default=0)
+    parser.add_argument("--k_hidden_layers", type=int, default=None)
+    parser.add_argument("--v_hidden_layers", type=int, default=None)
     parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--use_layernorm", action="store_true")
     parser.add_argument("--use_bias", action="store_true")
@@ -837,6 +860,10 @@ def main() -> None:
     train_keys, train_values = parse_target_spec(args.train_targets)
     k_rank = args.k_rank if args.k_rank is not None else args.rank
     v_rank = args.v_rank if args.v_rank is not None else args.rank
+    k_hidden_layers = args.k_hidden_layers if args.k_hidden_layers is not None else args.hidden_layers
+    v_hidden_layers = args.v_hidden_layers if args.v_hidden_layers is not None else args.hidden_layers
+    if k_hidden_layers < 0 or v_hidden_layers < 0:
+        raise ValueError("k_hidden_layers and v_hidden_layers must be >= 0")
     eval_dataset_name = args.eval_dataset_name or args.dataset_name
     eval_dataset_config = args.eval_dataset_config if args.eval_dataset_config is not None else args.dataset_config
     eval_text_file = args.eval_text_file or args.text_file
@@ -919,6 +946,8 @@ def main() -> None:
         d_out=small_kv_dim,
         k_rank=k_rank,
         v_rank=v_rank,
+        k_hidden_layers=k_hidden_layers,
+        v_hidden_layers=v_hidden_layers,
         dropout=args.dropout,
         use_layernorm=args.use_layernorm,
         use_bias=args.use_bias,
@@ -945,6 +974,8 @@ def main() -> None:
         wandb_run.summary["data/train_streaming"] = bool(args.stream_train)
         wandb_run.summary["data/train_targets_keys"] = bool(train_keys)
         wandb_run.summary["data/train_targets_values"] = bool(train_values)
+        wandb_run.summary["model/k_hidden_layers"] = int(k_hidden_layers)
+        wandb_run.summary["model/v_hidden_layers"] = int(v_hidden_layers)
         wandb_run.summary["data/train_skip_blocks"] = int(train_skip_blocks)
         wandb_run.summary["data/eval_skip_blocks"] = int(eval_skip_blocks)
         wandb_run.summary["data/same_dataset_holdout_blocks"] = int(args.same_dataset_holdout_blocks)
@@ -1043,6 +1074,8 @@ def main() -> None:
             "train_values": train_values,
             "k_rank": k_rank,
             "v_rank": v_rank,
+            "k_hidden_layers": int(k_hidden_layers),
+            "v_hidden_layers": int(v_hidden_layers),
             "parameter_summary": parameter_summary,
             "sequence_idx": int(sequence_idx),
             "optimizer_step": int(current_optimizer_step),
@@ -1371,6 +1404,8 @@ def main() -> None:
             "train_values": train_values,
             "k_rank": k_rank,
             "v_rank": v_rank,
+            "k_hidden_layers": int(k_hidden_layers),
+            "v_hidden_layers": int(v_hidden_layers),
             "use_layernorm": bool(args.use_layernorm),
             "use_bias": bool(args.use_bias),
             "residual": bool(not args.no_residual),
@@ -1440,6 +1475,15 @@ def main() -> None:
         "train_targets": {
             "keys": bool(train_keys),
             "values": bool(train_values),
+        },
+        "translator_architecture": {
+            "k_rank": int(k_rank),
+            "v_rank": int(v_rank),
+            "k_hidden_layers": int(k_hidden_layers),
+            "v_hidden_layers": int(v_hidden_layers),
+            "use_layernorm": bool(args.use_layernorm),
+            "use_bias": bool(args.use_bias),
+            "residual": bool(not args.no_residual),
         },
         "parameter_summary": parameter_summary,
         "num_train_sequences": int(num_train_sequences),
