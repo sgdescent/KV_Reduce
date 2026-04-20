@@ -38,7 +38,7 @@ Logs (Weights & Biases):
 import argparse
 import os
 import atexit
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -55,6 +55,8 @@ from kv_utils import (
     load_tokenizer,
     set_seed,
     tokenizer_compatibility_report,
+    unflatten_kv,
+    write_json,
 )
 
 def init_wandb(args: argparse.Namespace) -> Optional[any]:
@@ -137,6 +139,61 @@ def affine_apply(x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor) -> t
     # x: [..., d_in], weight: [d_out, d_in], bias: [d_out]
     return F.linear(x.float(), weight.float(), bias.float())
 
+
+def rotate_half(x: torch.Tensor) -> torch.Tensor:
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def apply_rotary_pos_emb_q_only(
+    q: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    unsqueeze_dim: int = 1,
+) -> torch.Tensor:
+    cos = cos.unsqueeze(unsqueeze_dim).to(dtype=q.dtype, device=q.device)
+    sin = sin.unsqueeze(unsqueeze_dim).to(dtype=q.dtype, device=q.device)
+    return (q * cos) + (rotate_half(q) * sin)
+
+
+def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
+    if n_rep == 1:
+        return hidden_states
+    batch, num_key_value_heads, seqlen, head_dim = hidden_states.shape
+    hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, seqlen, head_dim)
+    return hidden_states.reshape(batch, num_key_value_heads * n_rep, seqlen, head_dim)
+
+
+def compute_shared_attention_weights(
+    *,
+    attn_module,
+    hidden_states: torch.Tensor,
+    position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+    attention_mask: Optional[torch.Tensor],
+    mapped_key_states: torch.Tensor,
+) -> torch.Tensor:
+    bsz, seq_len, _ = hidden_states.shape
+    hidden_shape = (bsz, seq_len, attn_module.num_heads, attn_module.head_dim)
+    query_states = attn_module.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
+
+    cos, sin = position_embeddings
+    query_states = apply_rotary_pos_emb_q_only(query_states, cos, sin)
+
+    num_kv_heads = mapped_key_states.shape[1]
+    if attn_module.num_heads % num_kv_heads != 0:
+        raise ValueError(
+            f"num_heads={attn_module.num_heads} is not divisible by mapped num_kv_heads={num_kv_heads}"
+        )
+    key_states = repeat_kv(mapped_key_states, attn_module.num_heads // num_kv_heads)
+    scaling = float(getattr(attn_module, "scaling", attn_module.head_dim ** -0.5))
+
+    attn_scores = torch.matmul(query_states.float(), key_states.transpose(2, 3).float()) * scaling
+    if attention_mask is not None:
+        attn_scores = attn_scores + attention_mask.to(device=attn_scores.device, dtype=attn_scores.dtype)
+    attn_weights = torch.softmax(attn_scores, dim=-1, dtype=torch.float32).to(query_states.dtype)
+    return attn_weights
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--big_model", type=str, default="Qwen/Qwen2.5-3B")
@@ -153,6 +210,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seq_len", type=int, default=256)
     parser.add_argument("--train_sequences", type=int, default=512)
     parser.add_argument("--lambda_reg", type=float, default=1e-4)
+    parser.add_argument(
+        "--output_routing_source",
+        type=str,
+        choices=["native", "shared"],
+        default="shared",
+        help="Use native draft attentions or recompute shared attentions from the learned key map when solving O.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--shuffle_train", action="store_true")
     parser.add_argument("--allow_incompatible_tokenizers", action="store_true")
@@ -185,25 +249,38 @@ def main() -> None:
     num_small_layers = int(small_model.config.num_hidden_layers)
     big_kv_dim = get_kv_dim(big_model.config)
     small_kv_dim = get_kv_dim(small_model.config)
+    small_kv_heads = get_num_kv_heads(small_model.config)
     small_q_heads = small_model.config.num_attention_heads
     small_head_dim = get_head_dim(small_model.config)
     small_d_model = small_model.config.hidden_size
 
     layer_map = depth_layer_map(num_big_layers, num_small_layers)
     print(f"Layer map: {layer_map}")
+    print(f"Output routing source: {args.output_routing_source}")
 
     # Intercept Y_draft (output of self_attn block)
     draft_attention_outputs = {}
+    draft_attention_inputs: Dict[int, Dict[str, Any]] = {}
     def get_attn_hook(layer_idx):
-        def hook(module, input, output):
+        def hook(module, args, kwargs, output):
             # For causal LM, self_attn output is a tuple (attn_output, attn_weights, past_key_value)
             draft_attention_outputs[layer_idx] = output[0].detach()
+            hidden_states = kwargs.get("hidden_states")
+            if hidden_states is None and len(args) > 0:
+                hidden_states = args[0]
+            attention_mask = kwargs.get("attention_mask")
+            position_embeddings = kwargs.get("position_embeddings")
+            draft_attention_inputs[layer_idx] = {
+                "hidden_states": hidden_states.detach() if hidden_states is not None else None,
+                "attention_mask": attention_mask.detach() if attention_mask is not None else None,
+                "position_embeddings": tuple(t.detach() for t in position_embeddings) if position_embeddings is not None else None,
+            }
         return hook
 
     # Register hooks on small model's attention layers
     hooks = []
     for i, layer in enumerate(small_model.model.layers):
-        h = layer.self_attn.register_forward_hook(get_attn_hook(i))
+        h = layer.self_attn.register_forward_hook(get_attn_hook(i), with_kwargs=True)
         hooks.append(h)
 
     # ---------------------------------------------------------------------------------
@@ -284,11 +361,18 @@ def main() -> None:
 
         log_dict = {}
         for small_layer_idx, big_layer_idx in enumerate(layer_map):
-            _, v_big = big_legacy[big_layer_idx]
+            k_big, v_big = big_legacy[big_layer_idx]
+            k_big = k_big.to(args.small_device)
             v_big = v_big.to(args.small_device) # [B, target_kv_heads, Seq, head_dim]
             
             A_draft = attentions[small_layer_idx].to(args.small_device) # [B, draft_q_heads, Seq, Seq]
             Y_draft = draft_attention_outputs[small_layer_idx].to(args.small_device) # [B, Seq, d_model]
+            layer_inputs = draft_attention_inputs.get(small_layer_idx, {})
+            hidden_states_in = layer_inputs.get("hidden_states")
+            attention_mask = layer_inputs.get("attention_mask")
+            position_embeddings = layer_inputs.get("position_embeddings")
+            if hidden_states_in is None or position_embeddings is None:
+                raise RuntimeError("Missing draft attention inputs needed to compute the selected output routing source.")
             
             bsz, target_kv_heads, seq_len, head_dim = v_big.shape
             draft_q_heads = A_draft.shape[1] 
@@ -296,13 +380,27 @@ def main() -> None:
             if draft_q_heads % target_kv_heads != 0:
                 raise ValueError("Draft Q heads must be divisible by Target KV heads for GQA alignment.")
             repeats = draft_q_heads // target_kv_heads
+
+            if args.output_routing_source == "shared":
+                k_weight, k_bias = k_accs[small_layer_idx].get_weights()
+                k_shared_flat = affine_apply(flatten_kv(k_big), k_weight, k_bias)
+                k_shared = unflatten_kv(k_shared_flat, bsz, seq_len, small_kv_heads, small_head_dim)
+                A_routing = compute_shared_attention_weights(
+                    attn_module=small_model.model.layers[small_layer_idx].self_attn,
+                    hidden_states=hidden_states_in.to(args.small_device),
+                    position_embeddings=position_embeddings,
+                    attention_mask=attention_mask,
+                    mapped_key_states=k_shared.to(args.small_device),
+                )
+            else:
+                A_routing = A_draft
             
             # Expand V_target to match drafted q_heads
             v_expanded = v_big.unsqueeze(2).expand(bsz, target_kv_heads, repeats, seq_len, head_dim)
             v_expanded = v_expanded.reshape(bsz, draft_q_heads, seq_len, head_dim)
             
-            # H_target_tilde = A_draft @ V_expanded
-            H_target_tilde = torch.matmul(A_draft.float(), v_expanded.float()) # [B, draft_q_heads, Seq, head_dim]
+            # H_target_tilde = A_routing @ V_expanded
+            H_target_tilde = torch.matmul(A_routing.float(), v_expanded.float()) # [B, draft_q_heads, Seq, head_dim]
             
             # Flatten to [B*Seq, draft_q_heads * head_dim]
             # Must transpose shape from [B, H, Seq, D] to [B, Seq, H, D] then flatten
@@ -344,8 +442,29 @@ def main() -> None:
         "big_model": args.big_model, "small_model": args.small_model, "layer_map": layer_map,
         "k_weights": k_weights, "k_biases": k_biases,
         "o_weights": o_weights, "o_biases": o_biases,
+        "lambda_reg": float(args.lambda_reg),
+        "output_routing_source": args.output_routing_source,
+        "small_q_heads": int(small_q_heads),
+        "small_kv_heads": int(small_kv_heads),
+        "small_head_dim": int(small_head_dim),
+        "small_d_model": int(small_d_model),
     }
     torch.save(state, os.path.join(args.out_dir, "absorbed_translator.pt"))
+    write_json(
+        {
+            "big_model": args.big_model,
+            "small_model": args.small_model,
+            "layer_map": layer_map,
+            "lambda_reg": float(args.lambda_reg),
+            "output_routing_source": args.output_routing_source,
+            "small_q_heads": int(small_q_heads),
+            "small_kv_heads": int(small_kv_heads),
+            "small_head_dim": int(small_head_dim),
+            "small_d_model": int(small_d_model),
+            "train_sequences": int(args.train_sequences),
+        },
+        os.path.join(args.out_dir, "summary.json"),
+    )
     print("Done!")
     
     # Remove hooks

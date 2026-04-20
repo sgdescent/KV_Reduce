@@ -52,7 +52,7 @@ This step occurs once before the inference server starts. It requires a small ca
     * Use Ordinary Least Squares (OLS) to solve $K_{target} W_{K\_transform} \approx K_{draft}$.
     * Compute $W_{Q\_new} = W_{Q\_original} W_{K\_transform}^T$.
 4.  **Solve $W_{O\_new}$:**
-    * Compute $\tilde{H}_{target} = A_{draft} \cdot V_{target}$.
+    * Either keep the native draft routing and compute $\tilde{H}_{target} = A_{draft} \cdot V_{target}$, or recompute a shared-routing attention matrix $A_{shared}$ using the learned key map and solve against $\tilde{H}_{target} = A_{shared} \cdot V_{target}$.
     * Use Ridge Regression to solve $\tilde{H}_{target} W_{O\_new} \approx Y_{draft}$.
     * *Note: Ridge Regression is preferred over OLS here to prevent over-indexing on semantic outliers in the calibration set.*
 
@@ -109,3 +109,19 @@ def draft_model_forward(hidden_states, target_kv_cache, layer_map):
 1.  **RoPE Synchronization:** The positional embeddings are the most sensitive failure point. If the Target model applies RoPE to its Keys before caching, the Draft model *must* apply the Target model's specific RoPE base frequencies to $Q_{dilated}$ before computing the dot product. Do not use the Draft model's native RoPE frequencies.
 2.  **Layer Topology Mapping:** Do not assume a strict linear mapping (e.g., Draft Layer 1 $\rightarrow$ Target Layer 2). Before solving the weights, perform a cosine similarity search across all Target caches to find which Target layer's $V_{target}$ requires the least aggressive $W_O$ transformation to yield the Draft's $Y_{draft}$. 
 3.  **Numerical Stability:** When solving for $W_{O\_new}$, apply `RMSNorm` scaling to $\tilde{H}_{target}$ if the variance of the Target Values drastically exceeds the variance expected by the Draft's residual stream.
+
+## 6. Current Repo Support
+
+The current repository now supports both variants of the O-side solve:
+
+- `fit_kv_absorbed.py --output_routing_source native`
+  - Reproduces the original formulation that uses the draft model's native attention weights.
+- `fit_kv_absorbed.py --output_routing_source shared`
+  - Recomputes the routing matrix from the learned key map before solving the absorbed output projection.
+
+For end-to-end comparison, `eval_absorbed_spec_decode.py` runs a greedy speculative-decoding integration test that compares:
+
+- native draft speculation
+- absorbed shared-cache draft speculation
+
+over a fixed prompt set, and reports acceptance-style metrics plus whether each method reproduces the target model's greedy continuation.
