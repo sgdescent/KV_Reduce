@@ -84,6 +84,19 @@ def rotate_half(x: torch.Tensor) -> torch.Tensor:
     return torch.cat((-x2, x1), dim=-1)
 
 
+def apply_rotary_pos_emb_pair(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    cos = cos.unsqueeze(1).to(dtype=q.dtype, device=q.device)
+    sin = sin.unsqueeze(1).to(dtype=q.dtype, device=q.device)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
+
+
 def apply_rotary_pos_emb_q_only(q: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
     cos = cos.unsqueeze(1).to(dtype=q.dtype, device=q.device)
     sin = sin.unsqueeze(1).to(dtype=q.dtype, device=q.device)
@@ -117,6 +130,74 @@ def load_absorbed_state(path: str) -> Dict[str, Any]:
     return state
 
 
+def parse_shared_layer_spec(spec: str, num_layers: int) -> List[int]:
+    spec = spec.strip().lower()
+    if spec == "all":
+        return list(range(num_layers))
+    if spec == "none":
+        return []
+    if spec in {"every_other", "even"}:
+        return list(range(0, num_layers, 2))
+    if spec == "odd":
+        return list(range(1, num_layers, 2))
+    if spec.startswith("top:"):
+        count = max(0, min(num_layers, int(spec.split(":", 1)[1])))
+        return list(range(num_layers - count, num_layers))
+    if spec.startswith("bottom:"):
+        count = max(0, min(num_layers, int(spec.split(":", 1)[1])))
+        return list(range(count))
+    if spec.startswith("middle:"):
+        count = max(0, min(num_layers, int(spec.split(":", 1)[1])))
+        start = max(0, (num_layers - count) // 2)
+        return list(range(start, start + count))
+    if spec.startswith("list:"):
+        spec = spec.split(":", 1)[1]
+
+    out = []
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        idx = int(item)
+        if idx < 0 or idx >= num_layers:
+            raise ValueError(f"Layer index {idx} is out of range for num_layers={num_layers}")
+        out.append(idx)
+    if not out:
+        raise ValueError(f"Unsupported shared layer spec: {spec}")
+    return sorted(set(out))
+
+
+def compute_native_attention_output(
+    *,
+    attn_module,
+    hidden_states: torch.Tensor,
+    position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+    attention_mask: torch.Tensor,
+) -> torch.Tensor:
+    bsz, seq_len, _ = hidden_states.shape
+    num_heads = int(attn_module.num_heads)
+    head_dim = int(attn_module.head_dim)
+    num_kv_heads = int(attn_module.k_proj.out_features // head_dim)
+
+    q = attn_module.q_proj(hidden_states).view(bsz, seq_len, num_heads, head_dim).transpose(1, 2)
+    k = attn_module.k_proj(hidden_states).view(bsz, seq_len, num_kv_heads, head_dim).transpose(1, 2)
+    v = attn_module.v_proj(hidden_states).view(bsz, seq_len, num_kv_heads, head_dim).transpose(1, 2)
+    q, k = apply_rotary_pos_emb_pair(q, k, *position_embeddings)
+
+    if num_heads % num_kv_heads != 0:
+        raise ValueError(f"num_heads={num_heads} is not divisible by num_kv_heads={num_kv_heads}")
+    k = repeat_kv(k, num_heads // num_kv_heads)
+    v = repeat_kv(v, num_heads // num_kv_heads)
+
+    scaling = float(getattr(attn_module, "scaling", head_dim ** -0.5))
+    attn_scores = torch.matmul(q.float(), k.transpose(2, 3).float()) * scaling
+    attn_scores = attn_scores + attention_mask
+    attn_weights = torch.softmax(attn_scores, dim=-1, dtype=torch.float32).to(q.dtype)
+    attn_output = torch.matmul(attn_weights.float(), v.float())
+    attn_output = attn_output.transpose(1, 2).reshape(bsz, seq_len, num_heads * head_dim)
+    return attn_module.o_proj(attn_output.to(hidden_states.dtype))
+
+
 @torch.no_grad()
 def absorbed_draft_logits_from_target_cache(
     *,
@@ -125,6 +206,7 @@ def absorbed_draft_logits_from_target_cache(
     big_legacy_cache,
     absorbed_state: Dict[str, Any],
     small_device: str,
+    shared_layer_indices: Optional[Sequence[int]] = None,
 ) -> torch.Tensor:
     model = small_model.model
     hidden_states = model.embed_tokens(input_ids.to(small_device))
@@ -140,47 +222,55 @@ def absorbed_draft_logits_from_target_cache(
     small_kv_heads = int(absorbed_state.get("small_kv_heads", get_num_kv_heads(small_model.config)))
     small_head_dim = int(absorbed_state.get("small_head_dim", get_head_dim(small_model.config)))
     layer_map = [int(x) for x in absorbed_state["layer_map"]]
+    shared_layer_set = set(shared_layer_indices if shared_layer_indices is not None else range(len(layer_map)))
 
     for small_layer_idx, layer in enumerate(model.layers):
-        target_layer_idx = layer_map[small_layer_idx]
-        k_big, v_big = big_legacy_cache[target_layer_idx]
-        k_big = k_big.to(hidden_states.device)
-        v_big = v_big.to(hidden_states.device)
-
         residual = hidden_states
         hidden_states_ln = layer.input_layernorm(hidden_states)
+        if small_layer_idx in shared_layer_set:
+            target_layer_idx = layer_map[small_layer_idx]
+            k_big, v_big = big_legacy_cache[target_layer_idx]
+            k_big = k_big.to(hidden_states.device)
+            v_big = v_big.to(hidden_states.device)
 
-        q = layer.self_attn.q_proj(hidden_states_ln).view(bsz, seq_len, small_q_heads, small_head_dim).transpose(1, 2)
-        q = apply_rotary_pos_emb_q_only(q, *position_embeddings)
+            q = layer.self_attn.q_proj(hidden_states_ln).view(bsz, seq_len, small_q_heads, small_head_dim).transpose(1, 2)
+            q = apply_rotary_pos_emb_q_only(q, *position_embeddings)
 
-        k_weight = absorbed_state["k_weights"][small_layer_idx].to(hidden_states.device)
-        k_bias = absorbed_state["k_biases"][small_layer_idx].to(hidden_states.device)
-        k_shared_flat = affine_apply(flatten_kv(k_big), k_weight, k_bias)
-        k_shared = unflatten_kv(k_shared_flat, bsz, seq_len, small_kv_heads, small_head_dim)
+            k_weight = absorbed_state["k_weights"][small_layer_idx].to(hidden_states.device)
+            k_bias = absorbed_state["k_biases"][small_layer_idx].to(hidden_states.device)
+            k_shared_flat = affine_apply(flatten_kv(k_big), k_weight, k_bias)
+            k_shared = unflatten_kv(k_shared_flat, bsz, seq_len, small_kv_heads, small_head_dim)
 
-        if small_q_heads % small_kv_heads != 0:
-            raise ValueError(
-                f"small_q_heads={small_q_heads} is not divisible by small_kv_heads={small_kv_heads}"
-            )
-        shared_k = repeat_kv(k_shared, small_q_heads // small_kv_heads)
+            if small_q_heads % small_kv_heads != 0:
+                raise ValueError(
+                    f"small_q_heads={small_q_heads} is not divisible by small_kv_heads={small_kv_heads}"
+                )
+            shared_k = repeat_kv(k_shared, small_q_heads // small_kv_heads)
 
-        target_kv_heads = v_big.shape[1]
-        if small_q_heads % target_kv_heads != 0:
-            raise ValueError(
-                f"small_q_heads={small_q_heads} is not divisible by target_kv_heads={target_kv_heads}"
-            )
-        shared_v = repeat_kv(v_big, small_q_heads // target_kv_heads)
+            target_kv_heads = v_big.shape[1]
+            if small_q_heads % target_kv_heads != 0:
+                raise ValueError(
+                    f"small_q_heads={small_q_heads} is not divisible by target_kv_heads={target_kv_heads}"
+                )
+            shared_v = repeat_kv(v_big, small_q_heads // target_kv_heads)
 
-        scaling = float(getattr(layer.self_attn, "scaling", small_head_dim ** -0.5))
-        attn_scores = torch.matmul(q.float(), shared_k.transpose(2, 3).float()) * scaling
-        attn_scores = attn_scores + attention_mask
-        attn_weights = torch.softmax(attn_scores, dim=-1, dtype=torch.float32).to(q.dtype)
-        h_tilde = torch.matmul(attn_weights.float(), shared_v.float())
-        h_tilde = h_tilde.transpose(1, 2).reshape(bsz * seq_len, small_q_heads * small_head_dim)
+            scaling = float(getattr(layer.self_attn, "scaling", small_head_dim ** -0.5))
+            attn_scores = torch.matmul(q.float(), shared_k.transpose(2, 3).float()) * scaling
+            attn_scores = attn_scores + attention_mask
+            attn_weights = torch.softmax(attn_scores, dim=-1, dtype=torch.float32).to(q.dtype)
+            h_tilde = torch.matmul(attn_weights.float(), shared_v.float())
+            h_tilde = h_tilde.transpose(1, 2).reshape(bsz * seq_len, small_q_heads * small_head_dim)
 
-        o_weight = absorbed_state["o_weights"][small_layer_idx].to(hidden_states.device)
-        o_bias = absorbed_state["o_biases"][small_layer_idx].to(hidden_states.device)
-        attn_output = affine_apply(h_tilde, o_weight, o_bias).view(bsz, seq_len, -1).to(hidden_states.dtype)
+            o_weight = absorbed_state["o_weights"][small_layer_idx].to(hidden_states.device)
+            o_bias = absorbed_state["o_biases"][small_layer_idx].to(hidden_states.device)
+            attn_output = affine_apply(h_tilde, o_weight, o_bias).view(bsz, seq_len, -1).to(hidden_states.dtype)
+        else:
+            attn_output = compute_native_attention_output(
+                attn_module=layer.self_attn,
+                hidden_states=hidden_states_ln,
+                position_embeddings=position_embeddings,
+                attention_mask=attention_mask,
+            ).to(hidden_states.dtype)
 
         hidden_states = residual + attn_output
         residual = hidden_states
@@ -214,7 +304,10 @@ def absorbed_draft_next_logits(
     absorbed_state: Dict[str, Any],
     big_device: str,
     small_device: str,
+    shared_layer_indices: Optional[Sequence[int]] = None,
 ) -> torch.Tensor:
+    if shared_layer_indices is not None and len(shared_layer_indices) == 0:
+        return native_draft_next_logits(small_model, prefix_ids, small_device)
     big_out = big_model(input_ids=prefix_ids.to(big_device), use_cache=True)
     big_legacy_cache = as_legacy_cache(big_out.past_key_values)
     return absorbed_draft_logits_from_target_cache(
@@ -223,6 +316,7 @@ def absorbed_draft_next_logits(
         big_legacy_cache=big_legacy_cache,
         absorbed_state=absorbed_state,
         small_device=small_device,
+        shared_layer_indices=shared_layer_indices,
     )
 
 
@@ -258,6 +352,7 @@ def greedy_speculative_decode(
     big_device: str,
     small_device: str,
     topk: int,
+    shared_layer_indices: Optional[Sequence[int]] = None,
 ) -> Dict[str, Any]:
     prefix = prompt_ids.clone()
     generated: List[int] = []
@@ -292,6 +387,7 @@ def greedy_speculative_decode(
                     absorbed_state=absorbed_state,
                     big_device=big_device,
                     small_device=small_device,
+                    shared_layer_indices=shared_layer_indices,
                 )
             else:
                 raise ValueError(f"Unsupported mode: {mode_name}")
@@ -386,6 +482,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--draft_steps", type=int, default=4)
     parser.add_argument("--max_new_tokens", type=int, default=16)
     parser.add_argument("--topk", type=int, default=5)
+    parser.add_argument(
+        "--shared_layers",
+        type=str,
+        default="all",
+        help='Which draft layers use absorbed shared-cache attention. Examples: "all", "none", "top:4", "bottom:4", "middle:4", "every_other", "0,2,4".',
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--allow_incompatible_tokenizers", action="store_true")
     parser.add_argument("--out_dir", type=str, default="outputs/absorbed_spec_eval")
@@ -404,6 +506,8 @@ def main() -> None:
     wandb_run = init_wandb(args)
 
     absorbed_state = load_absorbed_state(args.translator_path)
+    num_layers = len(absorbed_state["layer_map"])
+    shared_layer_indices = parse_shared_layer_spec(args.shared_layers, num_layers)
 
     print("Loading models and tokenizers...")
     big_tokenizer = load_tokenizer(args.big_model)
@@ -414,6 +518,7 @@ def main() -> None:
 
     big_model = load_causal_lm(args.big_model, device=args.big_device, dtype_name=args.big_dtype, attn_implementation="eager")
     small_model = load_causal_lm(args.small_model, device=args.small_device, dtype_name=args.small_dtype, attn_implementation="eager")
+    print(f"Shared layers ({len(shared_layer_indices)}/{num_layers}): {shared_layer_indices}")
 
     prompt_iter = iter_token_blocks(
         tokenizer=big_tokenizer,
@@ -455,6 +560,7 @@ def main() -> None:
             big_device=args.big_device,
             small_device=args.small_device,
             topk=args.topk,
+            shared_layer_indices=[],
         )
         absorbed_result = greedy_speculative_decode(
             mode_name="absorbed",
@@ -467,6 +573,7 @@ def main() -> None:
             big_device=args.big_device,
             small_device=args.small_device,
             topk=args.topk,
+            shared_layer_indices=shared_layer_indices,
         )
 
         native_match = int(native_result["generated_tokens"] == target_tokens)
@@ -523,6 +630,8 @@ def main() -> None:
         "num_prompts": len(per_prompt_rows),
         "translator_path": args.translator_path,
         "translator_output_routing_source": absorbed_state.get("output_routing_source", "unknown"),
+        "shared_layers_spec": args.shared_layers,
+        "shared_layer_indices": shared_layer_indices,
         "native_summary": native_summary,
         "absorbed_summary": absorbed_summary,
     }
@@ -537,6 +646,8 @@ def main() -> None:
             wandb_run.summary[f"absorbed/{key}"] = value
         wandb_run.summary["num_prompts"] = len(per_prompt_rows)
         wandb_run.summary["translator_output_routing_source"] = absorbed_state.get("output_routing_source", "unknown")
+        wandb_run.summary["shared_layers_spec"] = args.shared_layers
+        wandb_run.summary["num_shared_layers"] = len(shared_layer_indices)
 
     print("Done!")
     print(f"  {os.path.join(args.out_dir, 'per_prompt_rows.csv')}")
