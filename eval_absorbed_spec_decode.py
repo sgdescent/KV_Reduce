@@ -175,8 +175,16 @@ def compute_native_attention_output(
     attention_mask: torch.Tensor,
 ) -> torch.Tensor:
     bsz, seq_len, _ = hidden_states.shape
-    num_heads = int(attn_module.num_heads)
-    head_dim = int(attn_module.head_dim)
+    # Newer transformers moved num_heads/head_dim off Qwen2Attention onto config.
+    config = getattr(attn_module, "config", None)
+    num_heads = getattr(attn_module, "num_heads", None)
+    if num_heads is None and config is not None:
+        num_heads = config.num_attention_heads
+    head_dim = getattr(attn_module, "head_dim", None)
+    if head_dim is None and config is not None:
+        head_dim = getattr(config, "head_dim", None) or (config.hidden_size // num_heads)
+    num_heads = int(num_heads)
+    head_dim = int(head_dim)
     num_kv_heads = int(attn_module.k_proj.out_features // head_dim)
 
     q = attn_module.q_proj(hidden_states).view(bsz, seq_len, num_heads, head_dim).transpose(1, 2)

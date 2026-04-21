@@ -173,20 +173,30 @@ def compute_shared_attention_weights(
     attention_mask: Optional[torch.Tensor],
     mapped_key_states: torch.Tensor,
 ) -> torch.Tensor:
+    # In newer transformers, Qwen2Attention no longer exposes num_heads / head_dim
+    # directly on the module; they live on the config. Fall back gracefully.
+    config = getattr(attn_module, "config", None)
+    num_heads = getattr(attn_module, "num_heads", None)
+    if num_heads is None and config is not None:
+        num_heads = config.num_attention_heads
+    head_dim = getattr(attn_module, "head_dim", None)
+    if head_dim is None and config is not None:
+        head_dim = getattr(config, "head_dim", None) or (config.hidden_size // num_heads)
+
     bsz, seq_len, _ = hidden_states.shape
-    hidden_shape = (bsz, seq_len, attn_module.num_heads, attn_module.head_dim)
+    hidden_shape = (bsz, seq_len, num_heads, head_dim)
     query_states = attn_module.q_proj(hidden_states).view(hidden_shape).transpose(1, 2)
 
     cos, sin = position_embeddings
     query_states = apply_rotary_pos_emb_q_only(query_states, cos, sin)
 
     num_kv_heads = mapped_key_states.shape[1]
-    if attn_module.num_heads % num_kv_heads != 0:
+    if num_heads % num_kv_heads != 0:
         raise ValueError(
-            f"num_heads={attn_module.num_heads} is not divisible by mapped num_kv_heads={num_kv_heads}"
+            f"num_heads={num_heads} is not divisible by mapped num_kv_heads={num_kv_heads}"
         )
-    key_states = repeat_kv(mapped_key_states, attn_module.num_heads // num_kv_heads)
-    scaling = float(getattr(attn_module, "scaling", attn_module.head_dim ** -0.5))
+    key_states = repeat_kv(mapped_key_states, num_heads // num_kv_heads)
+    scaling = float(getattr(attn_module, "scaling", head_dim ** -0.5))
 
     attn_scores = torch.matmul(query_states.float(), key_states.transpose(2, 3).float()) * scaling
     if attention_mask is not None:
