@@ -115,6 +115,44 @@ def affine_apply(x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor) -> t
     return F.linear(x.float(), weight.float(), bias.float())
 
 
+def _get_layer_scalar(absorbed_state: Dict[str, Any], key: str, layer_idx: int) -> float:
+    values = absorbed_state.get(key)
+    if values is None:
+        raise ValueError(
+            f"Translator checkpoint is missing {key}; re-run fit_kv_absorbed.py with the latest code "
+            "before using --norm_match."
+        )
+    if layer_idx >= len(values):
+        raise ValueError(f"Translator checkpoint key {key} has no entry for layer {layer_idx}.")
+    return float(values[layer_idx])
+
+
+def apply_output_norm_match(
+    attn_output: torch.Tensor,
+    *,
+    absorbed_state: Dict[str, Any],
+    layer_idx: int,
+    norm_match: str,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    if norm_match == "none":
+        return attn_output
+
+    dtype = attn_output.dtype
+    x = attn_output.float()
+    if norm_match == "rms":
+        target_rms = _get_layer_scalar(absorbed_state, "o_target_rms", layer_idx)
+        current_rms = torch.sqrt(torch.mean(x.square(), dim=-1, keepdim=True)).clamp_min(eps)
+        return (x * (target_rms / current_rms)).to(dtype)
+    if norm_match == "std":
+        target_mean = _get_layer_scalar(absorbed_state, "o_target_mean", layer_idx)
+        target_std = _get_layer_scalar(absorbed_state, "o_target_std", layer_idx)
+        current_mean = x.mean(dim=-1, keepdim=True)
+        current_std = x.std(dim=-1, keepdim=True, unbiased=False).clamp_min(eps)
+        return ((x - current_mean) * (target_std / current_std) + target_mean).to(dtype)
+    raise ValueError(f"Unsupported norm_match: {norm_match}")
+
+
 def build_causal_mask(seq_len: int, device: torch.device) -> torch.Tensor:
     mask = torch.full((seq_len, seq_len), torch.finfo(torch.float32).min, device=device, dtype=torch.float32)
     mask = torch.triu(mask, diagonal=1)
@@ -216,6 +254,7 @@ def absorbed_draft_logits_from_target_cache(
     small_device: str,
     shared_layer_indices: Optional[Sequence[int]] = None,
     shared_variant: str = "full",
+    norm_match: str = "none",
 ) -> torch.Tensor:
     model = small_model.model
     hidden_states = model.embed_tokens(input_ids.to(small_device))
@@ -274,6 +313,12 @@ def absorbed_draft_logits_from_target_cache(
                 o_weight = absorbed_state["o_weights"][small_layer_idx].to(hidden_states.device)
                 o_bias = absorbed_state["o_biases"][small_layer_idx].to(hidden_states.device)
                 attn_output = affine_apply(h_tilde, o_weight, o_bias).view(bsz, seq_len, -1).to(hidden_states.dtype)
+                attn_output = apply_output_norm_match(
+                    attn_output,
+                    absorbed_state=absorbed_state,
+                    layer_idx=small_layer_idx,
+                    norm_match=norm_match,
+                )
             elif shared_variant == "k_only":
                 native_kv_heads = int(layer.self_attn.v_proj.out_features // small_head_dim)
                 v_native = layer.self_attn.v_proj(hidden_states_ln).view(
@@ -331,6 +376,7 @@ def absorbed_draft_next_logits(
     small_device: str,
     shared_layer_indices: Optional[Sequence[int]] = None,
     shared_variant: str = "full",
+    norm_match: str = "none",
 ) -> torch.Tensor:
     if shared_layer_indices is not None and len(shared_layer_indices) == 0:
         return native_draft_next_logits(small_model, prefix_ids, small_device)
@@ -344,6 +390,7 @@ def absorbed_draft_next_logits(
         small_device=small_device,
         shared_layer_indices=shared_layer_indices,
         shared_variant=shared_variant,
+        norm_match=norm_match,
     )
 
 
@@ -381,6 +428,7 @@ def greedy_speculative_decode(
     topk: int,
     shared_layer_indices: Optional[Sequence[int]] = None,
     shared_variant: str = "full",
+    norm_match: str = "none",
 ) -> Dict[str, Any]:
     prefix = prompt_ids.clone()
     generated: List[int] = []
@@ -417,6 +465,7 @@ def greedy_speculative_decode(
                     small_device=small_device,
                     shared_layer_indices=shared_layer_indices,
                     shared_variant=shared_variant,
+                    norm_match=norm_match,
                 )
             else:
                 raise ValueError(f"Unsupported mode: {mode_name}")
@@ -524,6 +573,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="full",
         help='How shared layers consume values. "full" uses target V plus absorbed O. "k_only" uses target-mapped K but native draft V and native o_proj.',
     )
+    parser.add_argument(
+        "--norm_match",
+        type=str,
+        choices=["none", "rms", "std"],
+        default="none",
+        help="Optional per-token output normalization for absorbed full-sharing layers using calibration stats saved by fit_kv_absorbed.py.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--allow_incompatible_tokenizers", action="store_true")
     parser.add_argument("--out_dir", type=str, default="outputs/absorbed_spec_eval")
@@ -556,6 +612,7 @@ def main() -> None:
     small_model = load_causal_lm(args.small_model, device=args.small_device, dtype_name=args.small_dtype, attn_implementation="eager")
     print(f"Shared layers ({len(shared_layer_indices)}/{num_layers}): {shared_layer_indices}")
     print(f"Shared variant: {args.shared_variant}")
+    print(f"Output norm matching: {args.norm_match}")
 
     prompt_iter = iter_token_blocks(
         tokenizer=big_tokenizer,
@@ -599,6 +656,7 @@ def main() -> None:
             topk=args.topk,
             shared_layer_indices=[],
             shared_variant="full",
+            norm_match="none",
         )
         absorbed_result = greedy_speculative_decode(
             mode_name="absorbed",
@@ -613,6 +671,7 @@ def main() -> None:
             topk=args.topk,
             shared_layer_indices=shared_layer_indices,
             shared_variant=args.shared_variant,
+            norm_match=args.norm_match,
         )
 
         native_match = int(native_result["generated_tokens"] == target_tokens)
@@ -650,15 +709,29 @@ def main() -> None:
         )
 
         if wandb_run is not None:
-            wandb_run.log(
-                {
-                    "eval/native_accept_rate": native_result["accept_rate"],
-                    "eval/absorbed_accept_rate": absorbed_result["accept_rate"],
-                    "eval/native_matches_target_greedy": native_match,
-                    "eval/absorbed_matches_target_greedy": absorbed_match,
-                },
-                step=prompt_idx + 1,
-            )
+            log_payload = {
+                "eval/native_accept_rate": native_result["accept_rate"],
+                "eval/absorbed_accept_rate": absorbed_result["accept_rate"],
+                "eval/accept_rate_delta_absorbed_minus_native": absorbed_result["accept_rate"] - native_result["accept_rate"],
+                "eval/native_accepted_per_round": native_result["accepted_per_round"],
+                "eval/absorbed_accepted_per_round": absorbed_result["accepted_per_round"],
+                "eval/accepted_per_round_delta_absorbed_minus_native": absorbed_result["accepted_per_round"] - native_result["accepted_per_round"],
+                "eval/native_full_accept_round_fraction": native_result["full_accept_round_fraction"],
+                "eval/absorbed_full_accept_round_fraction": absorbed_result["full_accept_round_fraction"],
+                "eval/native_proposed_tokens": native_result["proposed_tokens"],
+                "eval/absorbed_proposed_tokens": absorbed_result["proposed_tokens"],
+                "eval/native_accepted_tokens": native_result["accepted_tokens"],
+                "eval/absorbed_accepted_tokens": absorbed_result["accepted_tokens"],
+                "eval/native_num_rounds": native_result["num_rounds"],
+                "eval/absorbed_num_rounds": absorbed_result["num_rounds"],
+                "eval/native_matches_target_greedy": native_match,
+                "eval/absorbed_matches_target_greedy": absorbed_match,
+            }
+            for key, value in native_result["round_metrics"].items():
+                log_payload[f"eval/native_round_{key}"] = value
+            for key, value in absorbed_result["round_metrics"].items():
+                log_payload[f"eval/absorbed_round_{key}"] = value
+            wandb_run.log(log_payload, step=prompt_idx + 1)
 
         if (prompt_idx + 1) % 10 == 0:
             print(f"Processed {prompt_idx + 1} / {args.num_prompts} prompts")
@@ -672,6 +745,7 @@ def main() -> None:
         "shared_layers_spec": args.shared_layers,
         "shared_layer_indices": shared_layer_indices,
         "shared_variant": args.shared_variant,
+        "norm_match": args.norm_match,
         "native_summary": native_summary,
         "absorbed_summary": absorbed_summary,
     }
@@ -689,6 +763,7 @@ def main() -> None:
         wandb_run.summary["shared_layers_spec"] = args.shared_layers
         wandb_run.summary["num_shared_layers"] = len(shared_layer_indices)
         wandb_run.summary["shared_variant"] = args.shared_variant
+        wandb_run.summary["norm_match"] = args.norm_match
 
     print("Done!")
     print(f"  {os.path.join(args.out_dir, 'per_prompt_rows.csv')}")

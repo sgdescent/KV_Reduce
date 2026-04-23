@@ -125,3 +125,60 @@ For end-to-end comparison, `eval_absorbed_spec_decode.py` runs a greedy speculat
 - absorbed shared-cache draft speculation
 
 over a fixed prompt set, and reports acceptance-style metrics plus whether each method reproduces the target model's greedy continuation.
+
+Additional stabilization and measurement tools:
+
+- New translator checkpoints save per-layer draft attention-output calibration stats: `o_target_mean`, `o_target_std`, and `o_target_rms`.
+- `eval_absorbed_spec_decode.py --norm_match rms` rescales absorbed attention outputs to the native draft RMS before adding them to the residual stream.
+- `eval_absorbed_spec_decode.py --norm_match std` matches mean/std instead. This is a direct test for whether activation scale drift is causing compounding error.
+- `diagnose_absorbed_layers.py` runs native and absorbed draft forwards side-by-side and logs per-layer attention, MLP, residual cosine/L2/RMS drift to W&B.
+- `benchmark_absorbed_spec_decode.py` compares native vs absorbed speculative decoding latency and memory. It reports both PyTorch peak allocated/reserved memory and an analytical KV-cache estimate for the intended deployment.
+
+Example commands:
+
+```bash
+python fit_kv_absorbed.py \
+  --big_model Qwen/Qwen2.5-3B \
+  --small_model Qwen/Qwen2.5-1.5B \
+  --dataset_name HuggingFaceFW/fineweb-edu \
+  --dataset_config sample-10BT \
+  --train_sequences 512 \
+  --output_routing_source shared \
+  --out_dir outputs/kv_absorbed_shared \
+  --wandb
+```
+
+```bash
+python eval_absorbed_spec_decode.py \
+  --translator_path outputs/kv_absorbed_shared/absorbed_translator.pt \
+  --shared_layers top:4 \
+  --shared_variant full \
+  --norm_match rms \
+  --num_prompts 200 \
+  --out_dir outputs/absorbed_eval_top4_rms \
+  --wandb
+```
+
+```bash
+python diagnose_absorbed_layers.py \
+  --translator_path outputs/kv_absorbed_shared/absorbed_translator.pt \
+  --shared_layers all \
+  --shared_variant full \
+  --norm_match rms \
+  --num_prompts 64 \
+  --out_dir outputs/absorbed_layer_diag_all_rms \
+  --wandb
+```
+
+```bash
+python benchmark_absorbed_spec_decode.py \
+  --translator_path outputs/kv_absorbed_shared/absorbed_translator.pt \
+  --modes native,absorbed \
+  --shared_layers top:4 \
+  --shared_variant full \
+  --norm_match rms \
+  --num_prompts 200 \
+  --warmup_prompts 10 \
+  --out_dir outputs/absorbed_benchmark_top4_rms \
+  --wandb
+```

@@ -72,6 +72,7 @@ def init_wandb(args: argparse.Namespace) -> Optional[any]:
         name=args.wandb_run_name,
         entity=args.wandb_entity,
         group=args.wandb_group,
+        config=vars(args),
     )
     def _finish_wandb() -> None:
         wandb.finish()
@@ -134,6 +135,47 @@ def compute_stats(pred: torch.Tensor, target: torch.Tensor) -> Dict[str, float]:
     max_diff = float(torch.abs(pred - target).max().item())
     cos_sim = float(F.cosine_similarity(pred, target, dim=-1).mean().item())
     return {"L2_distance": l2_dist, "max_diff": max_diff, "cosine_similarity": cos_sim}
+
+
+def scalar_tensor_stats(tensor: torch.Tensor) -> Dict[str, float]:
+    tensor = tensor.float()
+    mean = float(tensor.mean().item())
+    std = float(tensor.std(unbiased=False).item())
+    rms = float(torch.sqrt(torch.mean(tensor.square())).item())
+    abs_mean = float(tensor.abs().mean().item())
+    return {"mean": mean, "std": std, "rms": rms, "abs_mean": abs_mean}
+
+
+class RunningTensorStats:
+    """Accumulates scalar activation stats without storing calibration tensors."""
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.sum = 0.0
+        self.sum_sq = 0.0
+        self.abs_sum = 0.0
+
+    def update(self, tensor: torch.Tensor) -> None:
+        tensor = tensor.detach().float()
+        self.count += int(tensor.numel())
+        self.sum += float(tensor.sum().item())
+        self.sum_sq += float(tensor.square().sum().item())
+        self.abs_sum += float(tensor.abs().sum().item())
+
+    def as_dict(self) -> Dict[str, float]:
+        if self.count == 0:
+            return {"count": 0, "mean": 0.0, "std": 0.0, "rms": 0.0, "abs_mean": 0.0}
+        mean = self.sum / self.count
+        mean_sq = self.sum_sq / self.count
+        var = max(0.0, mean_sq - mean * mean)
+        return {
+            "count": int(self.count),
+            "mean": float(mean),
+            "std": float(var ** 0.5),
+            "rms": float(mean_sq ** 0.5),
+            "abs_mean": float(self.abs_sum / self.count),
+        }
+
 
 def affine_apply(x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor) -> torch.Tensor:
     # x: [..., d_in], weight: [d_out, d_in], bias: [d_out]
@@ -349,6 +391,9 @@ def main() -> None:
     print("\n[Part 2] Training Attention Layer Output Transformations...")
     o_accs = [OnlineRidgeAccumulator(small_q_heads * small_head_dim, small_d_model, lambda_reg=args.lambda_reg, device=args.small_device) 
               for _ in range(num_small_layers)]
+    o_target_stats = [RunningTensorStats() for _ in range(num_small_layers)]
+    o_pred_stats = [RunningTensorStats() for _ in range(num_small_layers)]
+    o_input_stats = [RunningTensorStats() for _ in range(num_small_layers)]
     
     # Reset iterator
     train_iter = iter_token_blocks(
@@ -425,6 +470,24 @@ def main() -> None:
             stats = compute_stats(pred_Y, Y_draft_flat)
             for k, v in stats.items():
                 log_dict[f"O_{k}/layer_{small_layer_idx}"] = v
+            target_scale = scalar_tensor_stats(Y_draft_flat)
+            pred_scale = scalar_tensor_stats(pred_Y)
+            input_scale = scalar_tensor_stats(H_target_tilde)
+            o_target_stats[small_layer_idx].update(Y_draft_flat)
+            o_pred_stats[small_layer_idx].update(pred_Y)
+            o_input_stats[small_layer_idx].update(H_target_tilde)
+            for k, v in target_scale.items():
+                log_dict[f"O_target_{k}/layer_{small_layer_idx}"] = v
+            for k, v in pred_scale.items():
+                log_dict[f"O_pred_{k}/layer_{small_layer_idx}"] = v
+            for k, v in input_scale.items():
+                log_dict[f"O_input_{k}/layer_{small_layer_idx}"] = v
+            log_dict[f"O_pred_to_target_rms_ratio/layer_{small_layer_idx}"] = (
+                pred_scale["rms"] / max(target_scale["rms"], 1e-12)
+            )
+            log_dict[f"O_pred_to_target_std_ratio/layer_{small_layer_idx}"] = (
+                pred_scale["std"] / max(target_scale["std"], 1e-12)
+            )
             
             # Update accumulator
             o_accs[small_layer_idx].update(H_target_tilde, Y_draft_flat)
@@ -448,10 +511,23 @@ def main() -> None:
         o_weights.append(w.cpu())
         o_biases.append(b.cpu())
 
+    o_target_stats_dicts = [stats.as_dict() for stats in o_target_stats]
+    o_pred_stats_dicts = [stats.as_dict() for stats in o_pred_stats]
+    o_input_stats_dicts = [stats.as_dict() for stats in o_input_stats]
+    o_target_mean = [stats["mean"] for stats in o_target_stats_dicts]
+    o_target_std = [stats["std"] for stats in o_target_stats_dicts]
+    o_target_rms = [stats["rms"] for stats in o_target_stats_dicts]
+
     state = {
         "big_model": args.big_model, "small_model": args.small_model, "layer_map": layer_map,
         "k_weights": k_weights, "k_biases": k_biases,
         "o_weights": o_weights, "o_biases": o_biases,
+        "o_target_mean": o_target_mean,
+        "o_target_std": o_target_std,
+        "o_target_rms": o_target_rms,
+        "o_target_stats": o_target_stats_dicts,
+        "o_pred_stats": o_pred_stats_dicts,
+        "o_input_stats": o_input_stats_dicts,
         "lambda_reg": float(args.lambda_reg),
         "output_routing_source": args.output_routing_source,
         "small_q_heads": int(small_q_heads),
@@ -472,9 +548,22 @@ def main() -> None:
             "small_head_dim": int(small_head_dim),
             "small_d_model": int(small_d_model),
             "train_sequences": int(args.train_sequences),
+            "o_target_stats": o_target_stats_dicts,
+            "o_pred_stats": o_pred_stats_dicts,
+            "o_input_stats": o_input_stats_dicts,
         },
         os.path.join(args.out_dir, "summary.json"),
     )
+    if wandb_run is not None:
+        for layer_idx, stats in enumerate(o_target_stats_dicts):
+            for key, value in stats.items():
+                wandb_run.summary[f"O_target_calibration/{key}/layer_{layer_idx}"] = value
+        for layer_idx, stats in enumerate(o_pred_stats_dicts):
+            for key, value in stats.items():
+                wandb_run.summary[f"O_pred_calibration/{key}/layer_{layer_idx}"] = value
+        for layer_idx, stats in enumerate(o_input_stats_dicts):
+            for key, value in stats.items():
+                wandb_run.summary[f"O_input_calibration/{key}/layer_{layer_idx}"] = value
     print("Done!")
     
     # Remove hooks
