@@ -28,6 +28,7 @@ if [[ -n "$VENV_PATH" ]]; then
 fi
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
 BIG_MODEL="${BIG_MODEL:-Qwen/Qwen2.5-3B}"
 SMALL_MODEL="${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}"
 DATASET_NAME="${DATASET_NAME:-HuggingFaceFW/fineweb-edu}"
@@ -35,6 +36,8 @@ DATASET_CONFIG="${DATASET_CONFIG:-sample-10BT}"
 TRAIN_SPLIT="${TRAIN_SPLIT:-train}"
 SEQ_LEN="${SEQ_LEN:-512}"
 TRAIN_SEQUENCES="${TRAIN_SEQUENCES:-50000}"
+K_TRAIN_SEQUENCES="${K_TRAIN_SEQUENCES:-}"
+O_TRAIN_SEQUENCES="${O_TRAIN_SEQUENCES:-}"
 LAMBDA_REG="${LAMBDA_REG:-1e-4}"
 OUTPUT_ROUTING_SOURCE="${OUTPUT_ROUTING_SOURCE:-shared}"
 LAYER_MAP_FILE="${LAYER_MAP_FILE:-}"
@@ -44,7 +47,7 @@ WANDB_GROUP="${WANDB_GROUP:-absorbed-fit}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-absorbed_fit_${SLURM_JOB_ID:-local}}"
 
 cmd=(
-  "$PYTHON_BIN" fit_kv_absorbed.py
+  "$PYTHON_BIN" -u fit_kv_absorbed.py
   --big_model "$BIG_MODEL"
   --small_model "$SMALL_MODEL"
   --big_device cuda:0
@@ -59,6 +62,14 @@ cmd=(
   --stream_train
   --out_dir "$OUT_DIR"
 )
+
+if [[ -n "$K_TRAIN_SEQUENCES" ]]; then
+  cmd+=(--k_train_sequences "$K_TRAIN_SEQUENCES")
+fi
+
+if [[ -n "$O_TRAIN_SEQUENCES" ]]; then
+  cmd+=(--o_train_sequences "$O_TRAIN_SEQUENCES")
+fi
 
 if [[ -n "$LAYER_MAP_FILE" ]]; then
   cmd+=(--layer_map_file "$LAYER_MAP_FILE")

@@ -284,6 +284,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train_split", type=str, default="train")
     parser.add_argument("--seq_len", type=int, default=256)
     parser.add_argument("--train_sequences", type=int, default=512)
+    parser.add_argument(
+        "--k_train_sequences",
+        type=int,
+        default=None,
+        help="Number of calibration sequences for K mapping. Defaults to --train_sequences.",
+    )
+    parser.add_argument(
+        "--o_train_sequences",
+        type=int,
+        default=None,
+        help="Number of calibration sequences for absorbed O/output mapping. Defaults to --train_sequences.",
+    )
     parser.add_argument("--lambda_reg", type=float, default=1e-4)
     parser.add_argument(
         "--output_routing_source",
@@ -335,6 +347,10 @@ def main() -> None:
     small_q_heads = small_model.config.num_attention_heads
     small_head_dim = get_head_dim(small_model.config)
     small_d_model = small_model.config.hidden_size
+    k_train_sequences = int(args.k_train_sequences if args.k_train_sequences is not None else args.train_sequences)
+    o_train_sequences = int(args.o_train_sequences if args.o_train_sequences is not None else args.train_sequences)
+    if k_train_sequences <= 0 or o_train_sequences <= 0:
+        raise ValueError("--k_train_sequences and --o_train_sequences must be positive.")
 
     if args.layer_map_file is not None:
         layer_map = load_layer_map(args.layer_map_file, num_big_layers=num_big_layers, num_small_layers=num_small_layers)
@@ -345,6 +361,8 @@ def main() -> None:
     print(f"Layer map: {layer_map}")
     print(f"Layer map source: {layer_map_source}")
     print(f"Output routing source: {args.output_routing_source}")
+    print(f"K train sequences: {k_train_sequences}", flush=True)
+    print(f"O train sequences: {o_train_sequences}", flush=True)
 
     # Intercept Y_draft (output of self_attn block)
     draft_attention_outputs = {}
@@ -379,7 +397,7 @@ def main() -> None:
               for _ in range(num_small_layers)]
     
     train_iter = iter_token_blocks(
-        tokenizer=big_tokenizer, seq_len=args.seq_len, max_blocks=args.train_sequences,
+        tokenizer=big_tokenizer, seq_len=args.seq_len, max_blocks=k_train_sequences,
         dataset_name=args.dataset_name, dataset_config=args.dataset_config,
         split=args.train_split, text_file=args.text_file, text_column=args.text_column,
         shuffle=args.shuffle_train, seed=args.seed, streaming=args.stream_train,
@@ -419,7 +437,7 @@ def main() -> None:
         if wandb_run is not None:
             wandb_run.log(log_dict, step=step+1)
         if (step+1) % 20 == 0:
-            print(f"  Key Phase: sequence {step + 1} / {args.train_sequences}")
+            print(f"  Key Phase: sequence {step + 1} / {k_train_sequences}", flush=True)
 
     # ---------------------------------------------------------------------------------
     # Phase 1.2: Train Attention Output Transformations
@@ -433,7 +451,7 @@ def main() -> None:
     
     # Reset iterator
     train_iter = iter_token_blocks(
-        tokenizer=big_tokenizer, seq_len=args.seq_len, max_blocks=args.train_sequences,
+        tokenizer=big_tokenizer, seq_len=args.seq_len, max_blocks=o_train_sequences,
         dataset_name=args.dataset_name, dataset_config=args.dataset_config,
         split=args.train_split, text_file=args.text_file, text_column=args.text_column,
         shuffle=args.shuffle_train, seed=args.seed, streaming=args.stream_train,
@@ -530,10 +548,10 @@ def main() -> None:
             
         # The offset here makes the step index continue after K training steps for cleanly separated charts
         if wandb_run is not None:
-            wandb_run.log(log_dict, step=args.train_sequences + step + 1)
+            wandb_run.log(log_dict, step=k_train_sequences + step + 1)
             
         if (step+1) % 20 == 0:
-            print(f"  Output Phase: sequence {step + 1} / {args.train_sequences}")
+            print(f"  Output Phase: sequence {step + 1} / {o_train_sequences}", flush=True)
 
     print("\nSaving solved weights...")
     k_weights, k_biases = [], []
@@ -565,6 +583,9 @@ def main() -> None:
         "o_pred_stats": o_pred_stats_dicts,
         "o_input_stats": o_input_stats_dicts,
         "lambda_reg": float(args.lambda_reg),
+        "train_sequences": int(args.train_sequences),
+        "k_train_sequences": int(k_train_sequences),
+        "o_train_sequences": int(o_train_sequences),
         "output_routing_source": args.output_routing_source,
         "layer_map_source": layer_map_source,
         "small_q_heads": int(small_q_heads),
@@ -586,6 +607,8 @@ def main() -> None:
             "small_head_dim": int(small_head_dim),
             "small_d_model": int(small_d_model),
             "train_sequences": int(args.train_sequences),
+            "k_train_sequences": int(k_train_sequences),
+            "o_train_sequences": int(o_train_sequences),
             "o_target_stats": o_target_stats_dicts,
             "o_pred_stats": o_pred_stats_dicts,
             "o_input_stats": o_input_stats_dicts,
