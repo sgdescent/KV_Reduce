@@ -6,9 +6,9 @@ This intentionally lives separately from eval_absorbed_spec_decode.py:
   - eval_absorbed_spec_decode.py focuses on acceptance / quality.
   - this script measures wall-clock latency, PyTorch peak memory, and estimated KV-cache bytes.
 
-The current absorbed prototype recomputes full prefixes for clarity, so the PyTorch wall-clock
-numbers are best treated as an implementation benchmark. The analytical KV-cache estimate is the
-cleaner measurement of the intended memory saving from partial/full draft-cache sharing.
+The default absorbed path is now the cached prefix simulator: target prefill is computed once per
+speculative round, shared draft layers read the target prefix KV, and only target-unseen speculative
+tokens use a tiny draft tail cache.
 """
 
 import argparse
@@ -117,6 +117,7 @@ def estimate_kv_memory(
     big_dtype: str,
     small_dtype: str,
     seq_len: int,
+    draft_tail_len: int,
     shared_layer_indices: Sequence[int],
     shared_variant: str,
 ) -> Dict[str, float]:
@@ -149,8 +150,25 @@ def estimate_kv_memory(
         bytes_per_elem=dtype_num_bytes(small_dtype),
         components_per_layer=2.0,
     )
+    target_shared_prefix_read_bytes = kv_cache_bytes(
+        num_layers=shared_layers,
+        num_kv_heads=get_num_kv_heads(big_model.config),
+        head_dim=get_head_dim(big_model.config),
+        seq_len=seq_len,
+        bytes_per_elem=dtype_num_bytes(big_dtype),
+        components_per_layer=2.0,
+    )
     if shared_variant == "full":
-        draft_absorbed_bytes = draft_unshared_bytes
+        draft_shared_tail_bytes = kv_cache_bytes(
+            num_layers=shared_layers,
+            num_kv_heads=get_num_kv_heads(small_model.config),
+            head_dim=get_head_dim(small_model.config),
+            seq_len=draft_tail_len,
+            bytes_per_elem=dtype_num_bytes(small_dtype),
+            components_per_layer=2.0,
+        )
+        draft_absorbed_bytes = draft_unshared_bytes + draft_shared_tail_bytes
+        absorbed_hbm_read_proxy_bytes = draft_unshared_bytes + target_shared_prefix_read_bytes + draft_shared_tail_bytes
     elif shared_variant == "k_only":
         # K-only sharing still needs native draft V for shared layers, plus full KV on unshared layers.
         draft_shared_v_only_bytes = kv_cache_bytes(
@@ -161,7 +179,21 @@ def estimate_kv_memory(
             bytes_per_elem=dtype_num_bytes(small_dtype),
             components_per_layer=1.0,
         )
-        draft_absorbed_bytes = draft_unshared_bytes + draft_shared_v_only_bytes
+        draft_shared_tail_k_bytes = kv_cache_bytes(
+            num_layers=shared_layers,
+            num_kv_heads=get_num_kv_heads(small_model.config),
+            head_dim=get_head_dim(small_model.config),
+            seq_len=draft_tail_len,
+            bytes_per_elem=dtype_num_bytes(small_dtype),
+            components_per_layer=1.0,
+        )
+        draft_absorbed_bytes = draft_unshared_bytes + draft_shared_v_only_bytes + draft_shared_tail_k_bytes
+        absorbed_hbm_read_proxy_bytes = (
+            draft_unshared_bytes
+            + target_shared_prefix_read_bytes
+            + draft_shared_v_only_bytes
+            + draft_shared_tail_k_bytes
+        )
     else:
         raise ValueError(f"Unsupported shared_variant: {shared_variant}")
 
@@ -169,6 +201,7 @@ def estimate_kv_memory(
     absorbed_total = target_bytes + draft_absorbed_bytes
     return {
         "seq_len": float(seq_len),
+        "draft_tail_len": float(draft_tail_len),
         "target_cache_bytes": target_bytes,
         "native_draft_cache_bytes": draft_native_bytes,
         "absorbed_draft_cache_bytes": draft_absorbed_bytes,
@@ -176,7 +209,19 @@ def estimate_kv_memory(
         "absorbed_total_cache_bytes": absorbed_total,
         "cache_bytes_saved": native_total - absorbed_total,
         "cache_fraction_saved": (native_total - absorbed_total) / native_total if native_total > 0 else 0.0,
+        "native_draft_hbm_read_proxy_bytes": draft_native_bytes,
+        "absorbed_draft_hbm_read_proxy_bytes": absorbed_hbm_read_proxy_bytes,
+        "draft_hbm_read_proxy_delta_bytes": absorbed_hbm_read_proxy_bytes - draft_native_bytes,
+        "draft_hbm_read_proxy_delta_fraction": (
+            (absorbed_hbm_read_proxy_bytes - draft_native_bytes) / draft_native_bytes
+            if draft_native_bytes > 0
+            else 0.0
+        ),
         "target_cache_mib": target_bytes / (1024.0 ** 2),
+        "native_draft_cache_mib": draft_native_bytes / (1024.0 ** 2),
+        "absorbed_draft_cache_mib": draft_absorbed_bytes / (1024.0 ** 2),
+        "native_draft_hbm_read_proxy_mib": draft_native_bytes / (1024.0 ** 2),
+        "absorbed_draft_hbm_read_proxy_mib": absorbed_hbm_read_proxy_bytes / (1024.0 ** 2),
         "native_total_cache_mib": native_total / (1024.0 ** 2),
         "absorbed_total_cache_mib": absorbed_total / (1024.0 ** 2),
         "cache_mib_saved": (native_total - absorbed_total) / (1024.0 ** 2),
@@ -240,6 +285,7 @@ def run_one_mode(
     shared_layer_indices: Sequence[int],
     shared_variant: str,
     norm_match: str,
+    absorbed_cache_mode: str,
     cuda_device_ids: Sequence[int],
     wandb_run: Optional[Any],
     wandb_step_offset: int,
@@ -286,6 +332,7 @@ def run_one_mode(
                 shared_layer_indices=[],
                 shared_variant="full",
                 norm_match="none",
+                absorbed_cache_mode="recompute",
             )
         elif mode == "absorbed":
             if absorbed_state is None:
@@ -304,6 +351,7 @@ def run_one_mode(
                 shared_layer_indices=shared_layer_indices,
                 shared_variant=shared_variant,
                 norm_match=norm_match,
+                absorbed_cache_mode=absorbed_cache_mode,
             )
         else:
             raise ValueError(f"Unsupported mode: {mode}")
@@ -325,6 +373,8 @@ def run_one_mode(
             "target_calls": int(result["target_calls"]),
             "draft_calls": int(result["draft_calls"]),
             "num_rounds": int(result["num_rounds"]),
+            "target_prefix_cache_reuses": int(result.get("target_prefix_cache_reuses", 0)),
+            "target_recompute_avoided": int(result.get("target_recompute_avoided", 0)),
             **flatten_round_metrics(result),
         }
         rows.append(row)
@@ -413,11 +463,21 @@ def build_parser() -> argparse.ArgumentParser:
         default="none",
         help="Optional per-token output normalization for absorbed full-sharing layers.",
     )
+    parser.add_argument(
+        "--absorbed_cache_mode",
+        type=str,
+        choices=["prefix", "recompute"],
+        default="prefix",
+        help=(
+            "Benchmark implementation for absorbed mode. prefix is the apples-to-apples cached simulator; "
+            "recompute is the old prototype ablation."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--allow_incompatible_tokenizers", action="store_true")
     parser.add_argument("--out_dir", type=str, default="outputs/absorbed_spec_benchmark")
     parser.add_argument("--wandb", action="store_true")
-    parser.add_argument("--wandb_project", type=str, default="kv-absorbed")
+    parser.add_argument("--wandb_project", type=str, default="kv-reduce")
     parser.add_argument("--wandb_run_name", type=str, default=None)
     parser.add_argument("--wandb_entity", type=str, default=None)
     parser.add_argument("--wandb_group", type=str, default=None)
@@ -448,6 +508,7 @@ def main() -> None:
     print(f"Shared layers ({len(shared_layer_indices)}/{num_layers}): {shared_layer_indices}")
     print(f"Shared variant: {args.shared_variant}")
     print(f"Output norm matching: {args.norm_match}")
+    print(f"Absorbed cache mode: {args.absorbed_cache_mode}")
 
     prompt_iter = iter_token_blocks(
         tokenizer=big_tokenizer,
@@ -487,6 +548,7 @@ def main() -> None:
                 shared_layer_indices=shared_layer_indices,
                 shared_variant=args.shared_variant,
                 norm_match=args.norm_match,
+                absorbed_cache_mode=args.absorbed_cache_mode,
                 cuda_device_ids=cuda_device_ids,
                 wandb_run=None,
                 wandb_step_offset=0,
@@ -510,6 +572,7 @@ def main() -> None:
             shared_layer_indices=shared_layer_indices,
             shared_variant=args.shared_variant,
             norm_match=args.norm_match,
+            absorbed_cache_mode=args.absorbed_cache_mode,
             cuda_device_ids=cuda_device_ids,
             wandb_run=wandb_run,
             wandb_step_offset=mode_idx * len(benchmark_prompts),
@@ -523,6 +586,7 @@ def main() -> None:
         big_dtype=args.big_dtype,
         small_dtype=args.small_dtype,
         seq_len=args.prompt_len + args.max_new_tokens,
+        draft_tail_len=args.draft_steps,
         shared_layer_indices=shared_layer_indices,
         shared_variant=args.shared_variant,
     )
@@ -536,6 +600,7 @@ def main() -> None:
         "shared_layer_indices": shared_layer_indices,
         "shared_variant": args.shared_variant,
         "norm_match": args.norm_match,
+        "absorbed_cache_mode": args.absorbed_cache_mode,
         "memory_estimate": memory_estimate,
         "mode_summaries": summaries,
     }
@@ -553,6 +618,7 @@ def main() -> None:
         wandb_run.summary["num_shared_layers"] = len(shared_layer_indices)
         wandb_run.summary["shared_variant"] = args.shared_variant
         wandb_run.summary["norm_match"] = args.norm_match
+        wandb_run.summary["absorbed_cache_mode"] = args.absorbed_cache_mode
 
     print("Done!")
     print(f"  {os.path.join(args.out_dir, 'benchmark_rows.csv')}")

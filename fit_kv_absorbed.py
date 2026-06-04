@@ -36,8 +36,9 @@ Logs (Weights & Biases):
 """
 
 import argparse
-import os
 import atexit
+import json
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -135,6 +136,28 @@ def compute_stats(pred: torch.Tensor, target: torch.Tensor) -> Dict[str, float]:
     max_diff = float(torch.abs(pred - target).max().item())
     cos_sim = float(F.cosine_similarity(pred, target, dim=-1).mean().item())
     return {"L2_distance": l2_dist, "max_diff": max_diff, "cosine_similarity": cos_sim}
+
+
+def load_layer_map(path: str, *, num_big_layers: int, num_small_layers: int) -> List[int]:
+    """Load a learned draft-layer -> target-layer map from JSON."""
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    raw_map = payload.get("layer_map", payload) if isinstance(payload, dict) else payload
+    if not isinstance(raw_map, list):
+        raise ValueError("--layer_map_file must contain a JSON list or an object with a 'layer_map' list.")
+    layer_map = [int(x) for x in raw_map]
+    if len(layer_map) != num_small_layers:
+        raise ValueError(
+            f"Layer map length {len(layer_map)} does not match draft layer count {num_small_layers}."
+        )
+    for idx, target_idx in enumerate(layer_map):
+        if target_idx < 0 or target_idx >= num_big_layers:
+            raise ValueError(
+                f"Layer map entry {idx}->{target_idx} is out of range for target layers={num_big_layers}."
+            )
+    if any(layer_map[i] > layer_map[i + 1] for i in range(len(layer_map) - 1)):
+        raise ValueError("Layer map must be monotonic nondecreasing.")
+    return layer_map
 
 
 def scalar_tensor_stats(tensor: torch.Tensor) -> Dict[str, float]:
@@ -269,13 +292,20 @@ def build_parser() -> argparse.ArgumentParser:
         default="shared",
         help="Use native draft attentions or recompute shared attentions from the learned key map when solving O.",
     )
+    parser.add_argument(
+        "--layer_map_file",
+        type=str,
+        default=None,
+        help="Optional JSON file from learn_layer_map.py. Falls back to depth-based mapping when omitted.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--shuffle_train", action="store_true")
+    parser.add_argument("--stream_train", action="store_true")
     parser.add_argument("--allow_incompatible_tokenizers", action="store_true")
     parser.add_argument("--out_dir", type=str, default="outputs/kv_absorbed")
     
     parser.add_argument("--wandb", action="store_true")
-    parser.add_argument("--wandb_project", type=str, default="kv-absorbed")
+    parser.add_argument("--wandb_project", type=str, default="kv-reduce")
     parser.add_argument("--wandb_run_name", type=str, default=None)
     parser.add_argument("--wandb_entity", type=str, default=None)
     parser.add_argument("--wandb_group", type=str, default=None)
@@ -306,8 +336,14 @@ def main() -> None:
     small_head_dim = get_head_dim(small_model.config)
     small_d_model = small_model.config.hidden_size
 
-    layer_map = depth_layer_map(num_big_layers, num_small_layers)
+    if args.layer_map_file is not None:
+        layer_map = load_layer_map(args.layer_map_file, num_big_layers=num_big_layers, num_small_layers=num_small_layers)
+        layer_map_source = args.layer_map_file
+    else:
+        layer_map = depth_layer_map(num_big_layers, num_small_layers)
+        layer_map_source = "depth"
     print(f"Layer map: {layer_map}")
+    print(f"Layer map source: {layer_map_source}")
     print(f"Output routing source: {args.output_routing_source}")
 
     # Intercept Y_draft (output of self_attn block)
@@ -346,7 +382,7 @@ def main() -> None:
         tokenizer=big_tokenizer, seq_len=args.seq_len, max_blocks=args.train_sequences,
         dataset_name=args.dataset_name, dataset_config=args.dataset_config,
         split=args.train_split, text_file=args.text_file, text_column=args.text_column,
-        shuffle=args.shuffle_train, seed=args.seed,
+        shuffle=args.shuffle_train, seed=args.seed, streaming=args.stream_train,
     )
 
     for step, block in enumerate(train_iter):
@@ -400,7 +436,7 @@ def main() -> None:
         tokenizer=big_tokenizer, seq_len=args.seq_len, max_blocks=args.train_sequences,
         dataset_name=args.dataset_name, dataset_config=args.dataset_config,
         split=args.train_split, text_file=args.text_file, text_column=args.text_column,
-        shuffle=args.shuffle_train, seed=args.seed,
+        shuffle=args.shuffle_train, seed=args.seed, streaming=args.stream_train,
     )
 
     for step, block in enumerate(train_iter):
@@ -530,6 +566,7 @@ def main() -> None:
         "o_input_stats": o_input_stats_dicts,
         "lambda_reg": float(args.lambda_reg),
         "output_routing_source": args.output_routing_source,
+        "layer_map_source": layer_map_source,
         "small_q_heads": int(small_q_heads),
         "small_kv_heads": int(small_kv_heads),
         "small_head_dim": int(small_head_dim),
@@ -541,6 +578,7 @@ def main() -> None:
             "big_model": args.big_model,
             "small_model": args.small_model,
             "layer_map": layer_map,
+            "layer_map_source": layer_map_source,
             "lambda_reg": float(args.lambda_reg),
             "output_routing_source": args.output_routing_source,
             "small_q_heads": int(small_q_heads),

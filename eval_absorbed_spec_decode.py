@@ -245,6 +245,156 @@ def compute_native_attention_output(
 
 
 @torch.no_grad()
+def absorbed_draft_logits_from_prefix_cache(
+    *,
+    small_model,
+    input_ids: torch.Tensor,
+    target_prefix_legacy_cache,
+    target_prefix_len: int,
+    absorbed_state: Dict[str, Any],
+    small_device: str,
+    shared_layer_indices: Optional[Sequence[int]] = None,
+    shared_variant: str = "full",
+    norm_match: str = "none",
+) -> torch.Tensor:
+    if shared_variant != "full":
+        raise ValueError("prefix-cache absorbed decoding currently supports --shared_variant full only.")
+
+    model = small_model.model
+    hidden_states = model.embed_tokens(input_ids.to(small_device))
+    bsz, seq_len, _ = hidden_states.shape
+    if bsz != 1:
+        raise ValueError("This integration script currently expects batch size 1.")
+    if target_prefix_len < 1 or target_prefix_len > seq_len:
+        raise ValueError(f"target_prefix_len={target_prefix_len} is invalid for seq_len={seq_len}.")
+
+    position_ids = torch.arange(seq_len, device=hidden_states.device, dtype=torch.long).unsqueeze(0)
+    position_embeddings = model.rotary_emb(hidden_states, position_ids)
+    attention_mask = build_causal_mask(seq_len, hidden_states.device)
+
+    small_q_heads = int(absorbed_state.get("small_q_heads", small_model.config.num_attention_heads))
+    small_kv_heads = int(absorbed_state.get("small_kv_heads", get_num_kv_heads(small_model.config)))
+    small_head_dim = int(absorbed_state.get("small_head_dim", get_head_dim(small_model.config)))
+    layer_map = [int(x) for x in absorbed_state["layer_map"]]
+    shared_layer_set = set(shared_layer_indices if shared_layer_indices is not None else range(len(layer_map)))
+
+    for small_layer_idx, layer in enumerate(model.layers):
+        residual = hidden_states
+        hidden_states_ln = layer.input_layernorm(hidden_states)
+        if small_layer_idx in shared_layer_set:
+            target_layer_idx = layer_map[small_layer_idx]
+            k_big, v_big = target_prefix_legacy_cache[target_layer_idx]
+            k_big = k_big[:, :, :target_prefix_len, :].to(hidden_states.device)
+            v_big = v_big[:, :, :target_prefix_len, :].to(hidden_states.device)
+            if k_big.shape[2] != target_prefix_len or v_big.shape[2] != target_prefix_len:
+                raise ValueError("Target prefix cache is shorter than target_prefix_len.")
+
+            q_all = layer.self_attn.q_proj(hidden_states_ln).view(
+                bsz, seq_len, small_q_heads, small_head_dim
+            ).transpose(1, 2)
+            k_native_all = layer.self_attn.k_proj(hidden_states_ln).view(
+                bsz, seq_len, small_kv_heads, small_head_dim
+            ).transpose(1, 2)
+            q_all, k_native_all = apply_rotary_pos_emb_pair(q_all, k_native_all, *position_embeddings)
+
+            if small_q_heads % small_kv_heads != 0:
+                raise ValueError(
+                    f"small_q_heads={small_q_heads} is not divisible by small_kv_heads={small_kv_heads}"
+                )
+            repeats = small_q_heads // small_kv_heads
+
+            # Key absorption for the accepted prefix:
+            #   q @ (K_target W_k^T + b_k)^T
+            # = (q W_k) @ K_target^T + q @ b_k
+            # This avoids materializing mapped prefix keys and keeps the draft cache tail-only.
+            k_weight = absorbed_state["k_weights"][small_layer_idx].to(hidden_states.device)
+            k_bias = absorbed_state["k_biases"][small_layer_idx].to(hidden_states.device)
+            big_kv_dim = int(k_weight.shape[1])
+            k_weight_by_q_head = k_weight.view(small_kv_heads, small_head_dim, big_kv_dim)
+            k_weight_by_q_head = k_weight_by_q_head.repeat_interleave(repeats, dim=0)
+            k_bias_by_q_head = k_bias.view(small_kv_heads, small_head_dim).repeat_interleave(repeats, dim=0)
+            q_prefix = torch.einsum("bhtd,hdf->bhtf", q_all.float(), k_weight_by_q_head.float())
+            k_big_flat = k_big.permute(0, 2, 1, 3).reshape(bsz, target_prefix_len, big_kv_dim).float()
+            prefix_scores = torch.einsum("bhtf,bpf->bhtp", q_prefix, k_big_flat)
+            prefix_scores = prefix_scores + torch.einsum(
+                "bhtd,hd->bht",
+                q_all.float(),
+                k_bias_by_q_head.float(),
+            ).unsqueeze(-1)
+
+            k_tail = k_native_all[:, :, target_prefix_len:, :]
+            tail_k = repeat_kv(k_tail, repeats)
+
+            target_kv_heads = v_big.shape[1]
+            target_head_dim = v_big.shape[-1]
+            if target_head_dim != small_head_dim:
+                raise ValueError(
+                    f"Target head dim {target_head_dim} differs from draft head dim {small_head_dim}; "
+                    "prefix-cache mode needs a value latent adapter for this pair."
+                )
+            native_kv_heads = int(layer.self_attn.v_proj.out_features // small_head_dim)
+            v_tail = layer.self_attn.v_proj(hidden_states_ln[:, target_prefix_len:, :]).view(
+                bsz,
+                seq_len - target_prefix_len,
+                native_kv_heads,
+                small_head_dim,
+            ).transpose(1, 2)
+            if small_q_heads % target_kv_heads != 0:
+                raise ValueError(
+                    f"small_q_heads={small_q_heads} is not divisible by target_kv_heads={target_kv_heads}"
+                )
+            if small_q_heads % native_kv_heads != 0:
+                raise ValueError(
+                    f"small_q_heads={small_q_heads} is not divisible by native_kv_heads={native_kv_heads}"
+                )
+            shared_v = torch.cat(
+                [
+                    repeat_kv(v_big, small_q_heads // target_kv_heads),
+                    repeat_kv(v_tail, small_q_heads // native_kv_heads),
+                ],
+                dim=2,
+            )
+
+            scaling = float(getattr(layer.self_attn, "scaling", small_head_dim ** -0.5))
+            if k_tail.shape[2] == 0:
+                tail_scores = prefix_scores.new_empty(bsz, small_q_heads, seq_len, 0)
+            else:
+                tail_scores = torch.matmul(q_all.float(), tail_k.transpose(2, 3).float())
+            attn_scores = torch.cat([prefix_scores, tail_scores], dim=-1) * scaling
+            attn_scores = attn_scores + attention_mask
+            attn_weights = torch.softmax(attn_scores, dim=-1, dtype=torch.float32).to(q_all.dtype)
+            h_tilde = torch.matmul(attn_weights.float(), shared_v.float())
+            h_tilde = h_tilde.transpose(1, 2).reshape(bsz * seq_len, small_q_heads * small_head_dim)
+
+            o_weight = absorbed_state["o_weights"][small_layer_idx].to(hidden_states.device)
+            o_bias = absorbed_state["o_biases"][small_layer_idx].to(hidden_states.device)
+            attn_output = affine_apply(h_tilde, o_weight, o_bias).view(bsz, seq_len, -1).to(hidden_states.dtype)
+            attn_output = apply_output_norm_match(
+                attn_output,
+                absorbed_state=absorbed_state,
+                layer_idx=small_layer_idx,
+                norm_match=norm_match,
+            )
+        else:
+            attn_output = compute_native_attention_output(
+                attn_module=layer.self_attn,
+                hidden_states=hidden_states_ln,
+                position_embeddings=position_embeddings,
+                attention_mask=attention_mask,
+            ).to(hidden_states.dtype)
+
+        hidden_states = residual + attn_output
+        residual = hidden_states
+        hidden_states = layer.post_attention_layernorm(hidden_states)
+        hidden_states = layer.mlp(hidden_states)
+        hidden_states = residual + hidden_states
+
+    hidden_states = model.norm(hidden_states)
+    logits = small_model.lm_head(hidden_states[:, -1:, :])
+    return logits[:, -1, :]
+
+
+@torch.no_grad()
 def absorbed_draft_logits_from_target_cache(
     *,
     small_model,
@@ -429,7 +579,11 @@ def greedy_speculative_decode(
     shared_layer_indices: Optional[Sequence[int]] = None,
     shared_variant: str = "full",
     norm_match: str = "none",
+    absorbed_cache_mode: str = "recompute",
 ) -> Dict[str, Any]:
+    if absorbed_cache_mode not in {"recompute", "prefix"}:
+        raise ValueError("absorbed_cache_mode must be one of: recompute, prefix")
+
     prefix = prompt_ids.clone()
     generated: List[int] = []
 
@@ -440,15 +594,24 @@ def greedy_speculative_decode(
     draft_calls = 0
     full_accept_rounds = 0
     num_rounds = 0
+    target_prefix_cache_reuses = 0
     round_metric_rows: List[Dict[str, float]] = []
 
     while len(generated) < max_new_tokens:
         num_rounds += 1
         current_prefix = prefix.clone()
         proposal: List[int] = []
+        target_prefix_len = int(prefix.shape[1])
+        target_prefix_legacy_cache = None
 
-        target_prefix_logits = target_next_logits(big_model, current_prefix, big_device)
-        target_calls += 1
+        if mode_name == "absorbed" and absorbed_cache_mode == "prefix":
+            target_prefix_out = big_model(input_ids=current_prefix.to(big_device), use_cache=True)
+            target_prefix_logits = target_prefix_out.logits[:, -1, :]
+            target_prefix_legacy_cache = as_legacy_cache(target_prefix_out.past_key_values)
+            target_calls += 1
+        else:
+            target_prefix_logits = target_next_logits(big_model, current_prefix, big_device)
+            target_calls += 1
 
         for proposal_idx in range(min(draft_steps, max_new_tokens - len(generated))):
             if mode_name == "native":
@@ -456,17 +619,31 @@ def greedy_speculative_decode(
             elif mode_name == "absorbed":
                 if absorbed_state is None:
                     raise ValueError("absorbed_state is required when mode_name='absorbed'")
-                draft_logits = absorbed_draft_next_logits(
-                    big_model=big_model,
-                    small_model=small_model,
-                    prefix_ids=current_prefix,
-                    absorbed_state=absorbed_state,
-                    big_device=big_device,
-                    small_device=small_device,
-                    shared_layer_indices=shared_layer_indices,
-                    shared_variant=shared_variant,
-                    norm_match=norm_match,
-                )
+                if absorbed_cache_mode == "prefix":
+                    draft_logits = absorbed_draft_logits_from_prefix_cache(
+                        small_model=small_model,
+                        input_ids=current_prefix,
+                        target_prefix_legacy_cache=target_prefix_legacy_cache,
+                        target_prefix_len=target_prefix_len,
+                        absorbed_state=absorbed_state,
+                        small_device=small_device,
+                        shared_layer_indices=shared_layer_indices,
+                        shared_variant=shared_variant,
+                        norm_match=norm_match,
+                    )
+                    target_prefix_cache_reuses += 1
+                else:
+                    draft_logits = absorbed_draft_next_logits(
+                        big_model=big_model,
+                        small_model=small_model,
+                        prefix_ids=current_prefix,
+                        absorbed_state=absorbed_state,
+                        big_device=big_device,
+                        small_device=small_device,
+                        shared_layer_indices=shared_layer_indices,
+                        shared_variant=shared_variant,
+                        norm_match=norm_match,
+                    )
             else:
                 raise ValueError(f"Unsupported mode: {mode_name}")
 
@@ -532,6 +709,9 @@ def greedy_speculative_decode(
         "target_calls": int(target_calls),
         "draft_calls": int(draft_calls),
         "num_rounds": int(num_rounds),
+        "absorbed_cache_mode": absorbed_cache_mode if mode_name == "absorbed" else "native",
+        "target_prefix_cache_reuses": int(target_prefix_cache_reuses),
+        "target_recompute_avoided": int(target_prefix_cache_reuses if mode_name == "absorbed" and absorbed_cache_mode == "prefix" else 0),
         "round_metrics": aggregate_rows(round_metric_rows),
     }
 
@@ -580,11 +760,21 @@ def build_parser() -> argparse.ArgumentParser:
         default="none",
         help="Optional per-token output normalization for absorbed full-sharing layers using calibration stats saved by fit_kv_absorbed.py.",
     )
+    parser.add_argument(
+        "--absorbed_cache_mode",
+        type=str,
+        choices=["recompute", "prefix"],
+        default="recompute",
+        help=(
+            '"recompute" reproduces the old prototype by rebuilding target KV for every draft proposal. '
+            '"prefix" computes target prefix KV once per speculative round and lets the draft keep only a temporary tail cache.'
+        ),
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--allow_incompatible_tokenizers", action="store_true")
     parser.add_argument("--out_dir", type=str, default="outputs/absorbed_spec_eval")
     parser.add_argument("--wandb", action="store_true")
-    parser.add_argument("--wandb_project", type=str, default="kv-absorbed")
+    parser.add_argument("--wandb_project", type=str, default="kv-reduce")
     parser.add_argument("--wandb_run_name", type=str, default=None)
     parser.add_argument("--wandb_entity", type=str, default=None)
     parser.add_argument("--wandb_group", type=str, default=None)
@@ -613,6 +803,7 @@ def main() -> None:
     print(f"Shared layers ({len(shared_layer_indices)}/{num_layers}): {shared_layer_indices}")
     print(f"Shared variant: {args.shared_variant}")
     print(f"Output norm matching: {args.norm_match}")
+    print(f"Absorbed cache mode: {args.absorbed_cache_mode}")
 
     prompt_iter = iter_token_blocks(
         tokenizer=big_tokenizer,
@@ -657,6 +848,7 @@ def main() -> None:
             shared_layer_indices=[],
             shared_variant="full",
             norm_match="none",
+            absorbed_cache_mode="recompute",
         )
         absorbed_result = greedy_speculative_decode(
             mode_name="absorbed",
@@ -672,6 +864,7 @@ def main() -> None:
             shared_layer_indices=shared_layer_indices,
             shared_variant=args.shared_variant,
             norm_match=args.norm_match,
+            absorbed_cache_mode=args.absorbed_cache_mode,
         )
 
         native_match = int(native_result["generated_tokens"] == target_tokens)
@@ -704,6 +897,8 @@ def main() -> None:
                 "absorbed_accept_rate": absorbed_result["accept_rate"],
                 "absorbed_accepted_tokens": absorbed_result["accepted_tokens"],
                 "absorbed_proposed_tokens": absorbed_result["proposed_tokens"],
+                "absorbed_target_prefix_cache_reuses": absorbed_result["target_prefix_cache_reuses"],
+                "absorbed_target_recompute_avoided": absorbed_result["target_recompute_avoided"],
                 "absorbed_matches_target_greedy": int(absorbed_match),
             }
         )
@@ -724,6 +919,8 @@ def main() -> None:
                 "eval/absorbed_accepted_tokens": absorbed_result["accepted_tokens"],
                 "eval/native_num_rounds": native_result["num_rounds"],
                 "eval/absorbed_num_rounds": absorbed_result["num_rounds"],
+                "eval/absorbed_target_prefix_cache_reuses": absorbed_result["target_prefix_cache_reuses"],
+                "eval/absorbed_target_recompute_avoided": absorbed_result["target_recompute_avoided"],
                 "eval/native_matches_target_greedy": native_match,
                 "eval/absorbed_matches_target_greedy": absorbed_match,
             }
@@ -746,6 +943,7 @@ def main() -> None:
         "shared_layer_indices": shared_layer_indices,
         "shared_variant": args.shared_variant,
         "norm_match": args.norm_match,
+        "absorbed_cache_mode": args.absorbed_cache_mode,
         "native_summary": native_summary,
         "absorbed_summary": absorbed_summary,
     }
@@ -764,6 +962,7 @@ def main() -> None:
         wandb_run.summary["num_shared_layers"] = len(shared_layer_indices)
         wandb_run.summary["shared_variant"] = args.shared_variant
         wandb_run.summary["norm_match"] = args.norm_match
+        wandb_run.summary["absorbed_cache_mode"] = args.absorbed_cache_mode
 
     print("Done!")
     print(f"  {os.path.join(args.out_dir, 'per_prompt_rows.csv')}")
