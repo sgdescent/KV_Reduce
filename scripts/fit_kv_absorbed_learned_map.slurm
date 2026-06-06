@@ -45,6 +45,7 @@ OUT_DIR="${OUT_DIR:-outputs/kv_absorbed_learned_${SLURM_JOB_ID:-local}}"
 WANDB_PROJECT="${WANDB_PROJECT:-kv-reduce}"
 WANDB_GROUP="${WANDB_GROUP:-absorbed-fit}"
 WANDB_RUN_NAME="${WANDB_RUN_NAME:-absorbed_fit_${SLURM_JOB_ID:-local}}"
+WANDB_LOG_INTERVAL="${WANDB_LOG_INTERVAL:-1}"
 
 cmd=(
   "$PYTHON_BIN" -u fit_kv_absorbed.py
@@ -81,7 +82,7 @@ if [[ "${ALLOW_INCOMPATIBLE_TOKENIZERS:-0}" == "1" ]]; then
   cmd+=(--allow_incompatible_tokenizers)
 fi
 if [[ "${ENABLE_WANDB:-1}" == "1" ]]; then
-  cmd+=(--wandb --wandb_project "$WANDB_PROJECT" --wandb_group "$WANDB_GROUP" --wandb_run_name "$WANDB_RUN_NAME")
+  cmd+=(--wandb --wandb_project "$WANDB_PROJECT" --wandb_group "$WANDB_GROUP" --wandb_run_name "$WANDB_RUN_NAME" --wandb_log_interval "$WANDB_LOG_INTERVAL")
   if [[ -n "${WANDB_ENTITY:-}" ]]; then
     cmd+=(--wandb_entity "$WANDB_ENTITY")
   fi

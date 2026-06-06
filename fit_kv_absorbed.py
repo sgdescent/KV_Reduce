@@ -80,6 +80,13 @@ def init_wandb(args: argparse.Namespace) -> Optional[any]:
     atexit.register(_finish_wandb)
     return run
 
+def should_log_step(step: int, total_steps: int, interval: int) -> bool:
+    """Return True for first/last steps and every interval-th step."""
+    if interval <= 1:
+        return True
+    step_num = step + 1
+    return step_num == 1 or step_num == total_steps or step_num % interval == 0
+
 class OnlineRidgeAccumulator:
     """Uses the Woodbury matrix identity to compute Recursive Least Squares (RLS)."""
     def __init__(self, d_in: int, d_out: int, lambda_reg: float = 1e-4, device: str = "cpu"):
@@ -321,6 +328,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wandb_run_name", type=str, default=None)
     parser.add_argument("--wandb_entity", type=str, default=None)
     parser.add_argument("--wandb_group", type=str, default=None)
+    parser.add_argument(
+        "--wandb_log_interval",
+        type=int,
+        default=1,
+        help="Log W&B calibration metrics every N sequences, while always logging first and last sequence.",
+    )
     return parser
 
 def main() -> None:
@@ -434,7 +447,7 @@ def main() -> None:
             # Update accumulator
             k_accs[small_layer_idx].update(xk, yk)
             
-        if wandb_run is not None:
+        if wandb_run is not None and should_log_step(step, k_train_sequences, args.wandb_log_interval):
             wandb_run.log(log_dict, step=step+1)
         if (step+1) % 20 == 0:
             print(f"  Key Phase: sequence {step + 1} / {k_train_sequences}", flush=True)
@@ -547,7 +560,7 @@ def main() -> None:
             o_accs[small_layer_idx].update(H_target_tilde, Y_draft_flat)
             
         # The offset here makes the step index continue after K training steps for cleanly separated charts
-        if wandb_run is not None:
+        if wandb_run is not None and should_log_step(step, o_train_sequences, args.wandb_log_interval):
             wandb_run.log(log_dict, step=k_train_sequences + step + 1)
             
         if (step+1) % 20 == 0:
