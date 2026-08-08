@@ -12,6 +12,7 @@ cached decode steps. This lets us measure the useful research tradeoff:
 import argparse
 import atexit
 import csv
+import json
 import os
 import time
 from typing import Any, Dict, List, Optional, Sequence
@@ -571,6 +572,17 @@ def run_one_config(
         sync_cuda(cuda_device_ids)
         elapsed_s = time.perf_counter() - prompt_start
         generated_tokens = len(result["generated_tokens"])
+        target_tokens_list = list(target_tokens)
+        first_mismatch = next(
+            (
+                token_idx
+                for token_idx, (generated_token, target_token) in enumerate(
+                    zip(result["generated_tokens"], target_tokens_list)
+                )
+                if generated_token != target_token
+            ),
+            -1,
+        )
         row = {
             "config": config_name,
             "prompt_idx": int(prompt_idx),
@@ -578,7 +590,10 @@ def run_one_config(
             "generated_tokens": int(generated_tokens),
             "tokens_per_second": float(generated_tokens / elapsed_s) if elapsed_s > 0 else 0.0,
             "ms_per_generated_token": float(1000.0 * elapsed_s / generated_tokens) if generated_tokens > 0 else 0.0,
-            "matches_target_greedy": float(result["generated_tokens"] == list(target_tokens)),
+            "matches_target_greedy": float(result["generated_tokens"] == target_tokens_list),
+            "first_target_mismatch": int(first_mismatch),
+            "generated_token_ids": json.dumps(result["generated_tokens"]),
+            "target_token_ids": json.dumps(target_tokens_list),
             "accept_rate": float(result["accept_rate"]),
             "accepted_per_round": float(result["accepted_per_round"]),
             "full_accept_round_fraction": float(result["full_accept_round_fraction"]),
