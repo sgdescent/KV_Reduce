@@ -165,8 +165,15 @@ def top1_logit_margin(logits: torch.Tensor) -> float:
 
 
 def quantize_cache_for_next_step(past_key_values, k_bits: Sequence[int], v_bits: Sequence[int]):
+    if all(int(bits) >= 16 for bits in k_bits) and all(int(bits) >= 16 for bits in v_bits):
+        return past_key_values
     legacy = as_legacy_cache(past_key_values)
     quantized = quantize_legacy_cache(legacy, k_bits, v_bits)
+    if hasattr(past_key_values, "layers"):
+        for layer, (key, value) in zip(past_key_values.layers, quantized):
+            layer.keys = key
+            layer.values = value
+        return past_key_values
     return legacy_to_cache(quantized)
 
 
@@ -174,6 +181,9 @@ def crop_cache_to_length(past_key_values, length: int):
     """Crop a cache after speculative rollback without recomputing the prefix."""
     if length < 0:
         raise ValueError("Cache length must be non-negative.")
+    if hasattr(past_key_values, "crop"):
+        past_key_values.crop(length)
+        return past_key_values
     legacy = as_legacy_cache(past_key_values)
     cropped = tuple(
         (
