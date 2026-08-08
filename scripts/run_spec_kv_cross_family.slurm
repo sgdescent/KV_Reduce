@@ -119,6 +119,14 @@ run_benchmark() {
 
 echo "stage=$STAGE pair=$PAIR_NAME big=$BIG_MODEL small=$SMALL_MODEL seed=$SEED"
 
+require_artifact() {
+  local path="$1"
+  if [[ ! -f "$path" ]]; then
+    echo "Skipping $STAGE for $PAIR_NAME because prerequisite is missing: $path"
+    exit 0
+  fi
+}
+
 case "$STAGE" in
   smoke)
     # Small enough to validate model access, cache APIs, and tokenizer compatibility.
@@ -127,11 +135,14 @@ case "$STAGE" in
     ;;
 
   main)
+    require_artifact "$BASE_OUT/smoke/summary.json"
     run_benchmark 1024 "${PROMPTS_1K:-32}" 3 "wikitext_ctx1024" "$QUANT_CONFIGS"
     run_benchmark 4096 "${PROMPTS_4K:-12}" 2 "wikitext_ctx4096" "$QUANT_CONFIGS"
     ;;
 
   sensitivity)
+    require_artifact "$BASE_OUT/wikitext_ctx1024/summary.json"
+    require_artifact "$BASE_OUT/wikitext_ctx4096/summary.json"
     PROFILE_OUT="$BASE_OUT/sensitivity_top8_ctx1024"
     "$PYTHON_BIN" -u profile_spec_kv_sensitivity.py \
       "${common_args[@]}" \
@@ -167,6 +178,7 @@ case "$STAGE" in
     ;;
 
   robustness)
+    require_artifact "$BASE_OUT/wikitext_ctx1024/summary.json"
     # Held-out distribution and prompt-order robustness. Duplicate argparse
     # options below intentionally override the WikiText defaults in common_args.
     for robust_seed in 1 2; do
@@ -182,6 +194,7 @@ case "$STAGE" in
     ;;
 
   long_context)
+    require_artifact "$BASE_OUT/wikitext_ctx4096/summary.json"
     # Exploratory sample counts keep full-prefix target verification tractable.
     run_benchmark 8192 "${PROMPTS_8K:-4}" 1 "wikitext_ctx8192" "none,k8v4,k4v8"
     run_benchmark 16384 "${PROMPTS_16K:-2}" 1 "wikitext_ctx16384" "none,k8v4,k4v8"

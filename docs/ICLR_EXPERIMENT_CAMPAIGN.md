@@ -39,8 +39,9 @@ gated 9B checkpoint.
 6. `long_context`: exploratory 8K and 16K Qwen2.5 runs before increasing the
    prompt count for the final long-context result.
 
-The launcher uses matching array dependencies, so a failed smoke task prevents
-only that model pair from advancing. Sustained stages are capped at two GPUs.
+The launcher serializes complete stages and caps each stage at two GPUs. Each
+stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
+later stages without preventing successful pairs from advancing.
 Jobs exclude Catalyst nodes `catalyst-0-9` (flaky GPU/prolog behavior observed)
 and `catalyst-0-15` (down at campaign launch).
 
