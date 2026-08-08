@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import random
 from collections import defaultdict
 from pathlib import Path
@@ -80,6 +81,8 @@ def context_from_label(label: str, summary: Dict[str, Any]) -> int:
 
 def valid_cached_summary(summary: Dict[str, Any]) -> Tuple[bool, str]:
     runtime = summary.get("runtime", {})
+    if runtime.get("evaluator_version") != "cached_dynamic_v2":
+        return False, "unsupported or missing evaluator version"
     if not runtime.get("target_cache_reused"):
         return False, "target cache was not reused"
     if not runtime.get("draft_cache_reused"):
@@ -172,6 +175,7 @@ def collect_campaign(
     *,
     bootstrap_samples: int,
     seed: int,
+    tie_tolerance: float,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, str]]]:
     metrics: List[Dict[str, Any]] = []
     comparisons: List[Dict[str, Any]] = []
@@ -201,6 +205,22 @@ def collect_campaign(
 
         for config_name, config_summary in summary.get("summaries", {}).items():
             prompt_rows = rows_by_config.get(config_name, [])
+            mismatch_rows = [row for row in prompt_rows if float(row.get("matches_target_greedy", 0.0)) < 1.0]
+            tie_mismatches = 0
+            non_tie_mismatches = 0
+            unknown_mismatches = 0
+            for row in mismatch_rows:
+                try:
+                    margin = float(row["mismatch_target_top1_margin"])
+                except (KeyError, TypeError, ValueError):
+                    unknown_mismatches += 1
+                    continue
+                if math.isnan(margin):
+                    unknown_mismatches += 1
+                elif margin <= tie_tolerance:
+                    tie_mismatches += 1
+                else:
+                    non_tie_mismatches += 1
             ci_low, ci_high = bootstrap_ratio_ci(
                 prompt_rows,
                 samples=bootstrap_samples,
@@ -237,7 +257,10 @@ def collect_campaign(
                         config_summary.get("total_cache_saved_fraction", 0.0)
                     ),
                     "exact_match": exact_match,
-                    "valid_exact_generation": exact_match == 1.0,
+                    "tie_consistent_mismatches": tie_mismatches,
+                    "non_tie_mismatches": non_tie_mismatches,
+                    "unknown_mismatches": unknown_mismatches,
+                    "valid_exact_generation": non_tie_mismatches == 0 and unknown_mismatches == 0,
                     "summary_path": str(summary_path),
                 }
             )
@@ -413,6 +436,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out_dir", type=Path, default=Path("paper/campaign_artifacts"))
     parser.add_argument("--bootstrap_samples", type=int, default=5000)
     parser.add_argument("--seed", type=int, default=20260808)
+    parser.add_argument(
+        "--tie_tolerance",
+        type=float,
+        default=1e-3,
+        help="Treat greedy mismatches at or below this target top-1 margin as numerical ties.",
+    )
     return parser
 
 
@@ -424,6 +453,7 @@ def main() -> None:
         args.results_root,
         bootstrap_samples=args.bootstrap_samples,
         seed=args.seed,
+        tie_tolerance=args.tie_tolerance,
     )
     write_csv(args.out_dir / "campaign_metrics.csv", metrics)
     write_csv(args.out_dir / "equal_memory_comparisons.csv", comparisons)
@@ -435,6 +465,7 @@ def main() -> None:
 
     aggregate = {
         "results_root": str(args.results_root),
+        "tie_tolerance": args.tie_tolerance,
         "num_metric_rows": len(metrics),
         "num_equal_memory_comparisons": len(comparisons),
         "num_rejected_artifacts": len(rejected),

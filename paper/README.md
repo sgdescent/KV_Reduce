@@ -17,9 +17,23 @@ Run these commands from `paper/`. The source JSON under `data/preliminary/` is
 copied from completed Catalyst runs; figures and generated LaTeX tables can be
 regenerated without editing paper numbers by hand.
 
+For the cache-resident cross-family campaign, run from the repository root:
+
+```bash
+python paper/aggregate_campaign.py \
+  --results_root outputs/iclr_spec_kv \
+  --out_dir paper/campaign_artifacts
+```
+
+The aggregator accepts only `cached_dynamic_v2` summaries, computes prompt-level
+bootstrap confidence intervals and paired equal-memory effects, audits numerical
+tie versus non-tie target mismatches, and writes paper-ready PDF/PNG figures plus
+a LaTeX table.
+
 ## Current evidence status
 
-- Qwen2.5-3B/1.5B 1K and 4K quantization results are complete.
+- Earlier Qwen2.5-3B/1.5B results are retained only as preliminary evidence;
+  final tables use the cache-resident evaluator campaign.
 - Gaussian K/V perturbation is complete.
 - One Qwen top-eight-layer allocation is complete.
 - Cross-family results are running under `outputs/iclr_spec_kv/` on Catalyst.

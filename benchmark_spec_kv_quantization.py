@@ -18,6 +18,7 @@ import time
 from typing import Any, Dict, List, Optional, Sequence
 
 import torch
+import transformers
 
 from kv_cache_quantization import (
     bit_allocation_stats,
@@ -886,10 +887,14 @@ def main() -> None:
     summary_payload = {
         "config": vars(args),
         "runtime": {
+            "evaluator_version": "cached_dynamic_v2",
             "target_cache_reused": True,
             "draft_cache_reused": True,
+            "cache_crop_mode": "in_place",
             "target_reference_generation_in_timing": False,
             "quantization_mode": "fake_quantized_values_with_estimated_packed_bytes",
+            "torch_version": torch.__version__,
+            "transformers_version": transformers.__version__,
         },
         "num_prompts": len(benchmark_prompts),
         "warmup_prompts": len(warmup_prompts),

@@ -58,11 +58,31 @@ two-GPU chain is capped at one concurrent job, so it consumes at most two GPUs.
 - measured runtime only as a diagnostic, because the current fake-quantization
   path dequantizes in Python and is not a kernel-level speed benchmark.
 
+The evaluator performs one target and one draft prefill per prompt, reuses both
+dynamic caches across speculative rounds, verifies each proposal against the
+existing target cache, and crops rejected suffixes in place. Target-greedy
+reference generation is performed once outside each timed configuration. Runs
+missing `runtime.evaluator_version=cached_dynamic_v2` are rejected by the paper
+aggregation script.
+
+Greedy exact-match is reported together with the target top-1 logit margin at
+the first mismatch. BF16/SDPA can select a different token when the top logits
+are tied; the aggregate distinguishes these numerical ties from non-tie
+verification errors instead of silently treating them as algorithm failures.
+
 ## Launch
 
 ```bash
 bash scripts/submit_iclr_spec_kv_campaign.sh
 bash scripts/submit_iclr_spec_kv_two_gpu.sh
+```
+
+After stages complete, generate confidence intervals, tables, and figures with:
+
+```bash
+python paper/aggregate_campaign.py \
+  --results_root outputs/iclr_spec_kv \
+  --out_dir paper/campaign_artifacts
 ```
 
 To run only a subset of pairs:
