@@ -164,10 +164,55 @@ def quantize_cache_for_next_step(past_key_values, k_bits: Sequence[int], v_bits:
     return legacy_to_cache(quantized)
 
 
+def crop_cache_to_length(past_key_values, length: int):
+    """Crop a cache after speculative rollback without recomputing the prefix."""
+    if length < 0:
+        raise ValueError("Cache length must be non-negative.")
+    legacy = as_legacy_cache(past_key_values)
+    cropped = tuple(
+        (
+            key[..., :length, :].contiguous(),
+            value[..., :length, :].contiguous(),
+        )
+        for key, value in legacy
+    )
+    return legacy_to_cache(cropped)
+
+
 @torch.no_grad()
-def target_next_logits(big_model, prefix_ids: torch.Tensor, big_device: str) -> torch.Tensor:
-    out = big_model(input_ids=prefix_ids.to(big_device), use_cache=False)
-    return out.logits[:, -1, :]
+def cached_prefill(model, input_ids: torch.Tensor, device: str) -> Dict[str, Any]:
+    input_on_device = input_ids.to(device)
+    out = model(input_ids=input_on_device, use_cache=True)
+    return {
+        "logits": out.logits[:, -1, :],
+        "cache": out.past_key_values,
+        "cache_len": int(input_on_device.shape[1]),
+    }
+
+
+@torch.no_grad()
+def cached_step(
+    *,
+    model,
+    input_ids: torch.Tensor,
+    cache,
+    cache_len: int,
+    device: str,
+) -> Dict[str, Any]:
+    input_on_device = input_ids.to(device)
+    step_len = int(input_on_device.shape[1])
+    out = model(
+        input_ids=input_on_device,
+        attention_mask=_ones_attention_mask(cache_len + step_len, device),
+        past_key_values=cache,
+        use_cache=True,
+        cache_position=_cache_position(cache_len, step_len, device),
+    )
+    return {
+        "logits": out.logits,
+        "cache": out.past_key_values,
+        "cache_len": cache_len + step_len,
+    }
 
 
 @torch.no_grad()
@@ -179,55 +224,27 @@ def greedy_target_generate(
     big_device: str,
     shared_vocab_size: int,
 ) -> List[int]:
-    prefix = prompt_ids.clone()
+    state = cached_prefill(big_model, prompt_ids, big_device)
+    logits = shared_token_logits(state["logits"], shared_vocab_size)
+    cache = state["cache"]
+    cache_len = int(state["cache_len"])
     generated: List[int] = []
-    for _ in range(max_new_tokens):
-        logits = shared_token_logits(target_next_logits(big_model, prefix, big_device), shared_vocab_size)
+    for token_idx in range(max_new_tokens):
         token = int(logits.argmax(dim=-1).item())
         generated.append(token)
-        prefix = torch.cat([prefix, torch.tensor([[token]], dtype=prefix.dtype)], dim=1)
+        if token_idx + 1 >= max_new_tokens:
+            break
+        step = cached_step(
+            model=big_model,
+            input_ids=torch.tensor([[token]], dtype=prompt_ids.dtype),
+            cache=cache,
+            cache_len=cache_len,
+            device=big_device,
+        )
+        logits = shared_token_logits(step["logits"][:, -1, :], shared_vocab_size)
+        cache = step["cache"]
+        cache_len = int(step["cache_len"])
     return generated
-
-
-@torch.no_grad()
-def draft_first_logits_from_quantized_prefix(
-    *,
-    small_model,
-    prefix_ids: torch.Tensor,
-    small_device: str,
-    k_bits: Sequence[int],
-    v_bits: Sequence[int],
-) -> Dict[str, Any]:
-    prefix_on_device = prefix_ids.to(small_device)
-    if prefix_on_device.shape[1] == 1:
-        out = small_model(input_ids=prefix_on_device, use_cache=True)
-        cache = quantize_cache_for_next_step(out.past_key_values, k_bits, v_bits)
-        return {
-            "logits": out.logits[:, -1, :],
-            "cache": cache,
-            "cache_len": int(prefix_on_device.shape[1]),
-            "prefill_tokens": 1,
-        }
-
-    cache_context = prefix_on_device[:, :-1]
-    current = prefix_on_device[:, -1:]
-    context_out = small_model(input_ids=cache_context, use_cache=True)
-    cache = quantize_cache_for_next_step(context_out.past_key_values, k_bits, v_bits)
-    cache_len = int(cache_context.shape[1])
-    out = small_model(
-        input_ids=current,
-        attention_mask=_ones_attention_mask(cache_len + 1, small_device),
-        past_key_values=cache,
-        use_cache=True,
-        cache_position=_cache_position(cache_len, 1, small_device),
-    )
-    cache = quantize_cache_for_next_step(out.past_key_values, k_bits, v_bits)
-    return {
-        "logits": out.logits[:, -1, :],
-        "cache": cache,
-        "cache_len": cache_len + 1,
-        "prefill_tokens": int(prefix_on_device.shape[1]),
-    }
 
 
 @torch.no_grad()
@@ -243,15 +260,15 @@ def draft_next_logits_from_cache(
     v_bits: Sequence[int],
 ) -> Dict[str, Any]:
     input_ids = torch.tensor([[token]], dtype=dtype, device=small_device)
-    out = small_model(
+    step = cached_step(
+        model=small_model,
         input_ids=input_ids,
-        attention_mask=_ones_attention_mask(cache_len + 1, small_device),
-        past_key_values=cache,
-        use_cache=True,
-        cache_position=_cache_position(cache_len, 1, small_device),
+        cache=cache,
+        cache_len=cache_len,
+        device=small_device,
     )
-    cache = quantize_cache_for_next_step(out.past_key_values, k_bits, v_bits)
-    return {"logits": out.logits[:, -1, :], "cache": cache, "cache_len": cache_len + 1}
+    cache = quantize_cache_for_next_step(step["cache"], k_bits, v_bits)
+    return {"logits": step["logits"][:, -1, :], "cache": cache, "cache_len": int(step["cache_len"])}
 
 
 @torch.no_grad()
@@ -269,49 +286,43 @@ def greedy_speculative_decode_cached_quantized(
     v_bits: Sequence[int],
     shared_vocab_size: int,
 ) -> Dict[str, Any]:
-    prefix = prompt_ids.clone()
+    target_state = cached_prefill(big_model, prompt_ids, big_device)
+    target_logits = shared_token_logits(target_state["logits"], shared_vocab_size)
+    target_cache = target_state["cache"]
+    target_cache_len = int(target_state["cache_len"])
+
+    draft_state = cached_prefill(small_model, prompt_ids, small_device)
+    draft_logits = shared_token_logits(draft_state["logits"], shared_vocab_size)
+    draft_cache = quantize_cache_for_next_step(draft_state["cache"], k_bits, v_bits)
+    draft_cache_len = int(draft_state["cache_len"])
+
+    if target_cache_len != draft_cache_len:
+        raise ValueError(
+            f"Target and draft prefills produced different cache lengths: {target_cache_len} vs {draft_cache_len}."
+        )
+
     generated: List[int] = []
     proposed_tokens = 0
     accepted_tokens = 0
-    target_calls = 0
+    target_calls = 1
     target_verify_calls = 0
     draft_decode_calls = 0
-    draft_prefill_calls = 0
-    draft_prefill_tokens = 0
+    draft_prefill_calls = 1
+    draft_prefill_tokens = int(prompt_ids.shape[1])
     full_accept_rounds = 0
     num_rounds = 0
     round_metric_rows: List[Dict[str, float]] = []
 
     while len(generated) < max_new_tokens:
         num_rounds += 1
-        current_prefix = prefix.clone()
+        round_prefix_len = target_cache_len
         proposal: List[int] = []
-
-        target_prefix_logits = shared_token_logits(
-            target_next_logits(big_model, current_prefix, big_device),
-            shared_vocab_size,
-        )
-        target_calls += 1
-
-        first = draft_first_logits_from_quantized_prefix(
-            small_model=small_model,
-            prefix_ids=current_prefix,
-            small_device=small_device,
-            k_bits=k_bits,
-            v_bits=v_bits,
-        )
-        draft_prefill_calls += 1
-        draft_prefill_tokens += int(first["prefill_tokens"])
-        draft_logits = shared_token_logits(first["logits"], shared_vocab_size)
-        draft_cache = first["cache"]
-        draft_cache_len = int(first["cache_len"])
 
         max_round_steps = min(draft_steps, max_new_tokens - len(generated))
         for proposal_idx in range(max_round_steps):
-            draft_decode_calls += 1
             if proposal_idx == 0:
                 metrics = distribution_metrics(
-                    target_prefix_logits.to(draft_logits.device),
+                    target_logits.to(draft_logits.device),
                     draft_logits,
                     topk=topk,
                 )
@@ -319,34 +330,40 @@ def greedy_speculative_decode_cached_quantized(
 
             token = int(draft_logits.argmax(dim=-1).item())
             proposal.append(token)
-            current_prefix = torch.cat([current_prefix, torch.tensor([[token]], dtype=current_prefix.dtype)], dim=1)
-
-            if proposal_idx + 1 < max_round_steps:
-                next_step = draft_next_logits_from_cache(
-                    small_model=small_model,
-                    token=token,
-                    cache=draft_cache,
-                    cache_len=draft_cache_len,
-                    small_device=small_device,
-                    dtype=current_prefix.dtype,
-                    k_bits=k_bits,
-                    v_bits=v_bits,
-                )
-                draft_logits = shared_token_logits(next_step["logits"], shared_vocab_size)
-                draft_cache = next_step["cache"]
-                draft_cache_len = int(next_step["cache_len"])
+            next_step = draft_next_logits_from_cache(
+                small_model=small_model,
+                token=token,
+                cache=draft_cache,
+                cache_len=draft_cache_len,
+                small_device=small_device,
+                dtype=prompt_ids.dtype,
+                k_bits=k_bits,
+                v_bits=v_bits,
+            )
+            draft_decode_calls += 1
+            draft_logits = shared_token_logits(next_step["logits"], shared_vocab_size)
+            draft_cache = next_step["cache"]
+            draft_cache_len = int(next_step["cache_len"])
 
         proposed_tokens += len(proposal)
-        verify_ids = current_prefix.to(big_device)
-        verify_out = big_model(input_ids=verify_ids, use_cache=False)
+        verify_ids = torch.tensor([proposal], dtype=prompt_ids.dtype)
+        verify = cached_step(
+            model=big_model,
+            input_ids=verify_ids,
+            cache=target_cache,
+            cache_len=target_cache_len,
+            device=big_device,
+        )
         target_calls += 1
         target_verify_calls += 1
-        verify_logits = shared_token_logits(verify_out.logits, shared_vocab_size)
+        verify_logits = shared_token_logits(verify["logits"], shared_vocab_size)
+        target_cache = verify["cache"]
+        target_cache_len = int(verify["cache_len"])
 
-        base_idx = int(prefix.shape[1]) - 1
         accepted_this_round = 0
         for idx, token in enumerate(proposal):
-            target_token = int(verify_logits[:, base_idx + idx, :].argmax(dim=-1).item())
+            token_logits = target_logits if idx == 0 else verify_logits[:, idx - 1, :]
+            target_token = int(token_logits.argmax(dim=-1).item())
             if target_token != token:
                 break
             accepted_this_round += 1
@@ -355,21 +372,47 @@ def greedy_speculative_decode_cached_quantized(
         if accepted_this_round == len(proposal):
             full_accept_rounds += 1
 
-        if accepted_this_round > 0:
-            accepted_tensor = torch.tensor([proposal[:accepted_this_round]], dtype=prefix.dtype)
-            prefix = torch.cat([prefix, accepted_tensor], dim=1)
-            generated.extend(proposal[:accepted_this_round])
+        generated.extend(proposal[:accepted_this_round])
 
         if len(generated) >= max_new_tokens:
             break
 
-        if accepted_this_round < len(proposal):
-            correction_logits = verify_logits[:, base_idx + accepted_this_round, :]
-        else:
-            correction_logits = verify_logits[:, -1, :]
+        correction_logits = target_logits if accepted_this_round == 0 else verify_logits[:, accepted_this_round - 1, :]
         correction_token = int(correction_logits.argmax(dim=-1).item())
-        prefix = torch.cat([prefix, torch.tensor([[correction_token]], dtype=prefix.dtype)], dim=1)
         generated.append(correction_token)
+
+        committed_len = round_prefix_len + accepted_this_round
+        target_cache = crop_cache_to_length(target_cache, committed_len)
+        draft_cache = crop_cache_to_length(draft_cache, committed_len)
+        target_cache_len = committed_len
+        draft_cache_len = committed_len
+
+        target_commit = cached_step(
+            model=big_model,
+            input_ids=torch.tensor([[correction_token]], dtype=prompt_ids.dtype),
+            cache=target_cache,
+            cache_len=target_cache_len,
+            device=big_device,
+        )
+        target_calls += 1
+        target_logits = shared_token_logits(target_commit["logits"][:, -1, :], shared_vocab_size)
+        target_cache = target_commit["cache"]
+        target_cache_len = int(target_commit["cache_len"])
+
+        draft_commit = draft_next_logits_from_cache(
+            small_model=small_model,
+            token=correction_token,
+            cache=draft_cache,
+            cache_len=draft_cache_len,
+            small_device=small_device,
+            dtype=prompt_ids.dtype,
+            k_bits=k_bits,
+            v_bits=v_bits,
+        )
+        draft_decode_calls += 1
+        draft_logits = shared_token_logits(draft_commit["logits"], shared_vocab_size)
+        draft_cache = draft_commit["cache"]
+        draft_cache_len = int(draft_commit["cache_len"])
 
     round_metrics = aggregate_rows(round_metric_rows)
     return {
@@ -450,6 +493,27 @@ def estimate_total_kv_memory(
 
 
 @torch.no_grad()
+def generate_target_references(
+    *,
+    prompts: Sequence[torch.Tensor],
+    big_model,
+    max_new_tokens: int,
+    big_device: str,
+    shared_vocab_size: int,
+) -> List[List[int]]:
+    return [
+        greedy_target_generate(
+            big_model=big_model,
+            prompt_ids=prompt_ids,
+            max_new_tokens=max_new_tokens,
+            big_device=big_device,
+            shared_vocab_size=shared_vocab_size,
+        )
+        for prompt_ids in prompts
+    ]
+
+
+@torch.no_grad()
 def run_one_config(
     *,
     config_name: str,
@@ -468,22 +532,29 @@ def run_one_config(
     wandb_prefix: str,
     wandb_step_offset: int,
     shared_vocab_size: int,
+    target_token_references: Optional[Sequence[Sequence[int]]] = None,
 ) -> Dict[str, Any]:
+    if target_token_references is None:
+        target_token_references = generate_target_references(
+            prompts=prompts,
+            big_model=big_model,
+            max_new_tokens=max_new_tokens,
+            big_device=big_device,
+            shared_vocab_size=shared_vocab_size,
+        )
+    if len(target_token_references) != len(prompts):
+        raise ValueError(
+            f"Expected {len(prompts)} target references, received {len(target_token_references)}."
+        )
+
     rows: List[Dict[str, Any]] = []
     reset_cuda_peak(cuda_device_ids)
     sync_cuda(cuda_device_ids)
     start = time.perf_counter()
 
-    for prompt_idx, prompt_ids in enumerate(prompts):
+    for prompt_idx, (prompt_ids, target_tokens) in enumerate(zip(prompts, target_token_references)):
         sync_cuda(cuda_device_ids)
         prompt_start = time.perf_counter()
-        target_tokens = greedy_target_generate(
-            big_model=big_model,
-            prompt_ids=prompt_ids,
-            max_new_tokens=max_new_tokens,
-            big_device=big_device,
-            shared_vocab_size=shared_vocab_size,
-        )
         result = greedy_speculative_decode_cached_quantized(
             big_model=big_model,
             small_model=small_model,
@@ -507,7 +578,7 @@ def run_one_config(
             "generated_tokens": int(generated_tokens),
             "tokens_per_second": float(generated_tokens / elapsed_s) if elapsed_s > 0 else 0.0,
             "ms_per_generated_token": float(1000.0 * elapsed_s / generated_tokens) if generated_tokens > 0 else 0.0,
-            "matches_target_greedy": float(result["generated_tokens"] == target_tokens),
+            "matches_target_greedy": float(result["generated_tokens"] == list(target_tokens)),
             "accept_rate": float(result["accept_rate"]),
             "accepted_per_round": float(result["accepted_per_round"]),
             "full_accept_round_fraction": float(result["full_accept_round_fraction"]),
@@ -568,6 +639,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--small_device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--big_dtype", type=str, default="bf16")
     parser.add_argument("--small_dtype", type=str, default="bf16")
+    parser.add_argument(
+        "--attn_implementation",
+        type=str,
+        default="sdpa",
+        choices=["eager", "sdpa", "flash_attention_2"],
+        help="Attention backend. SDPA avoids eager attention's quadratic score-matrix allocation.",
+    )
     parser.add_argument("--dataset_name", type=str, default="wikitext")
     parser.add_argument("--dataset_config", type=str, default="wikitext-2-raw-v1")
     parser.add_argument("--text_file", type=str, default=None)
@@ -617,8 +695,18 @@ def main() -> None:
         raise ValueError("Tokenizers appear incompatible. Use --allow_incompatible_tokenizers to override.")
     shared_vocab_size = min(int(big_tokenizer.vocab_size), int(small_tokenizer.vocab_size))
 
-    big_model = load_causal_lm(args.big_model, device=args.big_device, dtype_name=args.big_dtype, attn_implementation="eager")
-    small_model = load_causal_lm(args.small_model, device=args.small_device, dtype_name=args.small_dtype, attn_implementation="eager")
+    big_model = load_causal_lm(
+        args.big_model,
+        device=args.big_device,
+        dtype_name=args.big_dtype,
+        attn_implementation=args.attn_implementation,
+    )
+    small_model = load_causal_lm(
+        args.small_model,
+        device=args.small_device,
+        dtype_name=args.small_dtype,
+        attn_implementation=args.attn_implementation,
+    )
     quant_configs = parse_quant_config_specs(args.quant_configs, int(small_model.config.num_hidden_layers))
     print("Quant configs:", [name for name, _, _, _ in quant_configs])
 
@@ -643,6 +731,21 @@ def main() -> None:
         raise ValueError("No benchmark prompts were loaded.")
 
     cuda_device_ids = cuda_devices(args.big_device, args.small_device)
+    print("Generating cached target references once per prompt...")
+    warmup_target_references = generate_target_references(
+        prompts=warmup_prompts,
+        big_model=big_model,
+        max_new_tokens=args.max_new_tokens,
+        big_device=args.big_device,
+        shared_vocab_size=shared_vocab_size,
+    )
+    benchmark_target_references = generate_target_references(
+        prompts=benchmark_prompts,
+        big_model=big_model,
+        max_new_tokens=args.max_new_tokens,
+        big_device=args.big_device,
+        shared_vocab_size=shared_vocab_size,
+    )
     if warmup_prompts:
         print(f"Running {len(warmup_prompts)} warmup prompts for each config...")
         for name, k_bits, v_bits, _ in quant_configs:
@@ -663,6 +766,7 @@ def main() -> None:
                 wandb_prefix="warmup",
                 wandb_step_offset=0,
                 shared_vocab_size=shared_vocab_size,
+                target_token_references=warmup_target_references,
             )
 
     all_rows: List[Dict[str, Any]] = []
@@ -688,6 +792,7 @@ def main() -> None:
             wandb_prefix="spec_kv",
             wandb_step_offset=config_idx * len(benchmark_prompts),
             shared_vocab_size=shared_vocab_size,
+            target_token_references=benchmark_target_references,
         )
         memory = estimate_total_kv_memory(
             big_model=big_model,
@@ -724,6 +829,12 @@ def main() -> None:
 
     summary_payload = {
         "config": vars(args),
+        "runtime": {
+            "target_cache_reused": True,
+            "draft_cache_reused": True,
+            "target_reference_generation_in_timing": False,
+            "quantization_mode": "fake_quantized_values_with_estimated_packed_bytes",
+        },
         "num_prompts": len(benchmark_prompts),
         "warmup_prompts": len(warmup_prompts),
         "quant_configs": [name for name, _, _, _ in quant_configs],

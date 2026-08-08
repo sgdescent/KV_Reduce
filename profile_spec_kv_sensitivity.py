@@ -17,6 +17,7 @@ import torch
 
 from benchmark_spec_kv_quantization import (
     estimate_total_kv_memory,
+    generate_target_references,
     init_wandb,
     run_one_config,
 )
@@ -127,6 +128,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--small_device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--big_dtype", type=str, default="bf16")
     parser.add_argument("--small_dtype", type=str, default="bf16")
+    parser.add_argument(
+        "--attn_implementation",
+        type=str,
+        default="sdpa",
+        choices=["eager", "sdpa", "flash_attention_2"],
+    )
     parser.add_argument("--dataset_name", type=str, default="wikitext")
     parser.add_argument("--dataset_config", type=str, default="wikitext-2-raw-v1")
     parser.add_argument("--text_file", type=str, default=None)
@@ -173,8 +180,18 @@ def main() -> None:
         raise ValueError("Tokenizers appear incompatible. Use --allow_incompatible_tokenizers to override.")
     shared_vocab_size = min(int(big_tokenizer.vocab_size), int(small_tokenizer.vocab_size))
 
-    big_model = load_causal_lm(args.big_model, device=args.big_device, dtype_name=args.big_dtype, attn_implementation="eager")
-    small_model = load_causal_lm(args.small_model, device=args.small_device, dtype_name=args.small_dtype, attn_implementation="eager")
+    big_model = load_causal_lm(
+        args.big_model,
+        device=args.big_device,
+        dtype_name=args.big_dtype,
+        attn_implementation=args.attn_implementation,
+    )
+    small_model = load_causal_lm(
+        args.small_model,
+        device=args.small_device,
+        dtype_name=args.small_dtype,
+        attn_implementation=args.attn_implementation,
+    )
 
     num_layers = int(small_model.config.num_hidden_layers)
     layers = parse_layer_spec(args.layers, num_layers)
@@ -205,6 +222,21 @@ def main() -> None:
 
     cuda_device_ids = cuda_devices(args.big_device, args.small_device)
     full_k_bits, full_v_bits = uniform_bit_lists(num_layers, FULL_PRECISION_BITS, FULL_PRECISION_BITS)
+    print("Generating cached target references once per prompt...")
+    warmup_target_references = generate_target_references(
+        prompts=warmup_prompts,
+        big_model=big_model,
+        max_new_tokens=args.max_new_tokens,
+        big_device=args.big_device,
+        shared_vocab_size=shared_vocab_size,
+    )
+    profile_target_references = generate_target_references(
+        prompts=profile_prompts,
+        big_model=big_model,
+        max_new_tokens=args.max_new_tokens,
+        big_device=args.big_device,
+        shared_vocab_size=shared_vocab_size,
+    )
 
     if warmup_prompts:
         print("Running baseline warmup...")
@@ -225,6 +257,7 @@ def main() -> None:
             wandb_prefix="warmup",
             wandb_step_offset=0,
             shared_vocab_size=shared_vocab_size,
+            target_token_references=warmup_target_references,
         )
 
     print("Running full-precision baseline...")
@@ -245,6 +278,7 @@ def main() -> None:
         wandb_prefix="sensitivity",
         wandb_step_offset=0,
         shared_vocab_size=shared_vocab_size,
+        target_token_references=profile_target_references,
     )
     baseline_summary = baseline_result["summary"]
 
@@ -294,6 +328,7 @@ def main() -> None:
                     wandb_prefix="sensitivity",
                     wandb_step_offset=candidate_idx * len(profile_prompts),
                     shared_vocab_size=shared_vocab_size,
+                    target_token_references=profile_target_references,
                 )
                 candidate_idx += 1
                 raw_rows.extend(result["rows"])

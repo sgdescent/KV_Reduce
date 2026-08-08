@@ -33,9 +33,11 @@ SEED="${SEED:-0}"
 QUANT_CONFIGS="${QUANT_CONFIGS:-none,8,k8v4,k4v8,k4v4}"
 BIG_DEVICE="${BIG_DEVICE:-cuda:0}"
 SMALL_DEVICE="${SMALL_DEVICE:-cuda:0}"
+ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
 
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
+export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 
 case "$TASK_ID" in
   0)
@@ -89,6 +91,7 @@ common_args=(
   --small_device "$SMALL_DEVICE"
   --big_dtype bf16
   --small_dtype bf16
+  --attn_implementation "$ATTN_IMPLEMENTATION"
   --dataset_name "$DATASET_NAME"
   --dataset_config "$DATASET_CONFIG"
   --eval_split "$EVAL_SPLIT"
@@ -144,7 +147,6 @@ case "$STAGE" in
 
   sensitivity)
     require_artifact "$BASE_OUT/wikitext_ctx1024/summary.json"
-    require_artifact "$BASE_OUT/wikitext_ctx4096/summary.json"
     PROFILE_OUT="$BASE_OUT/sensitivity_top8_ctx1024"
     "$PYTHON_BIN" -u profile_spec_kv_sensitivity.py \
       "${common_args[@]}" \
