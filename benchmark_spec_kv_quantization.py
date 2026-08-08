@@ -159,6 +159,11 @@ def shared_token_logits(logits: torch.Tensor, shared_vocab_size: int) -> torch.T
     return logits[..., :shared_vocab_size]
 
 
+def top1_logit_margin(logits: torch.Tensor) -> float:
+    top_two = torch.topk(logits.float(), k=2, dim=-1).values
+    return float((top_two[..., 0] - top_two[..., 1]).mean().item())
+
+
 def quantize_cache_for_next_step(past_key_values, k_bits: Sequence[int], v_bits: Sequence[int]):
     legacy = as_legacy_cache(past_key_values)
     quantized = quantize_legacy_cache(legacy, k_bits, v_bits)
@@ -313,6 +318,8 @@ def greedy_speculative_decode_cached_quantized(
     full_accept_rounds = 0
     num_rounds = 0
     round_metric_rows: List[Dict[str, float]] = []
+    generation_sources: List[str] = []
+    target_top1_margins: List[float] = []
 
     while len(generated) < max_new_tokens:
         num_rounds += 1
@@ -362,8 +369,10 @@ def greedy_speculative_decode_cached_quantized(
         target_cache_len = int(verify["cache_len"])
 
         accepted_this_round = 0
+        proposal_target_margins: List[float] = []
         for idx, token in enumerate(proposal):
             token_logits = target_logits if idx == 0 else verify_logits[:, idx - 1, :]
+            proposal_target_margins.append(top1_logit_margin(token_logits))
             target_token = int(token_logits.argmax(dim=-1).item())
             if target_token != token:
                 break
@@ -374,6 +383,8 @@ def greedy_speculative_decode_cached_quantized(
             full_accept_rounds += 1
 
         generated.extend(proposal[:accepted_this_round])
+        generation_sources.extend(["accepted_proposal"] * accepted_this_round)
+        target_top1_margins.extend(proposal_target_margins[:accepted_this_round])
 
         if len(generated) >= max_new_tokens:
             break
@@ -381,6 +392,10 @@ def greedy_speculative_decode_cached_quantized(
         correction_logits = target_logits if accepted_this_round == 0 else verify_logits[:, accepted_this_round - 1, :]
         correction_token = int(correction_logits.argmax(dim=-1).item())
         generated.append(correction_token)
+        generation_sources.append(
+            "verified_bonus" if accepted_this_round == len(proposal) else "target_correction"
+        )
+        target_top1_margins.append(top1_logit_margin(correction_logits))
 
         committed_len = round_prefix_len + accepted_this_round
         target_cache = crop_cache_to_length(target_cache, committed_len)
@@ -418,6 +433,8 @@ def greedy_speculative_decode_cached_quantized(
     round_metrics = aggregate_rows(round_metric_rows)
     return {
         "generated_tokens": generated[:max_new_tokens],
+        "generation_sources": generation_sources[:max_new_tokens],
+        "target_top1_margins": target_top1_margins[:max_new_tokens],
         "proposed_tokens": int(proposed_tokens),
         "accepted_tokens": int(accepted_tokens),
         "accept_rate": float(accepted_tokens / proposed_tokens) if proposed_tokens > 0 else 0.0,
@@ -583,6 +600,16 @@ def run_one_config(
             ),
             -1,
         )
+        mismatch_source = (
+            result["generation_sources"][first_mismatch]
+            if 0 <= first_mismatch < len(result["generation_sources"])
+            else ""
+        )
+        mismatch_margin = (
+            result["target_top1_margins"][first_mismatch]
+            if 0 <= first_mismatch < len(result["target_top1_margins"])
+            else float("nan")
+        )
         row = {
             "config": config_name,
             "prompt_idx": int(prompt_idx),
@@ -592,8 +619,12 @@ def run_one_config(
             "ms_per_generated_token": float(1000.0 * elapsed_s / generated_tokens) if generated_tokens > 0 else 0.0,
             "matches_target_greedy": float(result["generated_tokens"] == target_tokens_list),
             "first_target_mismatch": int(first_mismatch),
+            "mismatch_source": mismatch_source,
+            "mismatch_target_top1_margin": float(mismatch_margin),
             "generated_token_ids": json.dumps(result["generated_tokens"]),
             "target_token_ids": json.dumps(target_tokens_list),
+            "generation_sources": json.dumps(result["generation_sources"]),
+            "target_top1_margins": json.dumps(result["target_top1_margins"]),
             "accept_rate": float(result["accept_rate"]),
             "accepted_per_round": float(result["accepted_per_round"]),
             "full_accept_round_fraction": float(result["full_accept_round_fraction"]),
