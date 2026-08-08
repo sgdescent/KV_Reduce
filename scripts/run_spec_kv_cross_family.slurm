@@ -31,6 +31,8 @@ DATASET_CONFIG="${DATASET_CONFIG:-wikitext-2-raw-v1}"
 EVAL_SPLIT="${EVAL_SPLIT:-validation}"
 SEED="${SEED:-0}"
 QUANT_CONFIGS="${QUANT_CONFIGS:-none,8,k8v4,k4v8,k4v4}"
+BIG_DEVICE="${BIG_DEVICE:-cuda:0}"
+SMALL_DEVICE="${SMALL_DEVICE:-cuda:0}"
 
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
@@ -83,8 +85,8 @@ fi
 common_args=(
   --big_model "$BIG_MODEL"
   --small_model "$SMALL_MODEL"
-  --big_device cuda:0
-  --small_device cuda:0
+  --big_device "$BIG_DEVICE"
+  --small_device "$SMALL_DEVICE"
   --big_dtype bf16
   --small_dtype bf16
   --dataset_name "$DATASET_NAME"
@@ -117,7 +119,7 @@ run_benchmark() {
     "$@"
 }
 
-echo "stage=$STAGE pair=$PAIR_NAME big=$BIG_MODEL small=$SMALL_MODEL seed=$SEED"
+echo "stage=$STAGE pair=$PAIR_NAME big=$BIG_MODEL@$BIG_DEVICE small=$SMALL_MODEL@$SMALL_DEVICE seed=$SEED"
 
 require_artifact() {
   local path="$1"

@@ -45,6 +45,10 @@ later stages without preventing successful pairs from advancing.
 Jobs exclude Catalyst nodes `catalyst-0-9` (flaky GPU/prolog behavior observed)
 and `catalyst-0-15` (down at campaign launch).
 
+Pairs 0, 4, and 5 fit target and draft on one 24-GiB GPU. Pairs 1, 2, and 3
+use two GPUs per job, placing target on `cuda:0` and draft on `cuda:1`. The
+two-GPU chain is capped at one concurrent job, so it consumes at most two GPUs.
+
 ## Metrics
 
 - speculative token acceptance rate and accepted tokens per verification round;
@@ -58,6 +62,7 @@ and `catalyst-0-15` (down at campaign launch).
 
 ```bash
 bash scripts/submit_iclr_spec_kv_campaign.sh
+bash scripts/submit_iclr_spec_kv_two_gpu.sh
 ```
 
 To run only a subset of pairs:
