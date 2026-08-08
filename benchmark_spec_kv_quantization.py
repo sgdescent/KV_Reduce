@@ -146,6 +146,18 @@ def _cache_position(start: int, length: int, device: str) -> torch.Tensor:
     return torch.arange(start, start + length, dtype=torch.long, device=device)
 
 
+def shared_token_logits(logits: torch.Tensor, shared_vocab_size: int) -> torch.Tensor:
+    """Drop model-output padding so compatible tokenizers use identical support."""
+    if shared_vocab_size <= 0:
+        raise ValueError("shared_vocab_size must be positive.")
+    if logits.shape[-1] < shared_vocab_size:
+        raise ValueError(
+            f"Model exposes {logits.shape[-1]} logits, fewer than the shared tokenizer vocabulary "
+            f"of {shared_vocab_size}."
+        )
+    return logits[..., :shared_vocab_size]
+
+
 def quantize_cache_for_next_step(past_key_values, k_bits: Sequence[int], v_bits: Sequence[int]):
     legacy = as_legacy_cache(past_key_values)
     quantized = quantize_legacy_cache(legacy, k_bits, v_bits)
@@ -165,11 +177,12 @@ def greedy_target_generate(
     prompt_ids: torch.Tensor,
     max_new_tokens: int,
     big_device: str,
+    shared_vocab_size: int,
 ) -> List[int]:
     prefix = prompt_ids.clone()
     generated: List[int] = []
     for _ in range(max_new_tokens):
-        logits = target_next_logits(big_model, prefix, big_device)
+        logits = shared_token_logits(target_next_logits(big_model, prefix, big_device), shared_vocab_size)
         token = int(logits.argmax(dim=-1).item())
         generated.append(token)
         prefix = torch.cat([prefix, torch.tensor([[token]], dtype=prefix.dtype)], dim=1)
@@ -254,6 +267,7 @@ def greedy_speculative_decode_cached_quantized(
     topk: int,
     k_bits: Sequence[int],
     v_bits: Sequence[int],
+    shared_vocab_size: int,
 ) -> Dict[str, Any]:
     prefix = prompt_ids.clone()
     generated: List[int] = []
@@ -273,7 +287,10 @@ def greedy_speculative_decode_cached_quantized(
         current_prefix = prefix.clone()
         proposal: List[int] = []
 
-        target_prefix_logits = target_next_logits(big_model, current_prefix, big_device)
+        target_prefix_logits = shared_token_logits(
+            target_next_logits(big_model, current_prefix, big_device),
+            shared_vocab_size,
+        )
         target_calls += 1
 
         first = draft_first_logits_from_quantized_prefix(
@@ -285,7 +302,7 @@ def greedy_speculative_decode_cached_quantized(
         )
         draft_prefill_calls += 1
         draft_prefill_tokens += int(first["prefill_tokens"])
-        draft_logits = first["logits"]
+        draft_logits = shared_token_logits(first["logits"], shared_vocab_size)
         draft_cache = first["cache"]
         draft_cache_len = int(first["cache_len"])
 
@@ -315,7 +332,7 @@ def greedy_speculative_decode_cached_quantized(
                     k_bits=k_bits,
                     v_bits=v_bits,
                 )
-                draft_logits = next_step["logits"]
+                draft_logits = shared_token_logits(next_step["logits"], shared_vocab_size)
                 draft_cache = next_step["cache"]
                 draft_cache_len = int(next_step["cache_len"])
 
@@ -324,7 +341,7 @@ def greedy_speculative_decode_cached_quantized(
         verify_out = big_model(input_ids=verify_ids, use_cache=False)
         target_calls += 1
         target_verify_calls += 1
-        verify_logits = verify_out.logits
+        verify_logits = shared_token_logits(verify_out.logits, shared_vocab_size)
 
         base_idx = int(prefix.shape[1]) - 1
         accepted_this_round = 0
@@ -450,6 +467,7 @@ def run_one_config(
     wandb_run: Optional[Any],
     wandb_prefix: str,
     wandb_step_offset: int,
+    shared_vocab_size: int,
 ) -> Dict[str, Any]:
     rows: List[Dict[str, Any]] = []
     reset_cuda_peak(cuda_device_ids)
@@ -464,6 +482,7 @@ def run_one_config(
             prompt_ids=prompt_ids,
             max_new_tokens=max_new_tokens,
             big_device=big_device,
+            shared_vocab_size=shared_vocab_size,
         )
         result = greedy_speculative_decode_cached_quantized(
             big_model=big_model,
@@ -476,6 +495,7 @@ def run_one_config(
             topk=topk,
             k_bits=k_bits,
             v_bits=v_bits,
+            shared_vocab_size=shared_vocab_size,
         )
         sync_cuda(cuda_device_ids)
         elapsed_s = time.perf_counter() - prompt_start
@@ -590,8 +610,12 @@ def main() -> None:
     big_tokenizer = load_tokenizer(args.big_model)
     small_tokenizer = load_tokenizer(args.small_model)
     compatibility = tokenizer_compatibility_report(big_tokenizer, small_tokenizer)
-    if (not compatibility["all_probe_encodings_match"]) and (not args.allow_incompatible_tokenizers):
+    tokenizers_compatible = bool(
+        compatibility["all_probe_encodings_match"] and compatibility["same_vocab_size"]
+    )
+    if (not tokenizers_compatible) and (not args.allow_incompatible_tokenizers):
         raise ValueError("Tokenizers appear incompatible. Use --allow_incompatible_tokenizers to override.")
+    shared_vocab_size = min(int(big_tokenizer.vocab_size), int(small_tokenizer.vocab_size))
 
     big_model = load_causal_lm(args.big_model, device=args.big_device, dtype_name=args.big_dtype, attn_implementation="eager")
     small_model = load_causal_lm(args.small_model, device=args.small_device, dtype_name=args.small_dtype, attn_implementation="eager")
@@ -638,6 +662,7 @@ def main() -> None:
                 wandb_run=None,
                 wandb_prefix="warmup",
                 wandb_step_offset=0,
+                shared_vocab_size=shared_vocab_size,
             )
 
     all_rows: List[Dict[str, Any]] = []
@@ -662,6 +687,7 @@ def main() -> None:
             wandb_run=wandb_run,
             wandb_prefix="spec_kv",
             wandb_step_offset=config_idx * len(benchmark_prompts),
+            shared_vocab_size=shared_vocab_size,
         )
         memory = estimate_total_kv_memory(
             big_model=big_model,
@@ -701,6 +727,12 @@ def main() -> None:
         "num_prompts": len(benchmark_prompts),
         "warmup_prompts": len(warmup_prompts),
         "quant_configs": [name for name, _, _, _ in quant_configs],
+        "tokenizer_compatibility": compatibility,
+        "shared_vocab_size": shared_vocab_size,
+        "model_output_vocab_sizes": {
+            "target": int(big_model.config.vocab_size),
+            "draft": int(small_model.config.vocab_size),
+        },
         "summaries": summaries,
         "memory_estimates": memory_estimates,
     }

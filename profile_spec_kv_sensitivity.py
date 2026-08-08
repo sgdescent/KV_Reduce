@@ -166,8 +166,12 @@ def main() -> None:
     big_tokenizer = load_tokenizer(args.big_model)
     small_tokenizer = load_tokenizer(args.small_model)
     compatibility = tokenizer_compatibility_report(big_tokenizer, small_tokenizer)
-    if (not compatibility["all_probe_encodings_match"]) and (not args.allow_incompatible_tokenizers):
+    tokenizers_compatible = bool(
+        compatibility["all_probe_encodings_match"] and compatibility["same_vocab_size"]
+    )
+    if (not tokenizers_compatible) and (not args.allow_incompatible_tokenizers):
         raise ValueError("Tokenizers appear incompatible. Use --allow_incompatible_tokenizers to override.")
+    shared_vocab_size = min(int(big_tokenizer.vocab_size), int(small_tokenizer.vocab_size))
 
     big_model = load_causal_lm(args.big_model, device=args.big_device, dtype_name=args.big_dtype, attn_implementation="eager")
     small_model = load_causal_lm(args.small_model, device=args.small_device, dtype_name=args.small_dtype, attn_implementation="eager")
@@ -220,6 +224,7 @@ def main() -> None:
             wandb_run=None,
             wandb_prefix="warmup",
             wandb_step_offset=0,
+            shared_vocab_size=shared_vocab_size,
         )
 
     print("Running full-precision baseline...")
@@ -239,6 +244,7 @@ def main() -> None:
         wandb_run=wandb_run,
         wandb_prefix="sensitivity",
         wandb_step_offset=0,
+        shared_vocab_size=shared_vocab_size,
     )
     baseline_summary = baseline_result["summary"]
 
@@ -287,6 +293,7 @@ def main() -> None:
                     wandb_run=wandb_run,
                     wandb_prefix="sensitivity",
                     wandb_step_offset=candidate_idx * len(profile_prompts),
+                    shared_vocab_size=shared_vocab_size,
                 )
                 candidate_idx += 1
                 raw_rows.extend(result["rows"])

@@ -360,6 +360,7 @@ def tokenizer_compatibility_report(tok_a, tok_b) -> Dict[str, object]:
     return {
         "vocab_size_a": int(tok_a.vocab_size),
         "vocab_size_b": int(tok_b.vocab_size),
+        "same_vocab_size": int(tok_a.vocab_size) == int(tok_b.vocab_size),
         "all_probe_encodings_match": all(matches),
         "probe_matches": matches,
     }
