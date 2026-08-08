@@ -101,6 +101,7 @@ run_benchmark() {
   local warmup_prompts="$3"
   local label="$4"
   local configs="$5"
+  shift 5
   local out_dir="$BASE_OUT/$label"
 
   "$PYTHON_BIN" -u benchmark_spec_kv_quantization.py \
@@ -112,7 +113,8 @@ run_benchmark() {
     --out_dir "$out_dir" \
     "${WANDB_ARGS[@]}" \
     --wandb_group "iclr-spec-kv-${STAGE}" \
-    --wandb_run_name "${PAIR_NAME}_${label}_seed${SEED}"
+    --wandb_run_name "${PAIR_NAME}_${label}" \
+    "$@"
 }
 
 echo "stage=$STAGE pair=$PAIR_NAME big=$BIG_MODEL small=$SMALL_MODEL seed=$SEED"
@@ -164,8 +166,29 @@ case "$STAGE" in
       "none,allocation:${ALLOCATION_OUT}/allocation.json"
     ;;
 
+  robustness)
+    # Held-out distribution and prompt-order robustness. Duplicate argparse
+    # options below intentionally override the WikiText defaults in common_args.
+    for robust_seed in 1 2; do
+      run_benchmark 1024 "${ROBUSTNESS_PROMPTS:-16}" 2 "c4_ctx1024_seed${robust_seed}" \
+        "none,k8v4,k4v8" \
+        --dataset_name allenai/c4 \
+        --dataset_config en \
+        --eval_split validation \
+        --stream_eval \
+        --shuffle_eval \
+        --seed "$robust_seed"
+    done
+    ;;
+
+  long_context)
+    # Exploratory sample counts keep full-prefix target verification tractable.
+    run_benchmark 8192 "${PROMPTS_8K:-4}" 1 "wikitext_ctx8192" "none,k8v4,k4v8"
+    run_benchmark 16384 "${PROMPTS_16K:-2}" 1 "wikitext_ctx16384" "none,k8v4,k4v8"
+    ;;
+
   *)
-    echo "Unsupported stage $STAGE; use smoke, main, sensitivity, or allocation." >&2
+    echo "Unsupported stage $STAGE; use smoke, main, sensitivity, allocation, robustness, or long_context." >&2
     exit 2
     ;;
 esac

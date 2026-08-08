@@ -34,6 +34,10 @@ gated 9B checkpoint.
    eight draft layers.
 4. `allocation`: acceptance-budgeted mixed-precision search followed by a held
    benchmark against full-precision draft KV.
+5. `robustness`: two shuffled C4 validation seeds for representative Qwen,
+   Llama, and OLMo pairs.
+6. `long_context`: exploratory 8K and 16K Qwen2.5 runs before increasing the
+   prompt count for the final long-context result.
 
 The launcher uses matching array dependencies, so a failed smoke task prevents
 only that model pair from advancing. Sustained stages are capped at two GPUs.
