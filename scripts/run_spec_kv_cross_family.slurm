@@ -34,6 +34,7 @@ QUANT_CONFIGS="${QUANT_CONFIGS:-none,8,k8v4,k4v8,k4v4}"
 BIG_DEVICE="${BIG_DEVICE:-cuda:0}"
 SMALL_DEVICE="${SMALL_DEVICE:-cuda:0}"
 ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
+DRAFT_STEPS="${DRAFT_STEPS:-4}"
 
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
@@ -95,7 +96,7 @@ common_args=(
   --dataset_name "$DATASET_NAME"
   --dataset_config "$DATASET_CONFIG"
   --eval_split "$EVAL_SPLIT"
-  --draft_steps 4
+  --draft_steps "$DRAFT_STEPS"
   --max_new_tokens 16
   --seed "$SEED"
 )
