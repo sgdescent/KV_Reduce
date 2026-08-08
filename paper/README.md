@@ -25,7 +25,7 @@ python paper/aggregate_campaign.py \
   --out_dir paper/campaign_artifacts
 ```
 
-The aggregator accepts only `cached_dynamic_v2` summaries, computes prompt-level
+The aggregator accepts only `cached_dynamic_v3` summaries, computes prompt-level
 bootstrap confidence intervals and paired equal-memory effects, audits numerical
 tie versus non-tie target mismatches, and writes paper-ready PDF/PNG figures plus
 a LaTeX table.

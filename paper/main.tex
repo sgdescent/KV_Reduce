@@ -91,7 +91,11 @@ sampling accepts proposals using the target correction rule; greedy speculative
 decoding accepts the longest proposal prefix matching target argmax tokens. In
 both cases, target verification makes the final sequence exact with respect to
 the chosen target decoding rule. Compression affects efficiency through
-acceptance, not final correctness.
+acceptance, not final correctness. In finite-precision greedy experiments,
+batched and token-wise target evaluation can choose different tokens when the
+largest BF16 logits are tied. We therefore report both sequence agreement and
+the target top-1 margin at every disagreement, distinguishing numerical ties
+from non-tie verification errors.
 
 For target and draft cache sizes $M_t$ and $M_d$, native speculative decoding uses
 $M_t+M_d$. If layer $\ell$ stores keys and values with precisions
@@ -119,6 +123,14 @@ and verifier remain in BF16. This simulator measures the algorithmic
 memory--acceptance tradeoff without conflating it with a particular packed-cache
 kernel.
 
+The evaluator performs one target and one draft prefill per prompt. Each draft
+round starts from the retained draft prefix cache, while the target verifies the
+proposal in one cached forward pass. Accepted states are committed and rejected
+suffix states are cropped in place; neither model recomputes the long prefix.
+Target-greedy references are generated once outside the timed configuration
+loop. This cache-resident execution is essential at long context and prevents
+prefix recomputation from dominating either memory or runtime measurements.
+
 \subsection{Acceptance-aware sensitivity profiles}
 
 We first evaluate a full-precision draft baseline. Then, for each selected layer
@@ -126,11 +138,12 @@ $\ell$, component $c\in\{K,V\}$, and candidate bit width $b\in\{4,8\}$, we
 quantize only $(\ell,c)$ while leaving all other draft-cache entries in BF16. The
 measured risk is
 \begin{equation}
-  r_{\ell,c,b}=\max\left(0,\alpha_{\mathrm{BF16}}-alpha_{\ell,c,b}\right),
+  r_{\ell,c,b}=\max\left(0,\alpha_{\mathrm{BF16}}-\alpha_{\ell,c,b}\right),
 \end{equation}
 where $\alpha$ is the end-to-end speculative acceptance rate. We additionally log
 accepted tokens per verification round, top-1 match, acceptance mass,
-Jensen--Shannon divergence, and exact agreement with greedy target decoding.
+Jensen--Shannon divergence, greedy target agreement, and the target top-1 margin
+at the first disagreement.
 
 \subsection{Budgeted mixed-precision allocation}
 

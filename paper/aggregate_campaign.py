@@ -81,7 +81,7 @@ def context_from_label(label: str, summary: Dict[str, Any]) -> int:
 
 def valid_cached_summary(summary: Dict[str, Any]) -> Tuple[bool, str]:
     runtime = summary.get("runtime", {})
-    if runtime.get("evaluator_version") != "cached_dynamic_v2":
+    if runtime.get("evaluator_version") != "cached_dynamic_v3":
         return False, "unsupported or missing evaluator version"
     if not runtime.get("target_cache_reused"):
         return False, "target cache was not reused"

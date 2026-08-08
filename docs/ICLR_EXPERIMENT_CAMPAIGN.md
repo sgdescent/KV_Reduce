@@ -62,7 +62,7 @@ The evaluator performs one target and one draft prefill per prompt, reuses both
 dynamic caches across speculative rounds, verifies each proposal against the
 existing target cache, and crops rejected suffixes in place. Target-greedy
 reference generation is performed once outside each timed configuration. Runs
-missing `runtime.evaluator_version=cached_dynamic_v2` are rejected by the paper
+missing `runtime.evaluator_version=cached_dynamic_v3` are rejected by the paper
 aggregation script.
 
 Greedy exact-match is reported together with the target top-1 logit margin at

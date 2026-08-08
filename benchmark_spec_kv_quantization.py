@@ -24,6 +24,7 @@ from kv_cache_quantization import (
     bit_allocation_stats,
     estimate_model_kv_cache_bytes,
     parse_quant_config_specs,
+    quantize_dequantize_per_vector_symmetric,
     quantize_legacy_cache,
     uniform_bit_lists,
 )
@@ -165,16 +166,33 @@ def top1_logit_margin(logits: torch.Tensor) -> float:
     return float((top_two[..., 0] - top_two[..., 1]).mean().item())
 
 
-def quantize_cache_for_next_step(past_key_values, k_bits: Sequence[int], v_bits: Sequence[int]):
+def quantize_cache_for_next_step(
+    past_key_values,
+    k_bits: Sequence[int],
+    v_bits: Sequence[int],
+    *,
+    new_tokens: Optional[int] = None,
+):
     if all(int(bits) >= 16 for bits in k_bits) and all(int(bits) >= 16 for bits in v_bits):
+        return past_key_values
+    if new_tokens is not None and new_tokens <= 0:
+        raise ValueError("new_tokens must be positive when provided.")
+    if hasattr(past_key_values, "layers"):
+        for layer_idx, layer in enumerate(past_key_values.layers):
+            token_slice = slice(None) if new_tokens is None else slice(-new_tokens, None)
+            key_slice = layer.keys[..., token_slice, :]
+            value_slice = layer.values[..., token_slice, :]
+            quantized_key = quantize_dequantize_per_vector_symmetric(key_slice, int(k_bits[layer_idx]))
+            quantized_value = quantize_dequantize_per_vector_symmetric(value_slice, int(v_bits[layer_idx]))
+            if new_tokens is None:
+                layer.keys = quantized_key
+                layer.values = quantized_value
+            else:
+                key_slice.copy_(quantized_key)
+                value_slice.copy_(quantized_value)
         return past_key_values
     legacy = as_legacy_cache(past_key_values)
     quantized = quantize_legacy_cache(legacy, k_bits, v_bits)
-    if hasattr(past_key_values, "layers"):
-        for layer, (key, value) in zip(past_key_values.layers, quantized):
-            layer.keys = key
-            layer.values = value
-        return past_key_values
     return legacy_to_cache(quantized)
 
 
@@ -284,7 +302,7 @@ def draft_next_logits_from_cache(
         cache_len=cache_len,
         device=small_device,
     )
-    cache = quantize_cache_for_next_step(step["cache"], k_bits, v_bits)
+    cache = quantize_cache_for_next_step(step["cache"], k_bits, v_bits, new_tokens=1)
     return {"logits": step["logits"][:, -1, :], "cache": cache, "cache_len": int(step["cache_len"])}
 
 
@@ -887,10 +905,11 @@ def main() -> None:
     summary_payload = {
         "config": vars(args),
         "runtime": {
-            "evaluator_version": "cached_dynamic_v2",
+            "evaluator_version": "cached_dynamic_v3",
             "target_cache_reused": True,
             "draft_cache_reused": True,
             "cache_crop_mode": "in_place",
+            "quantization_update_mode": "prefill_once_then_new_tokens_only",
             "target_reference_generation_in_timing": False,
             "quantization_mode": "fake_quantized_values_with_estimated_packed_bytes",
             "torch_version": torch.__version__,
