@@ -19,6 +19,7 @@ from benchmark_spec_kv_quantization import (
     cached_prefill,
     cached_step,
     crop_cache_to_length,
+    draft_next_logits_from_cache,
     parse_csv_items,
     shared_token_logits,
     top1_logit_margin,
@@ -211,9 +212,185 @@ def audit_prompt(
     }
 
 
+@torch.no_grad()
+def audit_speculative_prompt(
+    *,
+    big_model,
+    small_model,
+    prompt_ids: torch.Tensor,
+    draft_steps: int,
+    max_new_tokens: int,
+    big_device: str,
+    small_device: str,
+    shared_vocab_size: int,
+) -> Dict[str, Any]:
+    """Compare the batched verifier to a tokenwise target on the same live prefix."""
+    target_state = cached_prefill(big_model, prompt_ids, big_device)
+    target_logits = shared_token_logits(target_state["logits"], shared_vocab_size)
+    target_cache = target_state["cache"]
+    target_cache_len = int(target_state["cache_len"])
+
+    shadow_state = cached_prefill(big_model, prompt_ids, big_device)
+    shadow_logits = shared_token_logits(shadow_state["logits"], shared_vocab_size)
+    shadow_cache = shadow_state["cache"]
+    shadow_cache_len = int(shadow_state["cache_len"])
+
+    draft_state = cached_prefill(small_model, prompt_ids, small_device)
+    draft_logits = shared_token_logits(draft_state["logits"], shared_vocab_size)
+    draft_cache = draft_state["cache"]
+    draft_cache_len = int(draft_state["cache_len"])
+    draft_layers = int(small_model.config.num_hidden_layers)
+    full_precision_bits = [16] * draft_layers
+
+    generated: List[int] = []
+    decision_rows: List[Dict[str, Any]] = []
+    round_idx = 0
+    while len(generated) < max_new_tokens:
+        round_prefix_len = target_cache_len
+        proposal: List[int] = []
+        for _ in range(min(draft_steps, max_new_tokens - len(generated))):
+            token = int(draft_logits.argmax(dim=-1).item())
+            proposal.append(token)
+            draft_step = draft_next_logits_from_cache(
+                small_model=small_model,
+                token=token,
+                cache=draft_cache,
+                cache_len=draft_cache_len,
+                small_device=small_device,
+                dtype=prompt_ids.dtype,
+                k_bits=full_precision_bits,
+                v_bits=full_precision_bits,
+            )
+            draft_logits = shared_token_logits(draft_step["logits"], shared_vocab_size)
+            draft_cache = draft_step["cache"]
+            draft_cache_len = int(draft_step["cache_len"])
+
+        verify = cached_step(
+            model=big_model,
+            input_ids=torch.tensor([proposal], dtype=prompt_ids.dtype),
+            cache=target_cache,
+            cache_len=target_cache_len,
+            device=big_device,
+        )
+        verify_logits = shared_token_logits(verify["logits"], shared_vocab_size)
+        target_cache = verify["cache"]
+        target_cache_len = int(verify["cache_len"])
+
+        accepted = 0
+        rejection_comparison: Dict[str, Any] | None = None
+        for proposal_idx, token in enumerate(proposal):
+            verifier_logits = target_logits if proposal_idx == 0 else verify_logits[:, proposal_idx - 1, :]
+            comparison = logit_comparison(shadow_logits.detach().cpu(), verifier_logits.detach().cpu())
+            row = {
+                "round": round_idx,
+                "generated_index": len(generated),
+                "decision": "proposal",
+                "proposal_index": proposal_idx,
+                "proposal_token": token,
+                **comparison,
+            }
+            decision_rows.append(row)
+            verifier_token = int(verifier_logits.argmax(dim=-1).item())
+            if verifier_token != token:
+                rejection_comparison = row
+                break
+
+            generated.append(token)
+            accepted += 1
+            shadow_step = cached_step(
+                model=big_model,
+                input_ids=torch.tensor([[token]], dtype=prompt_ids.dtype),
+                cache=shadow_cache,
+                cache_len=shadow_cache_len,
+                device=big_device,
+            )
+            shadow_logits = shared_token_logits(shadow_step["logits"][:, -1, :], shared_vocab_size)
+            shadow_cache = shadow_step["cache"]
+            shadow_cache_len = int(shadow_step["cache_len"])
+            if len(generated) >= max_new_tokens:
+                break
+
+        if len(generated) >= max_new_tokens:
+            break
+
+        correction_logits = target_logits if accepted == 0 else verify_logits[:, accepted - 1, :]
+        correction = int(correction_logits.argmax(dim=-1).item())
+        if accepted == len(proposal):
+            decision_rows.append(
+                {
+                    "round": round_idx,
+                    "generated_index": len(generated),
+                    "decision": "verified_bonus",
+                    "proposal_index": accepted,
+                    "proposal_token": -1,
+                    **logit_comparison(shadow_logits.detach().cpu(), correction_logits.detach().cpu()),
+                }
+            )
+        elif rejection_comparison is not None:
+            rejection_comparison["decision"] = "target_correction"
+
+        generated.append(correction)
+        shadow_step = cached_step(
+            model=big_model,
+            input_ids=torch.tensor([[correction]], dtype=prompt_ids.dtype),
+            cache=shadow_cache,
+            cache_len=shadow_cache_len,
+            device=big_device,
+        )
+        shadow_logits = shared_token_logits(shadow_step["logits"][:, -1, :], shared_vocab_size)
+        shadow_cache = shadow_step["cache"]
+        shadow_cache_len = int(shadow_step["cache_len"])
+
+        committed_len = round_prefix_len + accepted
+        target_cache = crop_cache_to_length(target_cache, committed_len)
+        draft_cache = crop_cache_to_length(draft_cache, committed_len)
+        target_cache_len = committed_len
+        draft_cache_len = committed_len
+
+        target_commit = cached_step(
+            model=big_model,
+            input_ids=torch.tensor([[correction]], dtype=prompt_ids.dtype),
+            cache=target_cache,
+            cache_len=target_cache_len,
+            device=big_device,
+        )
+        target_logits = shared_token_logits(target_commit["logits"][:, -1, :], shared_vocab_size)
+        target_cache = target_commit["cache"]
+        target_cache_len = int(target_commit["cache_len"])
+
+        draft_commit = draft_next_logits_from_cache(
+            small_model=small_model,
+            token=correction,
+            cache=draft_cache,
+            cache_len=draft_cache_len,
+            small_device=small_device,
+            dtype=prompt_ids.dtype,
+            k_bits=full_precision_bits,
+            v_bits=full_precision_bits,
+        )
+        draft_logits = shared_token_logits(draft_commit["logits"], shared_vocab_size)
+        draft_cache = draft_commit["cache"]
+        draft_cache_len = int(draft_commit["cache_len"])
+        round_idx += 1
+
+    first_top1_mismatch = next(
+        (idx for idx, row in enumerate(decision_rows) if row["top1_match"] < 0.5),
+        -1,
+    )
+    return {
+        "generated": generated,
+        "num_decisions": len(decision_rows),
+        "top1_mismatches": sum(row["top1_match"] < 0.5 for row in decision_rows),
+        "first_top1_mismatch": first_top1_mismatch,
+        "max_abs_logit_delta": max((row["max_abs_logit_delta"] for row in decision_rows), default=math.nan),
+        "decisions": decision_rows,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Audit target batched verification and cache rollback.")
     parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-3B")
+    parser.add_argument("--small_model", type=str, default="Qwen/Qwen2.5-1.5B")
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--dtype", type=str, default="bf16")
     parser.add_argument("--attn_implementation", choices=["eager", "sdpa", "flash_attention_2"], default="sdpa")
@@ -223,7 +400,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval_split_fallbacks", type=str, default="test,train")
     parser.add_argument("--prompt_len", type=int, default=1024)
     parser.add_argument("--num_prompts", type=int, default=2)
+    parser.add_argument("--skip_prompts", type=int, default=0)
     parser.add_argument("--draft_steps", type=int, default=4)
+    parser.add_argument("--max_new_tokens", type=int, default=16)
+    parser.add_argument("--run_speculative_audit", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=str, default="outputs/target_verification_diagnostic/summary.json")
     return parser
@@ -239,12 +419,12 @@ def main() -> None:
         dtype_name=args.dtype,
         attn_implementation=args.attn_implementation,
     )
-    prompts = [
+    all_prompts = [
         block.unsqueeze(0)
         for block in iter_token_blocks(
             tokenizer=tokenizer,
             seq_len=args.prompt_len,
-            max_blocks=args.num_prompts,
+            max_blocks=args.skip_prompts + args.num_prompts,
             dataset_name=args.dataset_name,
             dataset_config=args.dataset_config,
             split=args.eval_split,
@@ -254,6 +434,7 @@ def main() -> None:
             streaming=False,
         )
     ]
+    prompts = all_prompts[args.skip_prompts :]
     audits = [
         audit_prompt(
             model=model,
@@ -268,6 +449,28 @@ def main() -> None:
     all_position_rows = [row for audit in audits for row in audit["positions"]]
     all_suffix_rows = [row for audit in audits for row in audit["suffix_invariance"]]
     all_rollback_rows = [row for audit in audits for row in audit["rollback"]]
+    speculative_audits: List[Dict[str, Any]] = []
+    if args.run_speculative_audit:
+        small_model = load_causal_lm(
+            args.small_model,
+            device=args.device,
+            dtype_name=args.dtype,
+            attn_implementation=args.attn_implementation,
+        )
+        speculative_audits = [
+            audit_speculative_prompt(
+                big_model=model,
+                small_model=small_model,
+                prompt_ids=prompt,
+                draft_steps=args.draft_steps,
+                max_new_tokens=args.max_new_tokens,
+                big_device=args.device,
+                small_device=args.device,
+                shared_vocab_size=min(int(tokenizer.vocab_size), int(small_model.config.vocab_size)),
+            )
+            for prompt in prompts
+        ]
+
     summary = {
         "config": vars(args),
         "num_prompts": len(audits),
@@ -288,7 +491,11 @@ def main() -> None:
         "max_rollback_logit_delta": max(
             (row["max_abs_logit_delta"] for row in all_rollback_rows), default=math.nan
         ),
+        "speculative_top1_mismatches": sum(
+            audit["top1_mismatches"] for audit in speculative_audits
+        ),
         "audits": audits,
+        "speculative_audits": speculative_audits,
     }
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     write_json(summary, args.out)
