@@ -43,6 +43,8 @@ COLORS = {
     "sensitivity_aware": "#6E56CF",
 }
 
+EXPECTED_EVALUATOR_VERSION = "cached_dynamic_v4"
+
 
 def read_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
@@ -81,7 +83,7 @@ def context_from_label(label: str, summary: Dict[str, Any]) -> int:
 
 def valid_cached_summary(summary: Dict[str, Any]) -> Tuple[bool, str]:
     runtime = summary.get("runtime", {})
-    if runtime.get("evaluator_version") != "cached_dynamic_v3":
+    if runtime.get("evaluator_version") != EXPECTED_EVALUATOR_VERSION:
         return False, "unsupported or missing evaluator version"
     if not runtime.get("target_cache_reused"):
         return False, "target cache was not reused"
@@ -210,14 +212,23 @@ def collect_campaign(
             non_tie_mismatches = 0
             unknown_mismatches = 0
             for row in mismatch_rows:
-                try:
-                    margin = float(row["mismatch_target_top1_margin"])
-                except (KeyError, TypeError, ValueError):
-                    unknown_mismatches += 1
-                    continue
+                margin = float("nan")
+                for margin_key in (
+                    "mismatch_min_top1_margin",
+                    "mismatch_reference_top1_margin",
+                    "mismatch_verifier_top1_margin",
+                    "mismatch_target_top1_margin",
+                ):
+                    try:
+                        margin = float(row[margin_key])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    if not math.isnan(margin):
+                        break
                 if math.isnan(margin):
                     unknown_mismatches += 1
-                elif margin <= tie_tolerance:
+                    continue
+                if margin <= tie_tolerance:
                     tie_mismatches += 1
                 else:
                     non_tie_mismatches += 1
@@ -440,7 +451,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--tie_tolerance",
         type=float,
         default=1e-3,
-        help="Treat greedy mismatches at or below this target top-1 margin as numerical ties.",
+        help="Treat mismatches as numerical ties when either BF16 target path has this top-1 margin or less.",
     )
     return parser
 

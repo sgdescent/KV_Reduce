@@ -2,9 +2,10 @@
 """
 Benchmark sensitivity-aware draft KV-cache quantization inside speculative decoding.
 
-The target verifier remains full precision, so final generation is still exact greedy
-target decoding. Only the draft model's cached K/V tensors are fake-quantized between
-cached decode steps. This lets us measure the useful research tradeoff:
+The target verifier remains unquantized, so draft KV compression does not change the
+target distribution used for verification. BF16 batched verification can still choose
+a different top-1 token than tokenwise BF16 decoding at numerical ties; both margins
+are recorded explicitly. Only the draft model's cached K/V tensors are fake-quantized.
 
   draft KV bytes saved vs. speculative acceptance retained.
 """
@@ -13,6 +14,7 @@ import argparse
 import atexit
 import csv
 import json
+import math
 import os
 import time
 from typing import Any, Dict, List, Optional, Sequence
@@ -251,20 +253,22 @@ def cached_step(
 
 
 @torch.no_grad()
-def greedy_target_generate(
+def greedy_target_generate_with_margins(
     *,
     big_model,
     prompt_ids: torch.Tensor,
     max_new_tokens: int,
     big_device: str,
     shared_vocab_size: int,
-) -> List[int]:
+) -> Dict[str, List[Any]]:
     state = cached_prefill(big_model, prompt_ids, big_device)
     logits = shared_token_logits(state["logits"], shared_vocab_size)
     cache = state["cache"]
     cache_len = int(state["cache_len"])
     generated: List[int] = []
+    margins: List[float] = []
     for token_idx in range(max_new_tokens):
+        margins.append(top1_logit_margin(logits))
         token = int(logits.argmax(dim=-1).item())
         generated.append(token)
         if token_idx + 1 >= max_new_tokens:
@@ -279,7 +283,25 @@ def greedy_target_generate(
         logits = shared_token_logits(step["logits"][:, -1, :], shared_vocab_size)
         cache = step["cache"]
         cache_len = int(step["cache_len"])
-    return generated
+    return {"tokens": generated, "top1_margins": margins}
+
+
+@torch.no_grad()
+def greedy_target_generate(
+    *,
+    big_model,
+    prompt_ids: torch.Tensor,
+    max_new_tokens: int,
+    big_device: str,
+    shared_vocab_size: int,
+) -> List[int]:
+    return greedy_target_generate_with_margins(
+        big_model=big_model,
+        prompt_ids=prompt_ids,
+        max_new_tokens=max_new_tokens,
+        big_device=big_device,
+        shared_vocab_size=shared_vocab_size,
+    )["tokens"]
 
 
 @torch.no_grad()
@@ -548,8 +570,26 @@ def generate_target_references(
     big_device: str,
     shared_vocab_size: int,
 ) -> List[List[int]]:
+    return [record["tokens"] for record in generate_target_reference_records(
+        prompts=prompts,
+        big_model=big_model,
+        max_new_tokens=max_new_tokens,
+        big_device=big_device,
+        shared_vocab_size=shared_vocab_size,
+    )]
+
+
+@torch.no_grad()
+def generate_target_reference_records(
+    *,
+    prompts: Sequence[torch.Tensor],
+    big_model,
+    max_new_tokens: int,
+    big_device: str,
+    shared_vocab_size: int,
+) -> List[Dict[str, List[Any]]]:
     return [
-        greedy_target_generate(
+        greedy_target_generate_with_margins(
             big_model=big_model,
             prompt_ids=prompt_ids,
             max_new_tokens=max_new_tokens,
@@ -580,18 +620,25 @@ def run_one_config(
     wandb_step_offset: int,
     shared_vocab_size: int,
     target_token_references: Optional[Sequence[Sequence[int]]] = None,
+    target_margin_references: Optional[Sequence[Sequence[float]]] = None,
 ) -> Dict[str, Any]:
     if target_token_references is None:
-        target_token_references = generate_target_references(
+        reference_records = generate_target_reference_records(
             prompts=prompts,
             big_model=big_model,
             max_new_tokens=max_new_tokens,
             big_device=big_device,
             shared_vocab_size=shared_vocab_size,
         )
+        target_token_references = [record["tokens"] for record in reference_records]
+        target_margin_references = [record["top1_margins"] for record in reference_records]
     if len(target_token_references) != len(prompts):
         raise ValueError(
             f"Expected {len(prompts)} target references, received {len(target_token_references)}."
+        )
+    if target_margin_references is not None and len(target_margin_references) != len(prompts):
+        raise ValueError(
+            f"Expected {len(prompts)} target margin references, received {len(target_margin_references)}."
         )
 
     rows: List[Dict[str, Any]] = []
@@ -634,11 +681,25 @@ def run_one_config(
             if 0 <= first_mismatch < len(result["generation_sources"])
             else ""
         )
-        mismatch_margin = (
+        mismatch_verifier_margin = (
             result["target_top1_margins"][first_mismatch]
             if 0 <= first_mismatch < len(result["target_top1_margins"])
             else float("nan")
         )
+        prompt_reference_margins = (
+            list(target_margin_references[prompt_idx]) if target_margin_references is not None else []
+        )
+        mismatch_reference_margin = (
+            float(prompt_reference_margins[first_mismatch])
+            if 0 <= first_mismatch < len(prompt_reference_margins)
+            else float("nan")
+        )
+        finite_margins = [
+            margin
+            for margin in (mismatch_verifier_margin, mismatch_reference_margin)
+            if not math.isnan(margin)
+        ]
+        mismatch_min_margin = min(finite_margins) if finite_margins else float("nan")
         row = {
             "config": config_name,
             "prompt_idx": int(prompt_idx),
@@ -649,11 +710,15 @@ def run_one_config(
             "matches_target_greedy": float(result["generated_tokens"] == target_tokens_list),
             "first_target_mismatch": int(first_mismatch),
             "mismatch_source": mismatch_source,
-            "mismatch_target_top1_margin": float(mismatch_margin),
+            "mismatch_target_top1_margin": float(mismatch_verifier_margin),
+            "mismatch_verifier_top1_margin": float(mismatch_verifier_margin),
+            "mismatch_reference_top1_margin": float(mismatch_reference_margin),
+            "mismatch_min_top1_margin": float(mismatch_min_margin),
             "generated_token_ids": json.dumps(result["generated_tokens"]),
             "target_token_ids": json.dumps(target_tokens_list),
             "generation_sources": json.dumps(result["generation_sources"]),
             "target_top1_margins": json.dumps(result["target_top1_margins"]),
+            "target_reference_top1_margins": json.dumps(prompt_reference_margins),
             "accept_rate": float(result["accept_rate"]),
             "accepted_per_round": float(result["accepted_per_round"]),
             "full_accept_round_fraction": float(result["full_accept_round_fraction"]),
@@ -807,20 +872,24 @@ def main() -> None:
 
     cuda_device_ids = cuda_devices(args.big_device, args.small_device)
     print("Generating cached target references once per prompt...")
-    warmup_target_references = generate_target_references(
+    warmup_reference_records = generate_target_reference_records(
         prompts=warmup_prompts,
         big_model=big_model,
         max_new_tokens=args.max_new_tokens,
         big_device=args.big_device,
         shared_vocab_size=shared_vocab_size,
     )
-    benchmark_target_references = generate_target_references(
+    benchmark_reference_records = generate_target_reference_records(
         prompts=benchmark_prompts,
         big_model=big_model,
         max_new_tokens=args.max_new_tokens,
         big_device=args.big_device,
         shared_vocab_size=shared_vocab_size,
     )
+    warmup_target_references = [record["tokens"] for record in warmup_reference_records]
+    warmup_target_margins = [record["top1_margins"] for record in warmup_reference_records]
+    benchmark_target_references = [record["tokens"] for record in benchmark_reference_records]
+    benchmark_target_margins = [record["top1_margins"] for record in benchmark_reference_records]
     if warmup_prompts:
         print(f"Running {len(warmup_prompts)} warmup prompts for each config...")
         for name, k_bits, v_bits, _ in quant_configs:
@@ -842,6 +911,7 @@ def main() -> None:
                 wandb_step_offset=0,
                 shared_vocab_size=shared_vocab_size,
                 target_token_references=warmup_target_references,
+                target_margin_references=warmup_target_margins,
             )
 
     all_rows: List[Dict[str, Any]] = []
@@ -868,6 +938,7 @@ def main() -> None:
             wandb_step_offset=config_idx * len(benchmark_prompts),
             shared_vocab_size=shared_vocab_size,
             target_token_references=benchmark_target_references,
+            target_margin_references=benchmark_target_margins,
         )
         memory = estimate_total_kv_memory(
             big_model=big_model,
@@ -905,12 +976,13 @@ def main() -> None:
     summary_payload = {
         "config": vars(args),
         "runtime": {
-            "evaluator_version": "cached_dynamic_v3",
+            "evaluator_version": "cached_dynamic_v4",
             "target_cache_reused": True,
             "draft_cache_reused": True,
             "cache_crop_mode": "in_place",
             "quantization_update_mode": "prefill_once_then_new_tokens_only",
             "target_reference_generation_in_timing": False,
+            "exactness_margin_mode": "minimum_of_tokenwise_reference_and_batched_verifier",
             "quantization_mode": "fake_quantized_values_with_estimated_packed_bytes",
             "torch_version": torch.__version__,
             "transformers_version": transformers.__version__,

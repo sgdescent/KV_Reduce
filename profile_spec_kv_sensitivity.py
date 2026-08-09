@@ -17,7 +17,7 @@ import torch
 
 from benchmark_spec_kv_quantization import (
     estimate_total_kv_memory,
-    generate_target_references,
+    generate_target_reference_records,
     init_wandb,
     run_one_config,
 )
@@ -223,20 +223,24 @@ def main() -> None:
     cuda_device_ids = cuda_devices(args.big_device, args.small_device)
     full_k_bits, full_v_bits = uniform_bit_lists(num_layers, FULL_PRECISION_BITS, FULL_PRECISION_BITS)
     print("Generating cached target references once per prompt...")
-    warmup_target_references = generate_target_references(
+    warmup_reference_records = generate_target_reference_records(
         prompts=warmup_prompts,
         big_model=big_model,
         max_new_tokens=args.max_new_tokens,
         big_device=args.big_device,
         shared_vocab_size=shared_vocab_size,
     )
-    profile_target_references = generate_target_references(
+    profile_reference_records = generate_target_reference_records(
         prompts=profile_prompts,
         big_model=big_model,
         max_new_tokens=args.max_new_tokens,
         big_device=args.big_device,
         shared_vocab_size=shared_vocab_size,
     )
+    warmup_target_references = [record["tokens"] for record in warmup_reference_records]
+    warmup_target_margins = [record["top1_margins"] for record in warmup_reference_records]
+    profile_target_references = [record["tokens"] for record in profile_reference_records]
+    profile_target_margins = [record["top1_margins"] for record in profile_reference_records]
 
     if warmup_prompts:
         print("Running baseline warmup...")
@@ -258,6 +262,7 @@ def main() -> None:
             wandb_step_offset=0,
             shared_vocab_size=shared_vocab_size,
             target_token_references=warmup_target_references,
+            target_margin_references=warmup_target_margins,
         )
 
     print("Running full-precision baseline...")
@@ -279,6 +284,7 @@ def main() -> None:
         wandb_step_offset=0,
         shared_vocab_size=shared_vocab_size,
         target_token_references=profile_target_references,
+        target_margin_references=profile_target_margins,
     )
     baseline_summary = baseline_result["summary"]
 
@@ -329,6 +335,7 @@ def main() -> None:
                     wandb_step_offset=candidate_idx * len(profile_prompts),
                     shared_vocab_size=shared_vocab_size,
                     target_token_references=profile_target_references,
+                    target_margin_references=profile_target_margins,
                 )
                 candidate_idx += 1
                 raw_rows.extend(result["rows"])
