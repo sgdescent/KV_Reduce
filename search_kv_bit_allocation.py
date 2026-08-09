@@ -3,9 +3,10 @@
 Build a mixed-precision draft KV allocation from sensitivity profile results.
 
 This is intentionally a lightweight, transparent search. It treats one-at-a-time
-profile drops as an additive risk proxy and chooses the lowest-bit candidate for
-each layer/component that stays within configurable per-component and total
-acceptance-drop budgets.
+profile risks as an additive proxy and chooses the lowest-bit candidate for each
+layer/component that stays within configurable per-component and total budgets.
+The risk may be speculative acceptance drop, ordinary-LM delta NLL, or another
+numeric profile column.
 """
 
 import argparse
@@ -65,28 +66,29 @@ def choose_initial_candidate(
     candidates: List[Dict[str, str]],
     *,
     allowed_bits: List[int],
-    max_component_drop: float,
+    max_component_risk: float,
+    risk_field: str,
 ) -> Dict[str, Any]:
     viable = []
     for row in candidates:
         bits = as_int(row, "bits", FULL_PRECISION_BITS)
         if bits not in allowed_bits:
             continue
-        drop = max(0.0, as_float(row, "accept_rate_drop", 0.0))
-        if drop <= max_component_drop:
+        risk = max(0.0, as_float(row, risk_field, 0.0))
+        if risk <= max_component_risk:
             viable.append(row)
     if not viable:
         return {
             "bits": FULL_PRECISION_BITS,
-            "accept_rate_drop": 0.0,
+            "risk": 0.0,
             "saved_bytes": 0.0,
             "source_candidate": "full_precision_fallback",
         }
-    viable.sort(key=lambda row: (as_int(row, "bits", FULL_PRECISION_BITS), as_float(row, "accept_rate_drop", 0.0)))
+    viable.sort(key=lambda row: (as_int(row, "bits", FULL_PRECISION_BITS), as_float(row, risk_field, 0.0)))
     chosen = viable[0]
     return {
         "bits": as_int(chosen, "bits", FULL_PRECISION_BITS),
-        "accept_rate_drop": max(0.0, as_float(chosen, "accept_rate_drop", 0.0)),
+        "risk": max(0.0, as_float(chosen, risk_field, 0.0)),
         "saved_bytes": candidate_saved_bytes(chosen),
         "source_candidate": chosen.get("candidate", ""),
     }
@@ -96,7 +98,9 @@ def safer_replacement(
     candidates: List[Dict[str, str]],
     *,
     current_bits: int,
+    current_risk: float,
     allowed_bits: List[int],
+    risk_field: str,
 ) -> Dict[str, Any]:
     safer = []
     for row in candidates:
@@ -105,19 +109,21 @@ def safer_replacement(
             continue
         if bits <= current_bits:
             continue
+        if max(0.0, as_float(row, risk_field, 0.0)) >= current_risk:
+            continue
         safer.append(row)
     if not safer:
         return {
             "bits": FULL_PRECISION_BITS,
-            "accept_rate_drop": 0.0,
+            "risk": 0.0,
             "saved_bytes": 0.0,
             "source_candidate": "full_precision_relax",
         }
-    safer.sort(key=lambda row: (as_int(row, "bits", FULL_PRECISION_BITS), as_float(row, "accept_rate_drop", 0.0)))
+    safer.sort(key=lambda row: (as_int(row, "bits", FULL_PRECISION_BITS), as_float(row, risk_field, 0.0)))
     chosen = safer[0]
     return {
         "bits": as_int(chosen, "bits", FULL_PRECISION_BITS),
-        "accept_rate_drop": max(0.0, as_float(chosen, "accept_rate_drop", 0.0)),
+        "risk": max(0.0, as_float(chosen, risk_field, 0.0)),
         "saved_bytes": candidate_saved_bytes(chosen),
         "source_candidate": chosen.get("candidate", ""),
     }
@@ -128,8 +134,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile_csv", type=str, required=True)
     parser.add_argument("--num_layers", type=int, default=None)
     parser.add_argument("--allowed_bits", type=str, default="4,8,16")
+    parser.add_argument("--risk_field", type=str, default="accept_rate_drop")
     parser.add_argument("--max_component_drop", type=float, default=0.01)
     parser.add_argument("--max_total_drop", type=float, default=0.05)
+    parser.add_argument("--max_component_risk", type=float, default=None)
+    parser.add_argument("--max_total_risk", type=float, default=None)
+    parser.add_argument(
+        "--target_profiled_mean_bits",
+        type=float,
+        default=None,
+        help="Use a fixed mean-bit budget over profiled K/V components instead of a risk budget.",
+    )
     parser.add_argument("--name", type=str, default="sensitivity_aware")
     parser.add_argument("--out_dir", type=str, default="outputs/spec_kv_allocation")
     return parser
@@ -139,6 +154,8 @@ def main() -> None:
     args = build_parser().parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     rows = read_csv(args.profile_csv)
+    max_component_risk = args.max_component_drop if args.max_component_risk is None else args.max_component_risk
+    max_total_risk = args.max_total_drop if args.max_total_risk is None else args.max_total_risk
     allowed_bits = sorted(set(parse_csv_ints(args.allowed_bits)))
     if FULL_PRECISION_BITS not in allowed_bits:
         allowed_bits.append(FULL_PRECISION_BITS)
@@ -151,6 +168,10 @@ def main() -> None:
     ]
     if not profile_rows:
         raise ValueError("No layer/component rows found in profile CSV.")
+    missing_risk = [row.get("candidate", "<unnamed>") for row in profile_rows if row.get(args.risk_field, "") == ""]
+    if missing_risk:
+        examples = ", ".join(missing_risk[:3])
+        raise ValueError(f"Risk field {args.risk_field!r} is missing for profile rows such as: {examples}")
 
     num_layers = args.num_layers
     if num_layers is None:
@@ -161,28 +182,80 @@ def main() -> None:
         grouped[(as_int(row, "layer"), str(row["component"]))].append(row)
 
     k_bits, v_bits = uniform_bit_lists(num_layers, FULL_PRECISION_BITS, FULL_PRECISION_BITS)
-    selections: Dict[Tuple[int, str], Dict[str, Any]] = {}
-    for layer in range(num_layers):
-        for component in ("k", "v"):
-            candidates = grouped.get((layer, component), [])
-            if not candidates:
-                selections[(layer, component)] = {
+    selections: Dict[Tuple[int, str], Dict[str, Any]] = {
+        (layer, component): {
+            "bits": FULL_PRECISION_BITS,
+            "risk": 0.0,
+            "saved_bytes": 0.0,
+            "source_candidate": "unprofiled_full_precision",
+        }
+        for layer in range(num_layers)
+        for component in ("k", "v")
+    }
+
+    if args.target_profiled_mean_bits is not None:
+        if not 2.0 <= args.target_profiled_mean_bits <= float(FULL_PRECISION_BITS):
+            raise ValueError("target_profiled_mean_bits must be between 2 and 16.")
+        profiled_keys = sorted(grouped)
+        options_by_key: Dict[Tuple[int, str], List[Dict[str, Any]]] = {}
+        for key in profiled_keys:
+            options: Dict[int, Dict[str, Any]] = {
+                FULL_PRECISION_BITS: {
                     "bits": FULL_PRECISION_BITS,
-                    "accept_rate_drop": 0.0,
+                    "risk": 0.0,
                     "saved_bytes": 0.0,
-                    "source_candidate": "unprofiled_full_precision",
+                    "source_candidate": "profiled_full_precision",
                 }
-                continue
-            selections[(layer, component)] = choose_initial_candidate(
+            }
+            for row in grouped[key]:
+                bits = as_int(row, "bits", FULL_PRECISION_BITS)
+                if bits not in allowed_bits:
+                    continue
+                option = {
+                    "bits": bits,
+                    "risk": max(0.0, as_float(row, args.risk_field, 0.0)),
+                    "saved_bytes": candidate_saved_bytes(row),
+                    "source_candidate": row.get("candidate", ""),
+                }
+                if bits not in options or option["risk"] < options[bits]["risk"]:
+                    options[bits] = option
+            options_by_key[key] = list(options.values())
+
+        # Exact dynamic programming avoids a greedy search accidentally using a
+        # different memory budget for the two objectives.
+        states: Dict[int, Tuple[float, List[Dict[str, Any]]]] = {0: (0.0, [])}
+        for key in profiled_keys:
+            next_states: Dict[int, Tuple[float, List[Dict[str, Any]]]] = {}
+            for total_bits, (total_risk, path) in states.items():
+                for option in options_by_key[key]:
+                    new_bits = total_bits + int(option["bits"])
+                    new_risk = total_risk + float(option["risk"])
+                    previous = next_states.get(new_bits)
+                    if previous is None or new_risk < previous[0]:
+                        next_states[new_bits] = (new_risk, path + [option])
+            states = next_states
+
+        target_total_bits = int(round(args.target_profiled_mean_bits * len(profiled_keys)))
+        feasible_totals = [total for total in states if total <= target_total_bits]
+        if not feasible_totals:
+            raise ValueError("The available bit candidates cannot satisfy target_profiled_mean_bits.")
+        achieved_total_bits = max(feasible_totals)
+        _, chosen_path = states[achieved_total_bits]
+        for key, option in zip(profiled_keys, chosen_path):
+            selections[key] = option
+    else:
+        for key, candidates in grouped.items():
+            selections[key] = choose_initial_candidate(
                 candidates,
                 allowed_bits=allowed_bits,
-                max_component_drop=args.max_component_drop,
+                max_component_risk=max_component_risk,
+                risk_field=args.risk_field,
             )
 
-    def estimated_drop() -> float:
-        return float(sum(selection["accept_rate_drop"] for selection in selections.values()))
+    def estimated_risk() -> float:
+        return float(sum(selection["risk"] for selection in selections.values()))
 
-    while estimated_drop() > args.max_total_drop:
+    while args.target_profiled_mean_bits is None and estimated_risk() > max_total_risk:
         compressive = [
             (key, selection)
             for key, selection in selections.items()
@@ -192,8 +265,8 @@ def main() -> None:
             break
         compressive.sort(
             key=lambda item: (
-                item[1]["accept_rate_drop"] / max(item[1]["saved_bytes"], 1.0),
-                item[1]["accept_rate_drop"],
+                item[1]["risk"] / max(item[1]["saved_bytes"], 1.0),
+                item[1]["risk"],
             ),
             reverse=True,
         )
@@ -201,7 +274,9 @@ def main() -> None:
         replacement = safer_replacement(
             grouped.get(key, []),
             current_bits=int(selection["bits"]),
+            current_risk=float(selection["risk"]),
             allowed_bits=allowed_bits,
+            risk_field=args.risk_field,
         )
         if int(replacement["bits"]) == int(selection["bits"]):
             break
@@ -220,7 +295,8 @@ def main() -> None:
                     "layer": layer,
                     "component": component,
                     "bits": int(selection["bits"]),
-                    "accept_rate_drop": float(selection["accept_rate_drop"]),
+                    "risk_field": args.risk_field,
+                    "risk": float(selection["risk"]),
                     "saved_bytes": float(selection["saved_bytes"]),
                     "saved_mib": float(selection["saved_bytes"]) / (1024.0**2),
                     "source_candidate": selection["source_candidate"],
@@ -231,9 +307,16 @@ def main() -> None:
         "name": args.name,
         "source_profile_csv": args.profile_csv,
         "allowed_bits": allowed_bits,
-        "max_component_drop": args.max_component_drop,
-        "max_total_drop": args.max_total_drop,
-        "estimated_accept_rate_drop": estimated_drop(),
+        "risk_field": args.risk_field,
+        "max_component_risk": max_component_risk,
+        "max_total_risk": max_total_risk,
+        "target_profiled_mean_bits": args.target_profiled_mean_bits,
+        "achieved_profiled_mean_bits": (
+            sum(float(selections[key]["bits"]) for key in grouped) / len(grouped)
+            if grouped
+            else float(FULL_PRECISION_BITS)
+        ),
+        "estimated_total_risk": estimated_risk(),
         "estimated_saved_bytes_proxy": float(sum(selection["saved_bytes"] for selection in selections.values())),
         "k_bits": k_bits,
         "v_bits": v_bits,
@@ -242,12 +325,14 @@ def main() -> None:
             for layer in range(num_layers)
         ],
     }
+    if args.risk_field == "accept_rate_drop":
+        payload["estimated_accept_rate_drop"] = payload["estimated_total_risk"]
     write_json(payload, os.path.join(args.out_dir, "allocation.json"))
     write_csv(selected_rows, os.path.join(args.out_dir, "selected_components.csv"))
     print("Done!")
     print(f"  {os.path.join(args.out_dir, 'allocation.json')}")
     print(f"  {os.path.join(args.out_dir, 'selected_components.csv')}")
-    print(f"  estimated_accept_rate_drop={payload['estimated_accept_rate_drop']:.4f}")
+    print(f"  estimated_total_risk={payload['estimated_total_risk']:.6f} ({args.risk_field})")
 
 
 if __name__ == "__main__":

@@ -34,14 +34,25 @@ NUM_LAYERS="${NUM_LAYERS:-28}"
 ALLOWED_BITS="${ALLOWED_BITS:-4,8,16}"
 MAX_COMPONENT_DROP="${MAX_COMPONENT_DROP:-0.01}"
 MAX_TOTAL_DROP="${MAX_TOTAL_DROP:-0.05}"
+RISK_FIELD="${RISK_FIELD:-accept_rate_drop}"
+MAX_COMPONENT_RISK="${MAX_COMPONENT_RISK:-$MAX_COMPONENT_DROP}"
+MAX_TOTAL_RISK="${MAX_TOTAL_RISK:-$MAX_TOTAL_DROP}"
+TARGET_PROFILED_MEAN_BITS="${TARGET_PROFILED_MEAN_BITS:-}"
 NAME="${NAME:-sensitivity_aware}"
 OUT_DIR="${OUT_DIR:-outputs/spec_kv_allocation_${SLURM_JOB_ID:-local}}"
 
-"$PYTHON_BIN" -u search_kv_bit_allocation.py \
-  --profile_csv "$PROFILE_CSV" \
-  --num_layers "$NUM_LAYERS" \
-  --allowed_bits "$ALLOWED_BITS" \
-  --max_component_drop "$MAX_COMPONENT_DROP" \
-  --max_total_drop "$MAX_TOTAL_DROP" \
-  --name "$NAME" \
+cmd=(
+  "$PYTHON_BIN" -u search_kv_bit_allocation.py
+  --profile_csv "$PROFILE_CSV"
+  --num_layers "$NUM_LAYERS"
+  --allowed_bits "$ALLOWED_BITS"
+  --risk_field "$RISK_FIELD"
+  --max_component_risk "$MAX_COMPONENT_RISK"
+  --max_total_risk "$MAX_TOTAL_RISK"
+  --name "$NAME"
   --out_dir "$OUT_DIR"
+)
+if [[ -n "$TARGET_PROFILED_MEAN_BITS" ]]; then
+  cmd+=(--target_profiled_mean_bits "$TARGET_PROFILED_MEAN_BITS")
+fi
+"${cmd[@]}"

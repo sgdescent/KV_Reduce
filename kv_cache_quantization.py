@@ -118,7 +118,9 @@ def parse_quant_config_spec(spec: str, num_layers: int) -> Tuple[str, List[int],
 
 def parse_quant_config_specs(specs: str, num_layers: int) -> List[Tuple[str, List[int], List[int], Dict[str, Any]]]:
     configs = []
-    for item in specs.split(","):
+    # Semicolons are useful when passing the list through SLURM --export, whose
+    # own syntax reserves commas as environment-variable separators.
+    for item in re.split(r"[,;]", specs):
         item = item.strip()
         if not item:
             continue
