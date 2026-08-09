@@ -21,7 +21,7 @@ def dtype_bits(dtype_name: str) -> int:
 
 
 def parse_csv_ints(value: str) -> List[int]:
-    return [int(item.strip()) for item in value.split(",") if item.strip()]
+    return [int(item.strip()) for item in re.split(r"[,;]", value) if item.strip()]
 
 
 def quantize_dequantize_per_vector_symmetric(x: torch.Tensor, bits: int) -> torch.Tensor:

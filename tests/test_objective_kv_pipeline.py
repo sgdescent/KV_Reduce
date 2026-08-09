@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from kv_cache_quantization import parse_quant_config_specs
+from kv_cache_quantization import parse_csv_ints, parse_quant_config_specs
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +35,7 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
     def test_semicolon_quant_configs(self) -> None:
         configs = parse_quant_config_specs("none;k8v4;k4v8", num_layers=3)
         self.assertEqual([config[0] for config in configs], ["none", "k8v4", "k4v8"])
+        self.assertEqual(parse_csv_ints("8;4"), [8, 4])
 
     def test_fixed_budget_allocator_changes_layout_by_objective(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
