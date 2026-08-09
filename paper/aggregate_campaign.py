@@ -26,7 +26,7 @@ PAIR_LABELS = {
 }
 
 CONFIG_LABELS = {
-    "none": "FP16",
+    "none": "BF16",
     "k8v8": "K8 V8",
     "k8v4": "K8 V4",
     "k4v8": "K4 V8",
@@ -335,8 +335,7 @@ def plot_cross_family(metrics: Sequence[Dict[str, Any]], out_dir: Path) -> None:
     ax.set_ylim(0, 0.75)
     ax.grid(axis="y", color="#D9DDD8", linewidth=0.7)
     ax.set_axisbelow(True)
-    ax.legend(ncol=3, loc="upper center", bbox_to_anchor=(0.5, 1.18))
-    ax.set_title("Equal-memory K/V precision across model families", pad=18, fontweight="bold")
+    ax.legend(ncol=3, loc="lower center", bbox_to_anchor=(0.5, 1.01))
     fig.savefig(out_dir / "cross_family_equal_memory.pdf")
     fig.savefig(out_dir / "cross_family_equal_memory.png")
     plt.close(fig)

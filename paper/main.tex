@@ -29,18 +29,18 @@ model to propose tokens for verification by a larger target model, but standard
 implementations retain a separate key--value (KV) cache for each model. We study
 how the draft cache can be compressed while preserving the quantity that directly
 controls speculative speed: token acceptance. Our central observation is that
-acceptance is strongly asymmetric in key and value precision. On a Qwen2.5-3B
-target with a Qwen2.5-1.5B draft at 4K context, 8-bit keys and 4-bit values reduce
-total target-plus-draft KV memory by 27.0\% while retaining 95.4\% of native
-acceptance (0.544 versus 0.571). Reversing the assignment gives the same memory
-saving but retains only 79.6\% of acceptance (0.454). Controlled Gaussian
-perturbations expose the same mechanism: key noise changes attention routing and
-rapidly destroys top-1 stability, whereas value noise is tolerated at much larger
-magnitudes. Based on this observation, \method profiles each draft layer and cache
-component under the actual speculative loop, then selects mixed precision under an
-acceptance-drop budget. Exact full-precision target verification preserves the
-target output distribution. We evaluate the hypothesis across Qwen2.5, Qwen3,
-Llama 3, OLMo 2, and SmolLM2 model pairs and across 1K--4K contexts.
+acceptance is strongly asymmetric in key and value precision. Across six
+target--draft pairs, two text distributions, and contexts from 1K to 16K, 8-bit
+keys with 4-bit values (K8V4) outperform the equal-memory K4V8 assignment in
+19 of 20 matched comparisons. On Qwen2.5-3B/1.5B, K8V4 improves acceptance by
+0.312 at 1K and 0.336 at 4K while reducing total target-plus-draft KV memory by
+27.0\%. Controlled Gaussian perturbations expose the same mechanism: key noise
+changes attention routing and rapidly destroys top-1 stability, whereas value
+noise is tolerated at much larger magnitudes. Based on this observation, \method
+profiles each draft layer and cache component under the actual speculative loop,
+then selects mixed precision under an acceptance-drop budget. The target verifier
+is never quantized; we separately audit finite-precision differences between
+batched verification and tokenwise BF16 decoding.
 \end{abstract}
 
 \section{Introduction}
@@ -74,13 +74,13 @@ prior KV quantization analyses~\citep{liu2024kivi,hariri2025more}, but we ask a
 different operational question: \emph{which errors can a draft model tolerate
 without losing speculative acceptance?}
 
-Our preliminary findings support three claims. First, Gaussian key perturbations
+Our findings support three claims. First, Gaussian key perturbations
 are dramatically more destructive to next-token stability than value
-perturbations. Second, K8V4 consistently dominates K4V8 on Qwen2.5 despite their
-identical memory cost. Third, a conservative layer-wise allocator can reduce the
-draft cache while holding acceptance close to the full-precision draft. The
-ongoing cross-family campaign tests whether this acceptance asymmetry generalizes
-across architecture, scale, and context length.
+perturbations. Second, K8V4 dominates K4V8 in 19 of 20 equal-memory comparisons
+across six model pairs; the only reversal is an OLMo difference of $-0.002$ whose
+confidence interval includes zero. Third, a conservative layer-wise allocator
+retains 94.9--102.8\% of native acceptance while saving 2.9--9.9\% of total KV
+memory.
 
 \section{Background and Problem Formulation}
 
@@ -89,13 +89,13 @@ $q(\cdot\mid x_{\le t};\widehat{\mathcal C}_d)$ the draft distribution produced
 from a compressed draft cache $\widehat{\mathcal C}_d$. Standard speculative
 sampling accepts proposals using the target correction rule; greedy speculative
 decoding accepts the longest proposal prefix matching target argmax tokens. In
-both cases, target verification makes the final sequence exact with respect to
-the chosen target decoding rule. Compression affects efficiency through
-acceptance, not final correctness. In finite-precision greedy experiments,
+both cases, target verification is distribution preserving in exact arithmetic:
+compression affects efficiency through acceptance, not the target correction
+rule. In finite-precision greedy experiments,
 batched and token-wise target evaluation can choose different tokens when the
 largest BF16 logits are tied. We therefore report both sequence agreement and
 the target top-1 margin at every disagreement, distinguishing numerical ties
-from non-tie verification errors.
+from larger kernel-path differences.
 
 For target and draft cache sizes $M_t$ and $M_d$, native speculative decoding uses
 $M_t+M_d$. If layer $\ell$ stores keys and values with precisions
@@ -163,18 +163,17 @@ risks.
 
 \section{Experimental Setup}
 
-Our preliminary experiment uses Qwen2.5-3B as target and Qwen2.5-1.5B as
-draft~\citep{yang2024qwen25}. We evaluate contiguous WikiText-2 validation blocks,
-four draft proposals per verification round, greedy target verification, and 16
-generated tokens per prompt. The 1K experiment uses 64 prompts; the 4K experiment
-uses 16 prompts. The ongoing cross-family campaign uses the pairs in
-Table~\ref{tab:model-pairs}. All target and draft pairs were checked for tokenizer
-compatibility before launch.
+We evaluate the six target--draft pairs in Table~\ref{tab:model-pairs} using
+contiguous WikiText-2 validation blocks, four draft proposals per verification
+round, greedy target verification, and 16 generated tokens per prompt. Main 1K
+and 4K experiments use 32 and 12 prompts per pair. We add two shuffled C4 seeds
+for Qwen2.5-3B/1.5B, OLMo-2, and Llama, and exploratory Qwen2.5 runs at 8K and
+16K. Sensitivity profiles use eight prompts per candidate; held-out allocation
+evaluation uses 32. All pairs were checked for tokenizer compatibility.
 
 \begin{table}[t]
-  \caption{Cross-family campaign. Each pair is evaluated at 1K and 4K context,
-  followed by top-eight-layer K/V sensitivity profiling and an acceptance-budgeted
-  allocation.}
+  \caption{Cross-family evaluation. Each pair is tested at 1K and 4K context,
+  followed by top-eight-layer K/V profiling and held-out allocation evaluation.}
   \label{tab:model-pairs}
   \centering
   \small
@@ -196,7 +195,7 @@ JS divergence, acceptance mass, draft-cache bytes, and total target-plus-draft K
 bytes. Python fake quantization does not provide a valid kernel-level speed
 measurement, so we do not make throughput claims from this implementation.
 
-\section{Preliminary Results}
+\section{Results}
 
 \subsection{Keys are the fragile routing state}
 
@@ -218,39 +217,66 @@ errors in $K$ changing $A$ in Equation~\ref{eq:attention} before values are read
 
 \subsection{Equal memory does not imply equal acceptance}
 
-Figure~\ref{fig:equal-memory} isolates the core comparison. K8V4 and K4V8 have
-identical average precision and save the same KV bytes. At 1K context, K8V4 yields
-0.475 acceptance versus 0.292 for K4V8. At 4K, the rates are 0.544 and 0.454,
-respectively. The 4K K8V4 configuration retains 95.4\% of native acceptance while
-saving 61.7\% of draft KV memory and 27.0\% of combined target-plus-draft KV
-memory.
+Figure~\ref{fig:equal-memory} isolates the core comparison at 1K context. K8V4
+and K4V8 have identical average precision and save the same bytes, yet K8V4 wins
+in five of six families and ties OLMo within 0.002. Across all contexts and held-out
+distributions it wins 19 of 20 matched comparisons. The effect is largest for
+Qwen2.5-3B/1.5B: acceptance improves from 0.282 to 0.594 at 1K and from 0.300 to
+0.636 at 4K. K8V4 saves 61.7\% of the draft cache and 27.0\% of combined
+target-plus-draft KV memory for this pair. Depending on model-size ratio, total
+savings range from 10.5\% (SmolLM2) to 28.8\% (Llama).
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.78\linewidth]{figures/equal_memory_asymmetry.pdf}
-  \caption{Speculative acceptance for two equal-memory asymmetric assignments.
-  Preserving key precision consistently dominates preserving value precision.}
+  \includegraphics[width=\linewidth]{campaign_artifacts/cross_family_equal_memory.pdf}
+  \caption{Acceptance at 1K WikiText context. Preserving key precision dominates
+  preserving value precision at equal memory for five families and ties on OLMo.}
   \label{fig:equal-memory}
 \end{figure}
 
-\begin{table*}[t]
-  \caption{Preliminary Qwen2.5-3B/1.5B results. ``Retained'' normalizes acceptance
-  by the full-precision draft at the same context. Memory includes 16-bit scale
-  metadata for each quantized KV vector.}
-  \label{tab:preliminary}
+\begin{table}[t]
+  \caption{Equal-memory K8V4 versus K4V8 at 1K WikiText. Memory includes 16-bit
+  per-vector scales.}
+  \label{tab:cross-family}
   \centering
-  \small
-  \input{generated/preliminary_results_table.tex}
-\end{table*}
+  \scriptsize
+  \resizebox{\linewidth}{!}{\input{campaign_artifacts/campaign_equal_memory_table.tex}}
+\end{table}
+
+The asymmetry persists outside the main setting. On two shuffled C4 seeds,
+K8V4--K4V8 differences are $+0.185,+0.282$ for Qwen, $+0.010,+0.074$ for OLMo,
+and $+0.026,+0.090$ for Llama. For Qwen at 8K and 16K, the differences remain
+$+0.260$ and $+0.140$, respectively, although these exploratory long-context runs
+contain only four and two prompts.
 
 \subsection{A conservative learned allocation}
 
 Profiling the top eight draft layers and selecting precision under a five-point
-additive acceptance budget gives a deliberately conservative allocation. On 64
-held prompts at 1K context, acceptance changes from 0.515 to 0.507 while saving
-15.0\% of draft-cache memory and 6.56\% of total KV memory. This validates the
-profiling signal but leaves substantial room for a joint, interaction-aware
-allocator.
+additive acceptance budget gives deliberately conservative allocations. Across
+the six pairs, held-out acceptance retention ranges from 94.9\% to 102.8\%, while
+total KV savings range from 2.9\% to 9.9\%. Figure~\ref{fig:pareto} shows that
+uniform K4V4 often saves more memory but can retain less than half of native
+acceptance; the sensitivity-aware solutions stay near the 100\% line.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.82\linewidth]{campaign_artifacts/campaign_memory_acceptance_pareto.pdf}
+  \caption{Memory--acceptance trade-off at 1K. Sensitivity-aware allocations are
+  conservative; K8V4 provides a stronger uniform operating point than K4V8.}
+  \label{fig:pareto}
+\end{figure}
+
+\subsection{Finite-precision verification audit}
+
+The target cache and weights remain BF16 and are never quantized. Nevertheless,
+multi-token verification and tokenwise greedy decoding invoke different GPU kernel
+shapes. Across 2,010 prompt--configuration outputs, 308 sequence disagreements
+occur where either target path has top-1 margin at most $10^{-3}$, and 33 (1.64\%)
+remain above that threshold. Focused diagnostics found no causal-mask leakage and
+no cache-crop top-1 error; the remaining flips arise from small BF16 logit drift
+(e.g., KL below $10^{-2}$ in traced cases). We therefore do not claim bitwise
+equality to tokenwise BF16 greedy decoding, while the target verification rule
+itself remains unquantized.
 
 \subsection{Motivating negative result: direct cross-model cache maps}
 
@@ -285,10 +311,12 @@ decoding and allocate draft-cache precision by measured acceptance sensitivity.
 The present quantizer uses per-vector symmetric fake quantization. It does not yet
 implement packed storage, residual windows, per-channel key grouping, or fused
 attention kernels; therefore analytical cache bytes, not wall-clock latency, are
-the reliable systems metric. The preliminary results use one model pair and one
-text distribution. The launched campaign expands to six target--draft pairs, but
-the final paper also requires multiple seeds, held-out C4/PG19 or LongBench-style
-contexts, and task-conditioned prompts for code and mathematics.
+the reliable systems metric. Although the campaign spans six pairs and includes
+two C4 seeds for three pairs, prompt counts remain modest, especially at 8K--16K.
+Broader PG19/LongBench evaluation and task-conditioned code and mathematics prompts
+are needed. Our BF16 audit also shows that mathematically distribution-preserving
+speculation need not be bitwise identical to tokenwise decoding across kernel
+shapes; higher-precision and production-kernel audits remain important.
 
 The additive allocation in Equation~\ref{eq:allocation} ignores interactions
 between compressed components. We plan to fit a small risk predictor over joint
@@ -300,12 +328,13 @@ serving-capacity claims.
 \section{Conclusion}
 
 Draft KV compression should be evaluated by the speculative work it preserves,
-not reconstruction error alone. Preliminary results show a large and actionable
-asymmetry: keys are acceptance-critical routing state, while values tolerate more
-aggressive compression. This makes K8V4 a stronger operating point than K4V8 at
-identical memory and motivates acceptance-aware layer-wise allocation. The
-cross-family campaign will determine whether this behavior is a robust property
-of speculative decoding or specific to the initial Qwen pair.
+not reconstruction error alone. Across six model pairs, K8V4 wins 19 of 20
+equal-memory comparisons, showing that keys are acceptance-critical routing state
+while values usually tolerate more aggressive compression. Acceptance-aware
+profiling preserves near-native draft quality with conservative savings, and the
+Qwen results show that substantially larger savings are possible. These results
+motivate packed asymmetric kernels and interaction-aware allocation optimized
+directly for speculative acceptance.
 
 \bibliography{references}
 \bibliographystyle{template/iclr2026_conference}
