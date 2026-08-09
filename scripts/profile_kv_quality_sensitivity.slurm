@@ -41,6 +41,7 @@ LAYERS="${LAYERS:-top:8}"
 COMPONENTS="${COMPONENTS:-k,v}"
 BITS="${BITS:-8,4}"
 QUANT_CONFIGS="${QUANT_CONFIGS:-}"
+QUALITY_RISK_METRIC="${QUALITY_RISK_METRIC:-kl}"
 OUT_DIR="${OUT_DIR:-outputs/kv_quality_sensitivity_${SLURM_JOB_ID:-local}}"
 WANDB_PROJECT="${WANDB_PROJECT:-kv-reduce}"
 WANDB_GROUP="${WANDB_GROUP:-kv-objective-quality}"
@@ -56,6 +57,7 @@ cmd=(
   --prompt_len "$PROMPT_LEN"
   --continuation_len "$CONTINUATION_LEN"
   --num_sequences "$NUM_SEQUENCES"
+  --quality_risk_metric "$QUALITY_RISK_METRIC"
   --out_dir "$OUT_DIR"
 )
 

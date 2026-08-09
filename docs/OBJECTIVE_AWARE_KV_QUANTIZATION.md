@@ -11,9 +11,13 @@ different precision allocations on the same draft model.
 For every candidate `(layer, component, bits)`, we measure:
 
 ```text
-quality risk     = NLL_quantized - NLL_BF16
+quality risk     = KL(logits_BF16 || logits_quantized)
 speculative risk = acceptance_BF16 - acceptance_quantized
 ```
+
+Held-out delta NLL is still the primary ordinary-quality outcome in the final
+cross-evaluation. KL is used for sensitivity ranking because it is nonnegative
+and substantially less noisy than a small calibration sample's delta NLL.
 
 The quality profile uses teacher-forced continuations with a cache-resident
 decode loop. The speculative profile uses the audited cached target/draft loop

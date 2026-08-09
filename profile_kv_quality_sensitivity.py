@@ -154,7 +154,6 @@ def evaluate_quantized_sequence(
     summary = mean_dict(token_rows)
     summary["native_nll"] = float(reference_nll)
     summary["delta_nll"] = float(summary.get("quantized_nll", reference_nll) - reference_nll)
-    summary["quality_risk"] = max(0.0, summary["delta_nll"])
     summary["perplexity_ratio"] = float(torch.exp(torch.tensor(summary["delta_nll"])).item())
     summary["affected_token_fraction"] = max(0.0, (len(reference_logits) - 1) / max(1, len(reference_logits)))
     return summary
@@ -193,6 +192,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--scale_bits", type=int, default=16)
     parser.add_argument("--topk", type=int, default=5)
+    parser.add_argument(
+        "--quality_risk_metric",
+        type=str,
+        default="kl",
+        choices=["kl", "js", "delta_nll"],
+        help="Nonnegative profile score used by the allocator; NLL is always reported for cross-evaluation.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out_dir", type=str, default="outputs/kv_quality_sensitivity")
     parser.add_argument("--wandb", action="store_true")
@@ -361,7 +367,12 @@ def main() -> None:
     for candidate_idx, candidate in enumerate(candidates):
         name = str(candidate["candidate"])
         metrics = mean_dict(metric_rows[name])
-        metrics["quality_risk"] = max(0.0, metrics.get("delta_nll", 0.0))
+        if args.quality_risk_metric == "kl":
+            metrics["quality_risk"] = max(0.0, metrics.get("kl_p_to_q", 0.0))
+        elif args.quality_risk_metric == "js":
+            metrics["quality_risk"] = max(0.0, metrics.get("js", 0.0))
+        else:
+            metrics["quality_risk"] = max(0.0, metrics.get("delta_nll", 0.0))
         metrics["perplexity_ratio"] = float(torch.exp(torch.tensor(metrics.get("delta_nll", 0.0))).item())
         memory = estimate_model_kv_cache_bytes(
             config=model.config,
@@ -396,6 +407,7 @@ def main() -> None:
             "quantization_update_mode": "prefill_once_then_new_tokens_only",
             "objective": "ordinary_language_model_quality",
             "quality_metric": "teacher_forced_continuation_nll",
+            "allocation_risk_metric": args.quality_risk_metric,
         },
         "mode": mode,
         "model": args.model,
