@@ -75,7 +75,12 @@ gated 9B checkpoint.
     shuffled seeds are not treated as powered confirmation. The corrected
     predeclared experiment uses three explicit, non-overlapping FineWeb-Edu
     shards with 512 speculative prompts and 256 ordinary-quality sequences per
-    shard. Aggregation reports every requested-versus-observed shortfall.
+    shard. Aggregation reports every requested-versus-observed shortfall. The
+    first powered shard favors K3V4 under both objectives: K4V3-minus-K3V4
+    acceptance is -1.25 points (95% CI: -2.16 to -0.36; 508 valid paired
+    prompts), while the ordinary-quality KL contrast is +0.00838 (95% CI:
+    +0.00708 to +0.01007; 256 sequences). This remains interim until all three
+    disjoint shards complete.
 16. `verifier_exactness_powered`: quantify finite-precision verifier drift on
     32 held-out prompts for each BF16/FP32 and SDPA/eager combination. This
     separates implementation correctness from backend-dependent numerical paths.

@@ -146,6 +146,18 @@ non-overlapping shards of 512 speculative prompts and 256 ordinary-quality
 sequences per shard. Aggregators report every requested-versus-observed sample
 shortfall explicitly.
 
+The first of those three powered FineWeb-Edu shards is now complete. After
+excluding four prompts with non-tie target-reference mismatches, K4V3-minus-K3V4
+acceptance is -1.25 points across 508 paired prompts (95% bootstrap CI: -2.16 to
+-0.36), so speculative decoding significantly favors K3V4 in this shard. The
+matched ordinary-quality shard reaches the same conclusion: K4V3-minus-K3V4 KL
+is +0.00838 across 256 sequences (95% CI: +0.00708 to +0.01007), and K4V3 has
+1.83 points lower top-1 agreement. K4V3 and K3V4 save 27.18% and 27.01% of
+combined target-plus-draft KV, respectively. This is a one-shard interim result,
+not the predeclared three-shard conclusion, but it argues against both the
+original reversal and a geometry-independent claim that keys always require
+more precision.
+
 The broader cross-family result suggests a practical two-stage policy even
 without a resolved preference reversal. Across 48 model-pair/configuration cells,
 ordinary-quality KL and speculative-acceptance harm have Spearman correlation
@@ -277,6 +289,9 @@ objective-specific differences instead of assuming they exist.
   Llama-3.2-3B, OLMo-2-1B, and SmolLM2-360M using two disjoint 128-example
   shards per task and the same matched-memory K/V policies.
 - Controlled 4K quantizer-geometry factorial replication.
+- All-layer FineWeb-Edu calibration of separate ordinary-quality and
+  speculative-acceptance allocations, followed by equal-budget cross-objective
+  evaluation on disjoint held-out blocks.
 - C4, GSM8K, and HumanEval robustness aggregation and paper integration.
 
 ## Closest Work
