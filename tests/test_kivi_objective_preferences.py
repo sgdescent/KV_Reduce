@@ -1,0 +1,46 @@
+import unittest
+
+from aggregate_kivi_objective_preferences import aggregate_preferences
+
+
+def spec_row(accept_rate: float):
+    return {
+        "accept_rate": str(accept_rate),
+        "matches_target_greedy": "1",
+        "mismatch_min_top1_margin": "nan",
+    }
+
+
+def quality_row(kl: float, delta_nll: float):
+    return {"kl_p_to_q": str(kl), "delta_nll": str(delta_nll)}
+
+
+class KiviObjectivePreferenceTest(unittest.TestCase):
+    def test_detects_opposite_objective_preferences(self) -> None:
+        spec = {
+            (1024, 0, "0"): {"k8v4": spec_row(0.8), "k4v8": spec_row(0.6)},
+            (1024, 0, "1"): {"k8v4": spec_row(0.7), "k4v8": spec_row(0.6)},
+        }
+        quality = {
+            (1024, 0, "0"): {"k8v4": quality_row(0.02, 0.03), "k4v8": quality_row(0.01, 0.01)},
+            (1024, 0, "1"): {"k8v4": quality_row(0.03, 0.04), "k4v8": quality_row(0.01, 0.02)},
+        }
+        memory = {(1024, "k8v4"): [0.25], (1024, "k4v8"): [0.24]}
+
+        rows = aggregate_preferences(
+            spec_rows=spec,
+            quality_rows=quality,
+            memory=memory,
+            pairs=[("k8v4", "k4v8")],
+            tie_margin=1e-3,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["spec_preference"], "k8v4")
+        self.assertEqual(rows[0]["quality_preference"], "k4v8")
+        self.assertTrue(rows[0]["preference_reversal"])
+        self.assertAlmostEqual(rows[0]["spec_acceptance_a_minus_b_mean"], 0.15)
+
+
+if __name__ == "__main__":
+    unittest.main()

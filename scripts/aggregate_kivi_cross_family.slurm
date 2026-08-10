@@ -30,3 +30,8 @@ python3 -u compare_value_precision_objectives.py \
   --spec_summary "$root/spec/$pair/aggregate/summary.json" \
   --quality_summary "$root/quality/$pair/aggregate/summary.json" \
   --out_dir "$root/comparison/$pair"
+python3 -u aggregate_kivi_objective_preferences.py \
+  --spec_dir "$root/spec/$pair" \
+  --quality_dir "$root/quality/$pair" \
+  --config_pairs "k8v4,k4v8;k4v3,k3v4;k4v2,k2v4" \
+  --out_dir "$root/comparison/$pair"

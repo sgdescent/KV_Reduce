@@ -27,3 +27,7 @@ python3 -u compare_value_precision_objectives.py \
   --spec_summary "$root/spec_aggregate/summary.json" \
   --quality_summary "$root/quality_aggregate/summary.json" \
   --out_dir "$root/objective_comparison"
+python3 -u aggregate_kivi_objective_preferences.py \
+  --spec_dir "$root/spec" \
+  --quality_dir "$root/quality" \
+  --out_dir "$root/objective_comparison"
