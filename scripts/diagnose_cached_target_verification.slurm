@@ -76,6 +76,9 @@ fi
 if [[ "${SKIP_UNIT_AUDIT:-0}" == "1" ]]; then
   cmd+=(--skip_unit_audit)
 fi
+if [[ "${RESET_TARGET_FROM_SEQUENTIAL_SHADOW:-0}" == "1" ]]; then
+  cmd+=(--reset_target_from_sequential_shadow)
+fi
 
 printf 'Running command:\n'
 printf ' %q' "${cmd[@]}"

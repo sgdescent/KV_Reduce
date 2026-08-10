@@ -8,6 +8,7 @@ checking batched logits, suffix invariance, and cache crop/commit behavior.
 """
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -224,6 +225,7 @@ def audit_speculative_prompt(
     big_device: str,
     small_device: str,
     shared_vocab_size: int,
+    reset_target_from_sequential_shadow: bool = False,
 ) -> Dict[str, Any]:
     """Compare the batched verifier to a tokenwise target on the same live prefix."""
     independent_reference = greedy_target_generate_with_margins(
@@ -355,16 +357,21 @@ def audit_speculative_prompt(
         target_cache_len = committed_len
         draft_cache_len = committed_len
 
-        target_commit = cached_step(
-            model=big_model,
-            input_ids=torch.tensor([[correction]], dtype=prompt_ids.dtype),
-            cache=target_cache,
-            cache_len=target_cache_len,
-            device=big_device,
-        )
-        target_logits = shared_token_logits(target_commit["logits"][:, -1, :], shared_vocab_size)
-        target_cache = target_commit["cache"]
-        target_cache_len = int(target_commit["cache_len"])
+        if reset_target_from_sequential_shadow:
+            target_logits = shadow_logits.clone()
+            target_cache = copy.deepcopy(shadow_cache)
+            target_cache_len = shadow_cache_len
+        else:
+            target_commit = cached_step(
+                model=big_model,
+                input_ids=torch.tensor([[correction]], dtype=prompt_ids.dtype),
+                cache=target_cache,
+                cache_len=target_cache_len,
+                device=big_device,
+            )
+            target_logits = shared_token_logits(target_commit["logits"][:, -1, :], shared_vocab_size)
+            target_cache = target_commit["cache"]
+            target_cache_len = int(target_commit["cache_len"])
 
         draft_commit = draft_next_logits_from_cache(
             small_model=small_model,
@@ -432,6 +439,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--draft_steps", type=int, default=4)
     parser.add_argument("--max_new_tokens", type=int, default=16)
     parser.add_argument("--skip_unit_audit", action="store_true")
+    parser.add_argument("--reset_target_from_sequential_shadow", action="store_true")
     parser.add_argument("--run_speculative_audit", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=str, default="outputs/target_verification_diagnostic/summary.json")
@@ -496,6 +504,7 @@ def main() -> None:
                 big_device=args.device,
                 small_device=args.device,
                 shared_vocab_size=min(int(tokenizer.vocab_size), int(small_model.config.vocab_size)),
+                reset_target_from_sequential_shadow=args.reset_target_from_sequential_shadow,
             )
             for prompt in prompts
         ]
