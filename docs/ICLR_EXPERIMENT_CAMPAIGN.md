@@ -38,8 +38,9 @@ gated 9B checkpoint.
    eight draft layers.
 4. `allocation`: acceptance-budgeted mixed-precision search followed by a held
    benchmark against full-precision draft KV.
-5. `robustness`: two shuffled C4 validation seeds for representative Qwen,
-   Llama, and OLMo pairs.
+5. `robustness`: three shuffled seeds for Qwen2.5-3B/1.5B on C4 validation,
+   GSM8K questions, and HumanEval prompts. Every domain uses the same KIVI
+   geometry under both speculative acceptance and teacher-forced LM quality.
 6. `long_context`: exploratory 16K-prefix and 32K-total-sequence Qwen2.5 runs
    on PG19 before increasing the prompt count for the final long-context result.
    The 32K arm uses a 32,752-token prefix plus 16 generated/continuation tokens
