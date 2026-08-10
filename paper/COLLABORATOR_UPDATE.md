@@ -27,8 +27,10 @@ apparent K/V sensitivity; (2) a byte-constrained, layer-wise allocator calibrate
 for ordinary quality and speculative acceptance; and (3) a packed implementation
 that converts those policies into measured long-context memory-capacity or
 throughput gains. We already have strong evidence for the first piece and broad
-evidence that K4V4/K3V4 preserve behavior. The allocator, cross-family power,
-and packed systems results remain the gates for a credible main-track claim.
+evidence that K4V4/K3V4 preserve behavior. The first small-calibration allocator
+is negative, and the actual packed benchmark validates storage but not speed. A
+powered, generalizing allocator, cross-family evidence, and fused systems results
+remain the gates for a credible main-track claim.
 
 The prior-work bar is high. KIVI already establishes asymmetric quantization
 geometry for ordinary decoding, KV-AdaQuant explicitly assigns different
@@ -70,6 +72,19 @@ that a fused packed attention kernel is mandatory before making a speed claim.
 Separately, a free-running target-cache campaign is queued across Qwen, Llama,
 OLMo, and SmolLM to measure exact sequence retention, token agreement, first
 divergence, and long-horizon error accumulation outside speculative decoding.
+
+The strict all-layer objective-specific allocation run is complete and should be
+treated as a negative result. Across 144 single-layer K/V perturbations, the
+quality-risk and acceptance-risk rankings have Spearman correlation 0.050, and
+the two 8-mean-bit policies disagree on 41/72 component decisions. That apparent
+objective difference did not survive held-out optimization: quality-optimized
+changes speculative acceptance by -0.23 points from native, uniform K8V8 by
+-0.75 points, and acceptance-optimized by -2.15 points. The paired
+acceptance-optimized-minus-quality-optimized effect is -2.01 points with a wide
+95% CI of [-6.69, +1.84]. The acceptance profile used only 16 calibration
+prompts and its per-cell effects are small relative to uncertainty, so the next
+allocator must use a larger profile, hierarchical shrinkage, and held-out model
+selection rather than trusting raw layer ranks.
 
 ## Copy-Paste Message
 
@@ -256,6 +271,17 @@ K3V4. Relative to native BF16 draft caches, K3V4 changes acceptance by only
 target-plus-draft KV. The powered result therefore rejects both the original
 objective-reversal hypothesis and a geometry-independent claim that keys always
 require more precision.
+
+The strict all-layer objective-aware allocation also provides a useful warning.
+Although quality-risk and acceptance-risk rankings are nearly uncorrelated over
+144 layer-component-bit cells (Spearman 0.050) and their equal-mean-bit policies
+disagree on 56.9% of component decisions, the acceptance-trained allocation does
+not generalize on held-out prompts. It loses 2.15 acceptance points from native,
+compared with 0.23 points for the quality-trained allocation and 0.75 points for
+uniform K8V8. The direct acceptance-trained-minus-quality-trained contrast is
+-2.01 points with CI [-6.69, +1.84]. This prevents us from claiming a successful
+objective-specific allocator today; it motivates the powered calibration and
+shrinkage ablations already in the queue.
 
 The broader cross-family result suggests a practical two-stage policy even
 without a resolved preference reversal. Across 48 model-pair/configuration cells,
