@@ -333,5 +333,6 @@ objective-specific differences instead of assuming they exist.
 - [QuantSpec](https://arxiv.org/abs/2502.10424)
 - [KVmix](https://arxiv.org/abs/2506.08018)
 - [RateQuant](https://arxiv.org/abs/2605.06675)
+- [KVarN](https://arxiv.org/abs/2606.03458)
 - [Quasar](https://arxiv.org/abs/2603.01399)
 - [Cross-Model KV Cache Transfer](https://arxiv.org/abs/2608.03893)

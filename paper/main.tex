@@ -640,6 +640,15 @@ objective: we fit and cross-evaluate allocations under ordinary quality and
 speculative acceptance using the same model, prompts, quantizer, and memory
 budget.
 
+KVarN shows that cache-quantization errors accumulate differently during
+autoregressive generation than in prefill-like evaluation and proposes
+variance normalization to stabilize long reasoning trajectories
+\citep{muller2026kvarn}. We therefore do not claim the broader observation that
+decode-time evaluation matters. Our narrower question is whether the
+verification dynamics of speculative decoding induce a distinct precision
+policy, and how that policy interacts with key axis, grouping, zero-points, and
+the full-precision target safety net.
+
 QuantSpec combines self-speculative decoding with a hierarchical 4-bit KV
 cache~\citep{tiwari2025quantspec}. QSpec combines complementary model
 quantization schemes and reuses model state between drafting and verification
