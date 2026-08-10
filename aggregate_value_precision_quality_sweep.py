@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate the teacher-forced control for a fixed-K, variable-V sweep."""
+"""Aggregate teacher-forced quality for a K/V precision sweep."""
 
 from __future__ import annotations
 
@@ -49,8 +49,13 @@ def make_plot(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
     for axis, context in zip(axes[0], contexts):
         subset = [row for row in rows if int(row["context"]) == context]
         for row in subset:
+            cache_saved_fraction = float(
+                row["cache_saved_fraction"]
+                if "cache_saved_fraction" in row
+                else row["draft_cache_saved_fraction"]
+            )
             axis.errorbar(
-                100.0 * float(row["draft_cache_saved_fraction"]),
+                100.0 * cache_saved_fraction,
                 float(row["kl_p_to_q_mean"]),
                 yerr=[
                     [float(row["kl_p_to_q_mean"]) - float(row["kl_p_to_q_ci_low"])],
@@ -62,11 +67,11 @@ def make_plot(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
             )
             axis.annotate(
                 str(row["config"]),
-                (100.0 * float(row["draft_cache_saved_fraction"]), float(row["kl_p_to_q_mean"])),
+                (100.0 * cache_saved_fraction, float(row["kl_p_to_q_mean"])),
                 fontsize=8,
             )
         axis.set_title(f"Context {context:,}")
-        axis.set_xlabel("Draft KV saved (%)")
+        axis.set_xlabel("KV cache saved (%)")
         axis.set_ylabel("Teacher-forced KL (lower is better)")
         axis.grid(alpha=0.22)
     fig.suptitle("Ordinary LM Quality Under Matched K/V Precision", fontweight="bold")
@@ -130,6 +135,8 @@ def main() -> None:
                     "delta_nll": metrics["delta_nll"],
                     "top1_match": metrics["top1_match"],
                     "accept_mass": metrics["accept_mass"],
+                    "cache_saved_fraction": metrics["cache_saved_fraction"],
+                    # Compatibility alias for speculative objective-comparison scripts.
                     "draft_cache_saved_fraction": metrics["cache_saved_fraction"],
                 }
             )
@@ -159,8 +166,11 @@ def main() -> None:
                 "delta_nll_ci_high": nll["ci_high"],
                 "top1_match_mean": statistics.mean(metrics["top1_match"]),
                 "accept_mass_mean": statistics.mean(metrics["accept_mass"]),
+                "cache_saved_fraction": statistics.mean(
+                    float(row["cache_saved_fraction"]) for row in values
+                ),
                 "draft_cache_saved_fraction": statistics.mean(
-                    float(row["draft_cache_saved_fraction"]) for row in values
+                    float(row["cache_saved_fraction"]) for row in values
                 ),
             }
         )
