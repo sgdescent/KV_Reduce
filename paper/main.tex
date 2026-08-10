@@ -106,7 +106,9 @@ $b^K_\ell,b^V_\ell$, the compressed draft cost is approximately
   \widehat M_d \propto T \sum_{\ell=1}^{L_d}
   H^{KV}_\ell d_{h,\ell}\left(b^K_\ell+b^V_\ell\right),
 \end{equation}
-plus one scale per token and KV head in our per-vector quantizer. Total saving is
+plus quantizer metadata and any full-precision residual window. Our simulator
+counts the packed payload and two 16-bit affine parameters per quantization group.
+Total saving is
 $(M_d-\widehat M_d)/(M_t+M_d)$; it is necessarily smaller than the percentage
 saved from the draft cache alone.
 
@@ -114,12 +116,30 @@ saved from the draft cache alone.
 
 \subsection{Draft-cache fake quantization}
 
-For a key or value vector $x$, we use symmetric per-vector fake quantization,
+We distinguish a deliberately naive diagnostic quantizer from the
+outlier-aware quantizer used in our main matched experiments. The diagnostic
+baseline applies symmetric per-token fake quantization to either a key or value
+vector $x$,
 \begin{equation}
   s(x,b)=\frac{\max_i|x_i|}{2^{b-1}-1}, \qquad
   \widehat x=s\,\operatorname{clip}\!\left(\operatorname{round}(x/s),
   -2^{b-1}+1,2^{b-1}-1\right).
 \end{equation}
+The main quantizer follows the KIVI geometry: keys are grouped per channel over
+32 consecutive tokens, while values are grouped over each token--KV-head vector.
+For every affine group $G$, we compute
+\begin{equation}
+  s_G=\frac{\max G-\min G}{2^b-1},\qquad
+  z_G=\operatorname{round}(-\min G/s_G),
+\end{equation}
+and reconstruct with
+\begin{equation}
+  \widehat x=s_G\left[
+  \operatorname{clip}\!\left(\operatorname{round}(x/s_G)+z_G,0,2^b-1\right)-z_G
+  \right].
+\end{equation}
+We test both no residual window and a 128-token BF16 residual window; in the
+latter, only older cache entries are quantized.
 Only the draft KV state is quantized between cached decode steps. The target model
 and verifier remain in BF16. This simulator measures the algorithmic
 memory--acceptance tradeoff without conflating it with a particular packed-cache
@@ -325,17 +345,18 @@ key-channel outliers.
 
 \subsection{Outlier-aware key quantization removes the apparent fragility}
 
-We next change only the key quantizer: keys use affine scales and offsets per
-channel over 32-token groups, while values retain the original per-token symmetric
-quantizer. A 128-token floating-point residual window protects recent cache entries.
-In the first completed 1K Qwen seed (63 valid paired prompts), K4V8 changes
-acceptance by only $+0.27$ points while saving 23.7\% of total target-plus-draft
-KV. Relative to the original per-token K4V8 experiment, the quantizer change
-recovers 32.18 acceptance points (95\% paired bootstrap CI $[27.80,36.57]$).
-K4V4 is within $-0.81$ points of native while saving 29.2\% total KV. These
-preliminary results invalidate an interpretation based on bit-width alone.
-\todo{Replace this paragraph and add the residual-window ablation after the
-three-seed 1K/4K aggregate completes.}
+We next change the quantizer geometry: keys use affine scales and offsets per
+channel over 32-token groups, while values use per-token affine quantization.
+Across three 1K Qwen seeds (190 valid paired prompts), K4V8 with a 128-token
+floating-point residual window changes acceptance by $+0.21$ points (95\% paired
+bootstrap CI $[-0.53,0.98]$) while saving 23.7\% of total target-plus-draft KV.
+Relative to the original per-token K4V8 experiment, changing the key axis recovers
+29.46 acceptance points (CI $[26.87,32.04]$). K4V4 changes acceptance by only
+$-0.13$ points (CI $[-1.07,0.82]$) while saving 29.2\% total KV. Removing the
+residual window increases savings to 25.6\% for K4V8 and 31.0\% for K4V4, with
+acceptance changes of $-0.32$ (CI $[-1.13,0.53]$) and $-0.81$ points
+(CI $[-1.80,0.15]$), respectively. These results invalidate an interpretation
+based on bit-width alone. \todo{Add the 4K aggregate when it completes.}
 
 A fixed-key value-precision sweep identifies a sharp knee below four bits. Across
 three 1K-context seeds, K8V4 saves $27.00\%$ of total target-plus-draft KV memory
@@ -432,10 +453,11 @@ decoding and allocate draft-cache precision by measured acceptance sensitivity.
 
 \section{Limitations and Next Experiments}
 
-The present quantizer uses per-vector symmetric fake quantization. It does not yet
-implement packed storage, residual windows, per-channel key grouping, or fused
-attention kernels; therefore analytical cache bytes, not wall-clock latency, are
-the reliable systems metric. Although the campaign spans six pairs and includes
+The present implementation uses KIVI-style grouped per-channel affine keys,
+per-token affine values, and an optional residual window, but still simulates
+dequantized tensors rather than implementing packed storage or fused attention
+kernels. Therefore analytical cache bytes, not wall-clock latency, are the
+reliable systems metric. Although the campaign spans six pairs and includes
 two C4 seeds for three pairs, prompt counts remain modest at 16K--32K and on
 task-conditioned code and mathematics prompts. Broader LongBench evaluation and
 larger PG19, HumanEval, and GSM8K samples are needed. Our BF16 audit also shows
