@@ -190,13 +190,25 @@ def summarize_preferences(rows: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
         if str(row.get("preference_reversal", "")).lower() in {"true", "1"}
     ]
     matched_reversals = [row for row in reversals if row in matched]
+    resolved_reversals = [
+        row
+        for row in values
+        if str(row.get("resolved_preference_reversal", "")).lower() in {"true", "1"}
+    ]
+    matched_resolved_reversals = [row for row in resolved_reversals if row in matched]
     return {
         "num_comparisons": len(values),
         "num_preference_reversals": len(reversals),
         "num_memory_matched_comparisons": len(matched),
         "num_memory_matched_preference_reversals": len(matched_reversals),
+        "num_resolved_preference_reversals": len(resolved_reversals),
+        "num_memory_matched_resolved_preference_reversals": len(
+            matched_resolved_reversals
+        ),
         "reversal_rows": reversals,
         "memory_matched_reversal_rows": matched_reversals,
+        "resolved_reversal_rows": resolved_reversals,
+        "memory_matched_resolved_reversal_rows": matched_resolved_reversals,
     }
 
 

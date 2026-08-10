@@ -140,6 +140,37 @@ def preference_label(spec_mean: float, quality_mean: float, config_a: str, confi
     }
 
 
+def resolved_preference_label(
+    *,
+    spec_ci: Dict[str, float],
+    quality_ci: Dict[str, float],
+    config_a: str,
+    config_b: str,
+) -> Dict[str, Any]:
+    if spec_ci["ci_low"] > 0:
+        spec_preference = config_a
+    elif spec_ci["ci_high"] < 0:
+        spec_preference = config_b
+    else:
+        spec_preference = "unresolved"
+
+    # Lower KL is better, so a negative A-minus-B interval favors A.
+    if quality_ci["ci_high"] < 0:
+        quality_preference = config_a
+    elif quality_ci["ci_low"] > 0:
+        quality_preference = config_b
+    else:
+        quality_preference = "unresolved"
+
+    return {
+        "spec_preference_resolved": spec_preference,
+        "quality_preference_resolved": quality_preference,
+        "resolved_preference_reversal": spec_preference != "unresolved"
+        and quality_preference != "unresolved"
+        and spec_preference != quality_preference,
+    }
+
+
 def aggregate_preferences(
     *,
     spec_rows: Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]],
@@ -201,6 +232,12 @@ def aggregate_preferences(
                     "absolute_total_saved_fraction_gap": memory_gap,
                     "memory_matched": memory_gap <= max_memory_gap,
                     **preference_label(spec_ci["mean"], quality_kl_ci["mean"], config_a, config_b),
+                    **resolved_preference_label(
+                        spec_ci=spec_ci,
+                        quality_ci=quality_kl_ci,
+                        config_a=config_a,
+                        config_b=config_b,
+                    ),
                 }
             )
     return output
@@ -250,6 +287,13 @@ def main() -> None:
         "num_memory_matched_comparisons": sum(bool(row["memory_matched"]) for row in rows),
         "num_memory_matched_preference_reversals": sum(
             bool(row["memory_matched"] and row["preference_reversal"]) for row in rows
+        ),
+        "num_resolved_preference_reversals": sum(
+            bool(row["resolved_preference_reversal"]) for row in rows
+        ),
+        "num_memory_matched_resolved_preference_reversals": sum(
+            bool(row["memory_matched"] and row["resolved_preference_reversal"])
+            for row in rows
         ),
         "max_memory_gap": args.max_memory_gap,
         "selected_seeds": sorted(selected_seeds) if selected_seeds is not None else None,
