@@ -166,7 +166,20 @@ def select_by_context(rows: Iterable[Mapping[str, Any]]) -> Dict[int, Dict[str, 
     return selected
 
 
-def make_plot(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
+def select_exact_target_by_context(
+    rows: Iterable[Mapping[str, Any]],
+) -> Dict[int, Dict[str, Any]]:
+    return select_by_context(
+        row for row in rows if str(row.get("target_config")) == "none"
+    )
+
+
+def make_plot(
+    rows: List[Dict[str, Any]],
+    selected: Mapping[int, Mapping[str, Any]],
+    exact_selected: Mapping[int, Mapping[str, Any]],
+    out_dir: Path,
+) -> List[str]:
     try:
         import matplotlib.pyplot as plt
     except ImportError:
@@ -196,6 +209,55 @@ def make_plot(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
                     edgecolors="#222222",
                     linewidths=0.4,
                 )
+        chosen = selected.get(context)
+        if chosen is not None:
+            chosen_x = 100.0 * float(chosen["total_cache_saved_fraction"])
+            chosen_y = 100.0 * float(chosen["paired_acceptance_delta_mean"])
+            axis.scatter(
+                [chosen_x],
+                [chosen_y],
+                marker="*",
+                s=230,
+                color="#F4A261",
+                edgecolors="#222222",
+                linewidths=0.8,
+                label="Quality-constrained choice",
+                zorder=5,
+            )
+            axis.annotate(
+                f"T:{str(chosen['target_config']).upper()}  "
+                f"D:{str(chosen['draft_config']).upper()}",
+                (chosen_x, chosen_y),
+                xytext=(6, -18 if chosen_y > 0.2 else 8),
+                textcoords="offset points",
+                fontsize=8,
+                fontweight="bold",
+            )
+        exact = exact_selected.get(context)
+        if exact is not None and (
+            chosen is None or str(exact["config"]) != str(chosen["config"])
+        ):
+            exact_x = 100.0 * float(exact["total_cache_saved_fraction"])
+            exact_y = 100.0 * float(exact["paired_acceptance_delta_mean"])
+            axis.scatter(
+                [exact_x],
+                [exact_y],
+                marker="D",
+                s=100,
+                color="#264653",
+                edgecolors="#222222",
+                linewidths=0.7,
+                label="Exact-target choice",
+                zorder=5,
+            )
+            axis.annotate(
+                f"Exact target  D:{str(exact['draft_config']).upper()}",
+                (exact_x, exact_y),
+                xytext=(6, -15),
+                textcoords="offset points",
+                fontsize=8,
+                fontweight="bold",
+            )
         axis.axhline(0.0, color="#222222", linewidth=1)
         axis.set_title(f"Context {context:,}")
         axis.set_xlabel("Total target + draft KV saved (%)")
@@ -245,6 +307,7 @@ def main() -> None:
     if not rows:
         raise ValueError("No joint target/draft candidates were found.")
     selected = select_by_context(rows)
+    exact_selected = select_exact_target_by_context(rows)
     write_csv(args.out_dir / "candidate_constraints.csv", rows)
     payload = {
         "joint_summary": str(args.joint_summary),
@@ -260,7 +323,10 @@ def main() -> None:
         "num_candidates": len(rows),
         "num_feasible": sum(bool(row["feasible"]) for row in rows),
         "selected_by_context": {str(key): value for key, value in selected.items()},
-        "plots": make_plot(rows, args.out_dir),
+        "selected_exact_target_by_context": {
+            str(key): value for key, value in exact_selected.items()
+        },
+        "plots": make_plot(rows, selected, exact_selected, args.out_dir),
     }
     (args.out_dir / "summary.json").write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"

@@ -1,6 +1,10 @@
 import unittest
 
-from select_joint_kv_quantization_policy import evaluate_candidates, select_by_context
+from select_joint_kv_quantization_policy import (
+    evaluate_candidates,
+    select_by_context,
+    select_exact_target_by_context,
+)
 
 
 class JointKVPolicySelectionTest(unittest.TestCase):
@@ -107,6 +111,18 @@ class JointKVPolicySelectionTest(unittest.TestCase):
             set(bad["constraint_failures"].split(";")),
             {"target_kl", "target_delta_nll", "target_top1", "acceptance"},
         )
+
+    def test_selects_best_feasible_policy_with_exact_target(self) -> None:
+        rows = evaluate_candidates(
+            self.joint,
+            self.quality,
+            target_kl_max=0.01,
+            target_delta_nll_max=0.02,
+            target_top1_min=0.95,
+            acceptance_drop_max=0.02,
+        )
+        selected = select_exact_target_by_context(rows)
+        self.assertEqual(selected[1024]["config"], "target_none__draft_k4v4")
 
     def test_runtime_fidelity_drop_is_constrained_relative_to_bf16(self) -> None:
         rows = evaluate_candidates(

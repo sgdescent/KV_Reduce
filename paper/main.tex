@@ -492,6 +492,35 @@ compression requires explicit quality and exactness budgets.
   \label{fig:role-quality}
 \end{figure}
 
+\subsection{Joint compression exposes exact and approximate regimes}
+
+We evaluate 25 target/draft precision combinations at 1K and 4K, then maximize
+total KV savings subject to target KL, target top-1 agreement, runtime fidelity,
+and a two-point lower-confidence acceptance budget. At 1K, the selected joint
+policy is target K4V8 with draft K8V4. It saves 54.59\% of total KV, changes
+acceptance by $-0.46$ points (95\% CI $[-1.78,0.84]$), and gives target KL
+$0.00177$ (upper CI $0.00190$) with 97.69\% target top-1 agreement. This is an
+approximate operating point: five of 288 prompt occurrences are classified as
+non-tie or unknown target disagreements, versus two for the BF16 baseline.
+
+Keeping the target cache unquantized gives a distribution-preserving alternative.
+Draft K4V4 saves 29.02\% of total KV at 1K with a $+0.16$-point acceptance change
+(CI $[-0.90,1.25]$), and 30.58\% at 4K with a $+0.39$-point change (CI
+$[-1.13,1.89]$). At 4K, no target-quantized candidate satisfies the predeclared
+two-point acceptance lower-confidence constraint, so the selector returns this
+exact-target policy. Figure~\ref{fig:joint-policy} visualizes both choices. Joint
+compression therefore offers substantially greater memory reduction, but not a
+uniform lossless upgrade over draft-only compression.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.97\linewidth]{campaign_artifacts/joint_policy_selection.pdf}
+  \caption{Quality-constrained joint target/draft KV precision. Stars mark the
+  maximum-savings feasible policy; the diamond marks the best policy that keeps
+  the target cache unquantized. At 4K these choices coincide.}
+  \label{fig:joint-policy}
+\end{figure}
+
 \subsection{Objective-specific profiles do not improve acceptance consistently}
 
 Optimizing the sensitivity profile under the speculative loop is not reliably
@@ -515,8 +544,9 @@ objective.
 
 \subsection{Finite-precision verification audit}
 
-The target cache and weights remain BF16 and are never quantized. Nevertheless,
-multi-token verification and tokenwise greedy decoding invoke different GPU kernel
+In all draft-only experiments, the target cache and weights remain BF16; joint
+target quantization is reported separately above. Nevertheless, multi-token
+verification and tokenwise greedy decoding invoke different GPU kernel
 shapes. Across 2,010 prompt--configuration outputs, 308 sequence disagreements
 occur where either target path has top-1 margin at most $10^{-3}$, and 33 (1.64\%)
 remain above that threshold. Focused diagnostics found no causal-mask leakage and
@@ -591,8 +621,10 @@ compares speculative acceptance and ordinary language-model quality using the
 same KIVI-style quantizer at matched memory. Uniform K4V4 removes 66.13\% of the
 draft cache and 22.64\% of combined KV with no statistically resolved acceptance
 loss and KL below 0.01, but matched objective rankings remain strongly correlated
-and show no statistically resolved equal-memory reversal. Powered task,
-long-context, and joint target/draft experiments are required before claiming a
+and show no statistically resolved equal-memory reversal. Joint quantization can
+raise total savings to 54.59\% under quality and acceptance constraints, but it
+changes the target distribution and is not consistently feasible at 4K. Powered
+task and natural long-context experiments remain necessary before claiming a
 speculative-specific policy.
 The observed cross-family correlation supports a two-stage calibration procedure:
 ordinary-quality metrics cheaply reject risky configurations, then direct

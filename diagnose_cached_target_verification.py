@@ -26,6 +26,7 @@ from benchmark_spec_kv_quantization import (
     shared_token_logits,
     top1_logit_margin,
 )
+from kv_cache_quantization import PER_TOKEN_AXIS, SYMMETRIC_QUANT
 from kv_utils import iter_token_blocks, load_causal_lm, load_tokenizer, set_seed, write_json
 
 
@@ -270,6 +271,10 @@ def audit_speculative_prompt(
                 dtype=prompt_ids.dtype,
                 k_bits=full_precision_bits,
                 v_bits=full_precision_bits,
+                key_quant_axis=PER_TOKEN_AXIS,
+                key_group_size=32,
+                key_residual_length=0,
+                value_quant_scheme=SYMMETRIC_QUANT,
             )
             draft_logits = shared_token_logits(draft_step["logits"], shared_vocab_size)
             draft_cache = draft_step["cache"]
@@ -382,6 +387,10 @@ def audit_speculative_prompt(
             dtype=prompt_ids.dtype,
             k_bits=full_precision_bits,
             v_bits=full_precision_bits,
+            key_quant_axis=PER_TOKEN_AXIS,
+            key_group_size=32,
+            key_residual_length=0,
+            value_quant_scheme=SYMMETRIC_QUANT,
         )
         draft_logits = shared_token_logits(draft_commit["logits"], shared_vocab_size)
         draft_cache = draft_commit["cache"]

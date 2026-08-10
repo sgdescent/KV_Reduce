@@ -3,6 +3,37 @@
 Status: provisional results as of August 10, 2026. Powered replications,
 long-context tests, and verifier exactness audits are still running.
 
+## Copy-Paste Message
+
+The cache-quantization pivot is promising, but I would not yet call the current
+result sufficient for a main-track paper. KV-cache quantization, asymmetric K/V
+precision, and mixed-precision search already have strong prior work. Our sharper
+potential contribution is to show that the *downstream objective* matters: the
+precision policy that preserves ordinary LM quality need not be the policy that
+maximizes speculative acceptance and serving efficiency. A main-track case needs
+a statistically resolved objective-specific allocation or an allocator that
+beats ordinary-quality and uniform baselines at equal memory, ideally with packed
+kernels and end-to-end long-context gains.
+
+This should not be restricted to speculative decoding. We are now evaluating the
+same quantizer under three deployment regimes: ordinary autoregressive decoding,
+draft-only speculative quantization, and joint target/draft quantization. Ordinary
+decoding is the control objective and a useful application in its own right. The
+important distinction is that draft-only quantization remains distribution-exact
+because the BF16 target verifier corrects every proposal, whereas quantizing a
+standalone model or the target cache changes the output distribution and therefore
+requires stricter KL, NLL, top-1, task-accuracy, and exactness constraints.
+
+The strongest validated numbers so far are encouraging. Draft K4V4 saves 66.13%
+of draft-cache storage and 22.64% of combined target-plus-draft KV with a +0.10
+point macro acceptance change (95% CI: -0.04 to +0.25). Joint target K4V8 plus
+draft K8V4 reaches 54.59% combined KV savings at 1K with a -0.46 point acceptance
+change (CI: -1.78 to +0.84), but it is approximate and does not yet satisfy our
+conservative acceptance bound at 4K. The exact-target alternative keeps target
+BF16 and quantizes draft K4V4, saving 29.02% at 1K and 30.58% at 4K while retaining
+the target distribution. The campaign is still testing longer contexts, tasks,
+speculation lengths, and powered objective reversals.
+
 ## Short Update To Share
 
 We have pivoted from cross-model cache translation to objective-aware KV-cache
@@ -72,6 +103,27 @@ causal claim that being a target makes a model robust. Quantizing the target als
 changes the final model distribution, so its policy needs stricter top-1 and task
 quality constraints than draft-only quantization.
 
+The synthetic passkey audit is also complete across 4K, 8K, and 16K contexts,
+three insertion depths, and three disjoint seeds. BF16 and every tested
+quantization policy achieve 100% accuracy on 216 examples per policy. K4V4 saves
+69.96%, 70.53%, and 70.81% of standalone KV storage at 4K, 8K, and 16K,
+respectively. This rules out an obvious retrieval failure, but the task is
+saturated and cannot rank precision allocations; we therefore treat it as a
+sanity check rather than a headline quality result.
+
+The full joint target/draft grid is now complete: 25 precision combinations at
+1K and 4K, with three disjoint seeds per context. Under target KL <= 0.01,
+target top-1 >= 95%, runtime-fidelity limits, and an acceptance lower-confidence
+bound of -2 points, the 1K selector chooses target K4V8 plus draft K8V4. It saves
+54.59% of total target-plus-draft KV, changes acceptance by -0.46 points (95% CI:
+-1.78 to +0.84), and has target KL 0.00177 and 97.69% target top-1 agreement.
+This is approximate: five of 288 prompt occurrences are non-tie/unknown target
+disagreements, compared with two in the BF16 baseline. The distribution-preserving
+alternative keeps the target in BF16 and uses draft K4V4, saving 29.02% total KV
+at 1K and 30.58% at 4K with acceptance CIs of -0.90 to +1.25 and -1.13 to +1.89
+points. No target-quantized candidate passes the acceptance-confidence constraint
+at 4K, so the constrained selector also chooses the exact-target K4V4 policy.
+
 ## Is This Sufficiently Novel For A Main Track?
 
 KV-cache quantization alone is not novel. KIVI established asymmetric K/V
@@ -130,13 +182,9 @@ quantization, then measure which objective selects which precision allocation.
 ## Experiments In Flight
 
 - Powered Qwen2.5-7B/3B equal-memory K4V3 versus K3V4 test.
-- Joint target/draft quantization under strict quality and acceptance budgets.
 - C4, GSM8K, and HumanEval robustness evaluation.
 - Eight-shot HellaSwag and ARC-Challenge task accuracy across disjoint seeds.
-- Synthetic passkey retrieval at 4K, 8K, and 16K context and three insertion
-  depths, using exact token-length construction.
 - 16K and 32K PG19 long-context evaluation.
-- Draft-only versus target-only versus joint target/draft quantization.
 - Speculation-length (`gamma`) sensitivity.
 - BF16/FP32 and SDPA/eager verifier exactness audit.
 
