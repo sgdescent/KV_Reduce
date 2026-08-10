@@ -53,6 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--group_size", type=int, default=32)
     parser.add_argument("--residual_length", type=int, default=128)
     parser.add_argument("--block_tokens", type=int, default=32, choices=[16, 32, 64])
+    parser.add_argument(
+        "--split_tokens",
+        type=int,
+        default=512,
+        help="Tokens handled by each first-stage program; <=0 disables split-K reduction.",
+    )
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--iterations", type=int, default=50)
     parser.add_argument("--seed", type=int, default=1729)
@@ -132,6 +138,7 @@ def main() -> None:
                     packed_keys,
                     packed_values,
                     block_tokens=args.block_tokens,
+                    split_tokens=args.split_tokens,
                 )
 
             unpacked_output = unpacked_operation()
@@ -154,6 +161,7 @@ def main() -> None:
                 "k_bits": k_bits,
                 "v_bits": v_bits,
                 "block_tokens": args.block_tokens,
+                "split_tokens": args.split_tokens,
                 "native_cache_bytes_one_layer": native_bytes,
                 "packed_cache_bytes_one_layer": persistent_bytes,
                 "cache_saved_fraction": 1.0 - persistent_bytes / native_bytes,
@@ -218,4 +226,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

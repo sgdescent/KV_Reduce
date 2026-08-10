@@ -28,6 +28,7 @@ cmd=(
   --group_size "${GROUP_SIZE:-32}"
   --residual_length "${RESIDUAL_LENGTH:-128}"
   --block_tokens "${BLOCK_TOKENS:-32}"
+  --split_tokens "${SPLIT_TOKENS:-512}"
   --warmup "${WARMUP:-10}"
   --iterations "${ITERATIONS:-50}"
   --out_dir "${OUT_DIR:-outputs/fused_packed_kv_attention/qwen25_15b}"
@@ -45,4 +46,3 @@ printf 'Running command:'
 printf ' %q' "${cmd[@]}"
 printf '\n'
 "${cmd[@]}"
-
