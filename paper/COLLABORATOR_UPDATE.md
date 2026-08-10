@@ -178,6 +178,16 @@ respectively. This rules out an obvious retrieval failure, but the task is
 saturated and cannot rank precision allocations; we therefore treat it as a
 sanity check rather than a headline quality result.
 
+The three-shard Qwen2.5-1.5B HellaSwag evaluation is now complete with no
+underfilled runs: each policy has 768 paired examples. BF16 normalized accuracy
+is 63.67%, while K4V4 reaches 63.15%, a paired change of -0.52 points (95% CI:
+-1.43 to +0.39). Equal-memory K8V4-minus-K4V8 is -0.26 points (CI: -1.30 to
++0.78), and K4V3-minus-K3V4 is -0.52 points (CI: -1.82 to +0.78). These
+intervals do not resolve a policy ranking; the result supports ordinary-task
+quality preservation at substantial cache compression rather than an
+objective-specific allocation claim. ARC-Challenge and cross-family task runs
+remain in flight.
+
 The full joint target/draft grid is now complete: 25 precision combinations at
 1K and 4K, with three disjoint seeds per context. Under target KL <= 0.01,
 target top-1 >= 95%, runtime-fidelity limits, and an acceptance lower-confidence
@@ -261,7 +271,8 @@ objective-specific differences instead of assuming they exist.
 
 - Diagnostic WikiText Qwen2.5-7B/3B replication, followed by a corrected,
   disjoint-shard FineWeb-Edu K4V3-versus-K3V4 test.
-- Eight-shot HellaSwag and ARC-Challenge task accuracy across disjoint seeds.
+- Eight-shot ARC-Challenge task accuracy across three disjoint seeds; the
+  corresponding HellaSwag run is complete.
 - Dependency-gated cross-family HellaSwag and ARC-Challenge validation on
   Llama-3.2-3B, OLMo-2-1B, and SmolLM2-360M using two disjoint 128-example
   shards per task and the same matched-memory K/V policies.
