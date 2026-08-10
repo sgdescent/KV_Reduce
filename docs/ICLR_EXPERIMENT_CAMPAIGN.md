@@ -64,6 +64,10 @@ gated 9B checkpoint.
     models as ordinary autoregressive LMs. This provides the target-fidelity
     constraints needed for role-aware target/draft precision allocation rather
     than inferring target behavior from the smaller draft checkpoints.
+14. `matched_kivi_gamma`: repeat the current per-channel-key/affine-value grid
+    at speculative proposal lengths `2/4/8`, with three seeds each. This tests
+    whether a precision policy remains stable as quantization errors affect a
+    longer unverified draft trajectory.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -135,6 +139,14 @@ be dependency-gated behind the cross-family speculative campaign:
 ```bash
 AFTER_JOB=<dependency-job> CAMPAIGN_CONCURRENCY=1 \
   bash scripts/submit_kivi_cross_family_target_quality.sh
+```
+
+The matched-geometry proposal-length ablation is also serialized and can be
+placed after the cross-family role analysis:
+
+```bash
+AFTER_JOB=<dependency-job> CAMPAIGN_CONCURRENCY=1 \
+  bash scripts/submit_kivi_gamma_sweep.sh
 ```
 
 The missing quantizer-factorial cell is launched with:
