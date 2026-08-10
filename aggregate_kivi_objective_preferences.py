@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 from spec_kv_statistics import bootstrap_acceptance_contrast
-from aggregate_value_precision_sweep import parse_seed_filter
+from aggregate_value_precision_sweep import parse_seed_filter, underfilled_run_record
 
 
 def read_json(path: Path) -> Dict[str, Any]:
@@ -67,9 +67,14 @@ def exact_enough(row: Dict[str, str], tie_margin: float) -> bool:
 
 def load_spec_rows(
     root: Path, seeds: set[int] | None = None
-) -> Tuple[Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]], Dict[Tuple[int, str], List[float]]]:
+) -> Tuple[
+    Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]],
+    Dict[Tuple[int, str], List[float]],
+    List[Dict[str, Any]],
+]:
     grouped: Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]] = {}
     memory: Dict[Tuple[int, str], List[float]] = defaultdict(list)
+    underfilled_runs: List[Dict[str, Any]] = []
     for seed_dir in sorted(root.glob("ctx_*/seed_*")):
         seed_hint = int(seed_dir.name.removeprefix("seed_"))
         if seeds is not None and seed_hint not in seeds:
@@ -85,17 +90,32 @@ def load_spec_rows(
         seed = int(summary["config"]["seed"])
         if seeds is not None and seed not in seeds:
             continue
-        for row in read_csv(rows_path):
+        rows = read_csv(rows_path)
+        underfilled = underfilled_run_record(
+            run_dir=seed_dir,
+            requested=int(summary["config"]["num_prompts"]),
+            actual=len({row["prompt_idx"] for row in rows}),
+            unit="prompts",
+            context=context,
+            seed=seed,
+        )
+        if underfilled is not None:
+            underfilled_runs.append(underfilled)
+        for row in rows:
             grouped.setdefault((context, seed, row["prompt_idx"]), {})[row["config"]] = row
         for config, metrics in summary["summaries"].items():
             memory[(context, config)].append(float(metrics["total_cache_saved_fraction"]))
-    return grouped, memory
+    return grouped, memory, underfilled_runs
 
 
 def load_quality_rows(
     root: Path, seeds: set[int] | None = None
-) -> Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]]:
+) -> Tuple[
+    Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]],
+    List[Dict[str, Any]],
+]:
     grouped: Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]] = {}
+    underfilled_runs: List[Dict[str, Any]] = []
     for seed_dir in sorted(root.glob("ctx_*/seed_*")):
         seed_hint = int(seed_dir.name.removeprefix("seed_"))
         if seeds is not None and seed_hint not in seeds:
@@ -111,9 +131,20 @@ def load_quality_rows(
         seed = int(summary["config"]["seed"])
         if seeds is not None and seed not in seeds:
             continue
-        for row in read_csv(rows_path):
+        rows = read_csv(rows_path)
+        underfilled = underfilled_run_record(
+            run_dir=seed_dir,
+            requested=int(summary["config"]["num_sequences"]),
+            actual=len({row["sequence_idx"] for row in rows}),
+            unit="sequences",
+            context=context,
+            seed=seed,
+        )
+        if underfilled is not None:
+            underfilled_runs.append(underfilled)
+        for row in rows:
             grouped.setdefault((context, seed, row["sequence_idx"]), {})[row["candidate"]] = row
-    return grouped
+    return grouped, underfilled_runs
 
 
 def parse_pairs(values: str) -> List[Tuple[str, str]]:
@@ -268,8 +299,11 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     selected_seeds = parse_seed_filter(args.seeds)
-    spec_rows, memory = load_spec_rows(args.spec_dir, selected_seeds)
-    quality_rows = load_quality_rows(args.quality_dir, selected_seeds)
+    spec_rows, memory, spec_underfilled = load_spec_rows(args.spec_dir, selected_seeds)
+    quality_rows, quality_underfilled = load_quality_rows(
+        args.quality_dir, selected_seeds
+    )
+    underfilled_runs = spec_underfilled + quality_underfilled
     rows = aggregate_preferences(
         spec_rows=spec_rows,
         quality_rows=quality_rows,
@@ -297,6 +331,8 @@ def main() -> None:
         ),
         "max_memory_gap": args.max_memory_gap,
         "selected_seeds": sorted(selected_seeds) if selected_seeds is not None else None,
+        "all_runs_filled": not underfilled_runs,
+        "underfilled_runs": underfilled_runs,
         "comparisons": rows,
     }
     (args.out_dir / "preference_summary.json").write_text(
