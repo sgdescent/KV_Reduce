@@ -96,6 +96,10 @@ gated 9B checkpoint.
     same BF16, K8V4, K4V8, K4V4, K3V4, and K4V3 policies. The three model arrays
     are dependency-chained and serialized to one GPU; any notable effect must be
     powered separately before becoming a headline claim.
+20. `strong_allocator_baselines`: compare objective-aware allocations against
+    KVTuner-style attention-output sensitivity, RateQuant-style calibrated
+    rate--distortion allocation, and Block-GTQ-style RoPE-aware key allocation at
+    exactly matched packed-cache budgets.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in

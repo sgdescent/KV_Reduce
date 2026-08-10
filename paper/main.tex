@@ -629,6 +629,17 @@ quantization sensitivity~\citep{hariri2025more}. Our work does not claim that K/
 asymmetry is new; it tests and optimizes that asymmetry under speculative
 acceptance, where a single changed proposal can truncate an entire draft block.
 
+Layer-wise mixed precision is also established prior art. KVTuner searches
+hardware-friendly K/V precision pairs using attention-output sensitivity
+\citep{li2025kvtuner}, while RateQuant calibrates quantizer-specific
+rate--distortion curves before allocating bits~\citep{zuo2026ratequant}.
+Block-GTQ further allocates key precision at the RoPE frequency-block level
+\citep{liang2026blockgtq}. Consequently, neither mixed precision nor a generic
+sensitivity allocator is our novelty. Our controlled variable is the downstream
+objective: we fit and cross-evaluate allocations under ordinary quality and
+speculative acceptance using the same model, prompts, quantizer, and memory
+budget.
+
 QuantSpec combines self-speculative decoding with a hierarchical 4-bit KV
 cache~\citep{tiwari2025quantspec}. QSpec combines complementary model
 quantization schemes and reuses model state between drafting and verification
@@ -652,9 +663,9 @@ shapes; higher-precision and production-kernel audits remain important.
 The additive allocation in Equation~\ref{eq:allocation} ignores interactions
 between compressed components. We plan to fit a small risk predictor over joint
 allocations and compare it against uniform precision, KIVI-style quantization,
-KV-AdaQuant, QuantSpec, and random allocations at matched memory. A packed-cache
-kernel in vLLM or SGLang is required before making end-to-end throughput and
-serving-capacity claims.
+KV-AdaQuant, KVTuner, RateQuant, Block-GTQ, QuantSpec, and random allocations at
+matched memory. A packed-cache kernel in vLLM or SGLang is required before making
+end-to-end throughput and serving-capacity claims.
 
 \section{Conclusion}
 
