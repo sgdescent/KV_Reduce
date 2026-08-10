@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import random
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Mapping, Sequence, Tuple
+
+
+PromptRow = Dict[str, str]
+PromptEffect = Tuple[PromptRow, PromptRow]
 
 
 def bootstrap_mean_ci(
@@ -77,3 +81,23 @@ def bootstrap_acceptance_contrast(
         "ci_low": estimates[int(0.025 * samples)],
         "ci_high": estimates[min(samples - 1, int(0.975 * samples))],
     }
+
+
+def align_config_rows_by_prompt(
+    effects: Mapping[str, Sequence[PromptEffect]],
+    config_a: str,
+    config_b: str,
+) -> List[Tuple[PromptRow, PromptRow]]:
+    """Align two quantized configurations using their shared baseline prompt IDs."""
+    rows_a = {
+        baseline["prompt_idx"]: quantized
+        for quantized, baseline in effects.get(config_a, ())
+    }
+    rows_b = {
+        baseline["prompt_idx"]: quantized
+        for quantized, baseline in effects.get(config_b, ())
+    }
+    return [
+        (rows_a[prompt], rows_b[prompt])
+        for prompt in sorted(rows_a.keys() & rows_b.keys())
+    ]

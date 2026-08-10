@@ -17,7 +17,10 @@ from aggregate_value_precision_sweep import (
     read_json,
     write_csv,
 )
-from spec_kv_statistics import bootstrap_acceptance_contrast
+from spec_kv_statistics import (
+    align_config_rows_by_prompt,
+    bootstrap_acceptance_contrast,
+)
 
 
 EXPECTED_EVALUATOR_VERSION = "cached_dynamic_v4"
@@ -26,17 +29,6 @@ MATCHED_BIT_PAIRS = (
     ("k4v3", "k3v4", "K4V3 - K3V4"),
     ("k4v2", "k2v4", "K4V2 - K2V4"),
 )
-
-
-def pair_config_effects(
-    effects: Dict[str, List[Tuple[Dict[str, str], Dict[str, str]]]],
-    config_a: str,
-    config_b: str,
-) -> List[Tuple[Dict[str, str], Dict[str, str]]]:
-    """Align two quantized configurations by their shared baseline prompt."""
-    rows_a = {baseline["prompt_idx"]: quantized for quantized, baseline in effects.get(config_a, [])}
-    rows_b = {baseline["prompt_idx"]: quantized for quantized, baseline in effects.get(config_b, [])}
-    return [(rows_a[prompt], rows_b[prompt]) for prompt in sorted(rows_a.keys() & rows_b.keys())]
 
 
 def make_plot(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
@@ -183,7 +175,7 @@ def main() -> None:
             prompt_effects[(draft_steps, name)].extend(values)
         for config_a, config_b, _ in MATCHED_BIT_PAIRS:
             paired_effects[(draft_steps, config_a, config_b)].extend(
-                pair_config_effects(effects, config_a, config_b)
+                align_config_rows_by_prompt(effects, config_a, config_b)
             )
         for name in names:
             metrics = summary["summaries"][name]

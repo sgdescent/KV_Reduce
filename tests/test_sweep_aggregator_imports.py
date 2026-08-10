@@ -1,10 +1,8 @@
 import unittest
 
-from aggregate_value_precision_gamma_sweep import (
-    bootstrap_acceptance_contrast,
-    pair_config_effects,
-)
+from aggregate_value_precision_gamma_sweep import bootstrap_acceptance_contrast
 from aggregate_value_precision_quality_sweep import bootstrap_mean_ci
+from spec_kv_statistics import align_config_rows_by_prompt
 
 
 class SweepAggregatorImportsTest(unittest.TestCase):
@@ -23,7 +21,7 @@ class SweepAggregatorImportsTest(unittest.TestCase):
         )
         self.assertAlmostEqual(result["mean"], 0.3)
 
-    def test_gamma_pairing_aligns_configs_by_prompt(self) -> None:
+    def test_config_pairing_aligns_rows_by_prompt(self) -> None:
         effects = {
             "k4v2": [
                 (
@@ -51,7 +49,7 @@ class SweepAggregatorImportsTest(unittest.TestCase):
             ],
         }
 
-        paired = pair_config_effects(effects, "k4v2", "k2v4")
+        paired = align_config_rows_by_prompt(effects, "k4v2", "k2v4")
 
         self.assertEqual(
             [(left["prompt_idx"], right["prompt_idx"]) for left, right in paired],
