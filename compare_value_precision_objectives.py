@@ -110,6 +110,64 @@ def select_max_savings(
     }
 
 
+def select_objective_choices(
+    rows: Iterable[Dict[str, Any]],
+    *,
+    minimum_savings: float,
+) -> Dict[str, Any] | None:
+    candidates = [
+        row for row in rows if float(row["total_cache_saved_fraction"]) >= minimum_savings
+    ]
+    if not candidates:
+        return None
+    spec_choice = max(candidates, key=lambda row: float(row["acceptance_delta_mean"]))
+    quality_choice = min(candidates, key=lambda row: float(row["quality_kl_mean"]))
+    best_acceptance = float(spec_choice["acceptance_delta_mean"])
+    best_quality_kl = float(quality_choice["quality_kl_mean"])
+    return {
+        "minimum_total_saved_fraction": minimum_savings,
+        "num_feasible_configs": len(candidates),
+        "spec_choice": spec_choice["config"],
+        "quality_choice": quality_choice["config"],
+        "objective_disagreement": spec_choice["config"] != quality_choice["config"],
+        "spec_choice_total_saved_fraction": float(spec_choice["total_cache_saved_fraction"]),
+        "quality_choice_total_saved_fraction": float(quality_choice["total_cache_saved_fraction"]),
+        "spec_choice_acceptance_delta": best_acceptance,
+        "quality_choice_acceptance_delta": float(quality_choice["acceptance_delta_mean"]),
+        "acceptance_regret_of_quality_choice": best_acceptance
+        - float(quality_choice["acceptance_delta_mean"]),
+        "spec_choice_quality_kl": float(spec_choice["quality_kl_mean"]),
+        "quality_choice_quality_kl": best_quality_kl,
+        "quality_kl_regret_of_spec_choice": float(spec_choice["quality_kl_mean"])
+        - best_quality_kl,
+    }
+
+
+def pareto_configs(
+    rows: Iterable[Dict[str, Any]],
+    *,
+    harm_key: str,
+) -> List[str]:
+    values = list(rows)
+    frontier = []
+    for candidate in values:
+        candidate_savings = float(candidate["total_cache_saved_fraction"])
+        candidate_harm = float(candidate[harm_key])
+        dominated = any(
+            float(other["total_cache_saved_fraction"]) >= candidate_savings
+            and float(other[harm_key]) <= candidate_harm
+            and (
+                float(other["total_cache_saved_fraction"]) > candidate_savings
+                or float(other[harm_key]) < candidate_harm
+            )
+            for other in values
+            if other is not candidate
+        )
+        if not dominated:
+            frontier.append(str(candidate["config"]))
+    return sorted(frontier)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec_summary", required=True, type=Path)
@@ -117,6 +175,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out_dir", required=True, type=Path)
     parser.add_argument("--acceptance_drop_budget", type=float, default=0.02)
     parser.add_argument("--quality_kl_budget", type=float, default=0.01)
+    parser.add_argument(
+        "--savings_targets",
+        default="0.10,0.15,0.20,0.25,0.30",
+        help="Comma-separated minimum total-cache savings fractions for objective-choice comparisons.",
+    )
     return parser
 
 
@@ -160,14 +223,43 @@ def main() -> None:
     for row in joined:
         by_context[int(row["context"])].append(row)
     context_summaries = []
+    objective_choice_rows = []
+    pareto_rows = []
+    savings_targets = [
+        float(value.strip()) for value in args.savings_targets.split(",") if value.strip()
+    ]
     for context, rows in sorted(by_context.items()):
         acceptance_harm = [-float(row["acceptance_delta_mean"]) for row in rows]
         quality_harm = [float(row["quality_kl_mean"]) for row in rows]
+        context_choices = []
+        for target in savings_targets:
+            choice = select_objective_choices(rows, minimum_savings=target)
+            if choice is not None:
+                choice = {"context": context, **choice}
+                context_choices.append(choice)
+                objective_choice_rows.append(choice)
+        spec_frontier = pareto_configs(
+            [{**row, "acceptance_harm": -float(row["acceptance_delta_mean"])} for row in rows],
+            harm_key="acceptance_harm",
+        )
+        quality_frontier = pareto_configs(rows, harm_key="quality_kl_mean")
+        for config in sorted(set(spec_frontier) | set(quality_frontier)):
+            pareto_rows.append(
+                {
+                    "context": context,
+                    "config": config,
+                    "on_spec_acceptance_frontier": config in spec_frontier,
+                    "on_quality_kl_frontier": config in quality_frontier,
+                }
+            )
         context_summaries.append(
             {
                 "context": context,
                 "num_configs": len(rows),
                 "spearman_acceptance_harm_vs_quality_kl": spearman(acceptance_harm, quality_harm),
+                "spec_acceptance_pareto_configs": spec_frontier,
+                "quality_kl_pareto_configs": quality_frontier,
+                "objective_choices": context_choices,
                 **select_max_savings(
                     rows,
                     acceptance_drop_budget=args.acceptance_drop_budget,
@@ -177,10 +269,16 @@ def main() -> None:
         )
 
     write_csv(args.out_dir / "matched_objectives.csv", joined)
+    write_csv(args.out_dir / "objective_choices.csv", objective_choice_rows)
+    write_csv(args.out_dir / "objective_pareto.csv", pareto_rows)
     payload = {
         "acceptance_drop_budget": args.acceptance_drop_budget,
         "quality_kl_budget": args.quality_kl_budget,
         "num_matched_rows": len(joined),
+        "savings_targets": savings_targets,
+        "num_objective_choice_disagreements": sum(
+            bool(row["objective_disagreement"]) for row in objective_choice_rows
+        ),
         "contexts": context_summaries,
     }
     (args.out_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

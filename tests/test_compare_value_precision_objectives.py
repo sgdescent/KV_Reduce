@@ -1,7 +1,13 @@
 import math
 import unittest
 
-from compare_value_precision_objectives import rankdata, select_max_savings, spearman
+from compare_value_precision_objectives import (
+    pareto_configs,
+    rankdata,
+    select_max_savings,
+    select_objective_choices,
+    spearman,
+)
 
 
 class CompareValuePrecisionObjectivesTest(unittest.TestCase):
@@ -37,6 +43,39 @@ class CompareValuePrecisionObjectivesTest(unittest.TestCase):
         selected = select_max_savings(rows, acceptance_drop_budget=0.02, quality_kl_budget=0.01)
         self.assertEqual(selected["best_mean_feasible"]["config"], "k8v3")
         self.assertEqual(selected["best_conservative_feasible"]["config"], "k8v4")
+
+    def test_objective_choices_report_cross_regret(self):
+        rows = [
+            {
+                "config": "k8v4",
+                "total_cache_saved_fraction": 0.27,
+                "acceptance_delta_mean": -0.005,
+                "quality_kl_mean": 0.02,
+            },
+            {
+                "config": "k4v8",
+                "total_cache_saved_fraction": 0.27,
+                "acceptance_delta_mean": -0.02,
+                "quality_kl_mean": 0.005,
+            },
+        ]
+
+        choice = select_objective_choices(rows, minimum_savings=0.25)
+
+        self.assertEqual(choice["spec_choice"], "k8v4")
+        self.assertEqual(choice["quality_choice"], "k4v8")
+        self.assertTrue(choice["objective_disagreement"])
+        self.assertAlmostEqual(choice["acceptance_regret_of_quality_choice"], 0.015)
+        self.assertAlmostEqual(choice["quality_kl_regret_of_spec_choice"], 0.015)
+
+    def test_pareto_front_removes_dominated_configs(self):
+        rows = [
+            {"config": "a", "total_cache_saved_fraction": 0.2, "harm": 0.01},
+            {"config": "b", "total_cache_saved_fraction": 0.3, "harm": 0.02},
+            {"config": "dominated", "total_cache_saved_fraction": 0.1, "harm": 0.03},
+        ]
+
+        self.assertEqual(pareto_configs(rows, harm_key="harm"), ["a", "b"])
 
 
 if __name__ == "__main__":
