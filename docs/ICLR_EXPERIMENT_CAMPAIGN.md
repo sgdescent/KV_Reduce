@@ -124,10 +124,13 @@ The missing quantizer-factorial cell is launched with:
 AFTER_JOB=<dependency-job> bash scripts/submit_per_token_affine_value_grid.sh
 ```
 
-Complete the ordinary-quality side of the factorial with:
+Complete the ordinary-quality side of the factorial with production-style and
+strict zero-residual variants:
 
 ```bash
 AFTER_JOB=<dependency-job> bash scripts/submit_per_channel_symmetric_value_quality.sh
+AFTER_JOB=<dependency-job> RESIDUAL_LENGTH=0 \
+  bash scripts/submit_per_channel_symmetric_value_quality.sh
 ```
 
 The group-size/residual-window robustness sweep is serialized cell by cell:
