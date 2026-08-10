@@ -58,3 +58,23 @@ bash scripts/submit_objective_kv_campaign.sh
 The campaign submits two independent profiling jobs, then dependency-gated
 allocation, comparison, and cross-evaluation jobs. By default it excludes known
 unreliable Catalyst nodes and uses at most two GPUs concurrently.
+
+## Run the robustness matrix
+
+After one profiling campaign finishes, reuse its sensitivity maps across equal
+memory budgets, held-out seeds, and context lengths:
+
+```bash
+SOURCE_ROOT=outputs/objective_kv/qwen25_objective_1k_v1 \
+MATRIX_ROOT=outputs/objective_kv/qwen25_matrix_v1 \
+BUDGETS=6,8,10,12 \
+CONTEXTS=512,1024,4096 \
+SEEDS=0,1,2 \
+NUM_EVAL=32 \
+MAX_CONCURRENT=2 \
+bash scripts/submit_objective_kv_matrix.sh
+```
+
+This creates 72 GPU evaluation tasks but allows only two to run concurrently.
+The final aggregation reports seed confidence intervals and paired objective
+advantages at each memory budget and context length.
