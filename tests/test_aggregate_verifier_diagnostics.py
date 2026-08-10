@@ -1,5 +1,8 @@
 import json
+import tempfile
+import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from aggregate_verifier_diagnostics import COUNT_FIELDS, MAX_FIELDS, main
 
@@ -23,50 +26,50 @@ def diagnostic(dtype: str, speculative_mismatches: int, *, num_prompts: int = 1)
     return payload
 
 
-def test_aggregate_groups_numerical_controls(tmp_path: Path, monkeypatch) -> None:
-    for dtype, mismatches in (("bf16", 1), ("float32", 0)):
-        (tmp_path / f"{dtype}.json").write_text(
-            json.dumps(diagnostic(dtype, mismatches)), encoding="utf-8"
-        )
-    out_dir = tmp_path / "aggregate"
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "aggregate_verifier_diagnostics.py",
-            "--inputs",
-            str(tmp_path / "*.json"),
-            "--out_dir",
-            str(out_dir),
-        ],
-    )
+class VerifierDiagnosticAggregationTest(unittest.TestCase):
+    def run_aggregate(self, root: Path) -> dict:
+        out_dir = root / "aggregate"
+        with patch(
+            "sys.argv",
+            [
+                "aggregate_verifier_diagnostics.py",
+                "--inputs",
+                str(root / "*.json"),
+                "--out_dir",
+                str(out_dir),
+            ],
+        ):
+            main()
+        return json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
 
-    main()
+    def test_groups_numerical_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for dtype, mismatches in (("bf16", 1), ("float32", 0)):
+                (root / f"{dtype}.json").write_text(
+                    json.dumps(diagnostic(dtype, mismatches)), encoding="utf-8"
+                )
 
-    result = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
-    grouped = {row["dtype"]: row for row in result["grouped"]}
-    assert grouped["bf16"]["prompts_with_speculative_mismatch"] == 1
-    assert grouped["float32"]["prompts_with_speculative_mismatch"] == 0
+            result = self.run_aggregate(root)
+
+            grouped = {row["dtype"]: row for row in result["grouped"]}
+            self.assertEqual(grouped["bf16"]["prompts_with_speculative_mismatch"], 1)
+            self.assertEqual(grouped["float32"]["prompts_with_speculative_mismatch"], 0)
+
+    def test_counts_prompts_within_batched_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "bf16.json").write_text(
+                json.dumps(diagnostic("bf16", 3, num_prompts=32)), encoding="utf-8"
+            )
+
+            result = self.run_aggregate(root)
+
+            grouped = result["grouped"][0]
+            self.assertEqual(grouped["num_runs"], 1)
+            self.assertEqual(grouped["num_prompts"], 32)
+            self.assertEqual(grouped["prompts_with_speculative_mismatch"], 3)
 
 
-def test_aggregate_counts_prompts_within_batched_runs(tmp_path: Path, monkeypatch) -> None:
-    payload = diagnostic("bf16", 3, num_prompts=32)
-    (tmp_path / "bf16.json").write_text(json.dumps(payload), encoding="utf-8")
-    out_dir = tmp_path / "aggregate"
-    monkeypatch.setattr(
-        "sys.argv",
-        [
-            "aggregate_verifier_diagnostics.py",
-            "--inputs",
-            str(tmp_path / "*.json"),
-            "--out_dir",
-            str(out_dir),
-        ],
-    )
-
-    main()
-
-    result = json.loads((out_dir / "summary.json").read_text(encoding="utf-8"))
-    grouped = result["grouped"][0]
-    assert grouped["num_runs"] == 1
-    assert grouped["num_prompts"] == 32
-    assert grouped["prompts_with_speculative_mismatch"] == 3
+if __name__ == "__main__":
+    unittest.main()
