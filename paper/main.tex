@@ -487,6 +487,17 @@ precision under this outlier-aware key quantizer. Objective-specific choices can
 differ at coarse minimum-savings thresholds, but their measured regrets are small
 and do not establish a distinct speculative allocation rule.
 
+A powered Qwen2.5-7B/3B FineWeb-Edu replication confirms this result on three
+disjoint streaming shards. Across 1,526 valid paired speculative prompts,
+K4V3-minus-K3V4 acceptance is $-0.65$ points (95\% CI
+$[-1.16,-0.15]$). Relative to native BF16 draft caches, K3V4 changes acceptance
+by only $-0.06$ points (CI $[-0.46,+0.34]$) while saving 69.03\% of draft-cache
+bytes and 27.01\% of combined target-plus-draft KV. Across 768 teacher-forced
+sequences, K4V3-minus-K3V4 KL is $+0.00848$ (CI
+$[+0.00777,+0.00927]$), again favoring K3V4. The powered test therefore rejects
+both the exploratory objective reversal and a geometry-independent rule that
+keys inherently require more precision than values.
+
 This agreement is useful operationally. Across 48 model-pair/configuration cells,
 ordinary-quality KL and speculative-acceptance harm have Spearman correlation
 $0.849$; the macro average across the six model pairs is $0.794$ (95\% model-pair

@@ -2,15 +2,15 @@
 
 Status: provisional results as of August 10, 2026. The matched-objective grid,
 three-length speculation sweep, 16K/32K speculative long-context sweep,
-four-condition verifier audit, and corrected Qwen HellaSwag/ARC task suite are
-complete. The powered 7B/3B ordinary-quality arm is complete, while its final
-speculative shard, cross-family task checks, and controlled 4K
-quantizer-factorial cells are still running.
+four-condition verifier audit, corrected Qwen HellaSwag/ARC task suite, and
+powered Qwen2.5-7B/3B FineWeb-Edu K4V3-versus-K3V4 replication are complete.
+Cross-family task checks, all-layer objective-specific allocation, strict
+quantizer-factorial cells, and long-context replications are still running.
 
 ## Copy-Paste Message
 
-The cache-quantization pivot is promising, but I would not yet call the current
-result sufficient for a main-track paper. KV-cache quantization, asymmetric K/V
+The cache-quantization pivot is promising, but cache quantization alone is not
+yet enough novelty for a main-track paper. KV-cache quantization, asymmetric K/V
 precision, and quantized speculative decoding already have strong prior work.
 Our completed matched-objective grid also rejects the strongest version of our
 initial hypothesis: speculative acceptance harm and ordinary-LM KL are strongly
@@ -27,14 +27,23 @@ this controlled mechanism result with a geometry-aware allocator and packed
 kernels that improve long-context memory, batch capacity, or throughput over
 KIVI, uniform precision, and QuantSpec-style baselines.
 
-This should not be restricted to speculative decoding. We are now evaluating the
-same quantizer under three deployment regimes: ordinary autoregressive decoding,
-draft-only speculative quantization, and joint target/draft quantization. Ordinary
-decoding is the control objective and a useful application in its own right. The
-important distinction is that draft-only quantization remains distribution-exact
-because the BF16 target verifier corrects every proposal, whereas quantizing a
-standalone model or the target cache changes the output distribution and therefore
-requires stricter KL, NLL, top-1, task-accuracy, and exactness constraints.
+This should not be restricted to speculative decoding. The same cache quantizer
+applies to ordinary autoregressive LLMs, where it can reduce cache memory and
+increase serving capacity. We are evaluating one quantization policy under three
+deployment regimes: ordinary autoregressive decoding, draft-only speculative
+quantization, and joint target/draft quantization. The important distinction is
+correctness: draft-only quantization remains distribution-exact because the BF16
+target verifier corrects every proposal, whereas quantizing a standalone model or
+the target cache changes the output distribution and therefore requires direct
+KL, NLL, top-1, task-accuracy, and generation-quality evaluation.
+
+The current main-track opportunity is therefore broader than "quantization for
+speculative decoding." It is a controlled account of how quantizer geometry and
+downstream objective determine K/V precision, together with a geometry-aware
+allocator and, ultimately, packed kernels that translate the chosen policies into
+long-context memory-capacity or throughput gains. The speculative setting gives
+us an unusually clean systems objective---acceptance---and an exact verifier, but
+ordinary decoding is both a control and a first-class deployment target.
 
 The strongest validated numbers so far are encouraging. Draft K4V4 saves 66.13%
 of draft-cache storage and 22.64% of combined target-plus-draft KV with a +0.10
@@ -44,7 +53,16 @@ change (CI: -1.78 to +0.84), but it is approximate and does not yet satisfy our
 conservative acceptance bound at 4K. The exact-target alternative keeps target
 BF16 and quantizes draft K4V4, saving 29.02% at 1K and 30.58% at 4K while retaining
 the target distribution. The campaign is still testing longer contexts, tasks,
-speculation lengths, and powered objective reversals.
+speculation lengths, and all-layer objective-specific allocations.
+
+The new powered Qwen2.5-7B/3B FineWeb-Edu result reinforces the geometry-aware
+interpretation. Across 1,526 paired speculative prompts, K3V4 beats equal-memory
+K4V3 by 0.65 acceptance points (95% CI: 0.15 to 1.16). K3V4 itself is within
+0.06 points of native acceptance (CI: -0.46 to +0.34) while saving 69.03% of the
+draft cache and 27.01% of combined KV. Ordinary quality independently favors
+K3V4: K4V3 increases KL by 0.00848 (CI: 0.00777 to 0.00927). This rejects the
+exploratory objective reversal; under the tested KIVI-style geometry, preserving
+value precision is better for both ordinary and speculative decoding.
 
 ## Short Update To Share
 
@@ -158,19 +176,21 @@ non-overlapping shards of 512 speculative prompts and 256 ordinary-quality
 sequences per shard. Aggregators report every requested-versus-observed sample
 shortfall explicitly.
 
-All three powered FineWeb-Edu ordinary-quality shards are now complete, covering
-768 requested and observed sequences with disjoint streaming offsets. K4V3 has
-mean KL 0.01529 versus 0.00681 for K3V4. The paired K4V3-minus-K3V4 KL contrast
-is +0.00848 (95% bootstrap CI: +0.00777 to +0.00927), and K4V3 has 1.86 points
-lower top-1 agreement. Thus, the powered ordinary-quality result decisively
-favors preserving value precision. On the speculative side, two of three shards
-are complete. After excluding ten prompt occurrences with non-tie target-reference
-mismatches, K4V3-minus-K3V4 acceptance is -1.02 points across 1,014 valid paired
-prompt occurrences (95% CI: -1.64 to -0.40), also favoring K3V4. K4V3 and K3V4
-save 27.18% and 27.01% of combined target-plus-draft KV, respectively.
-Speculative acceptance remains an interim result until the final predeclared
-512-prompt shard finishes, but the available powered evidence argues against
-both the original reversal and a geometry-independent claim that keys always
+All three powered FineWeb-Edu shards are now complete. The ordinary-quality arm
+covers 768 requested and observed sequences with disjoint streaming offsets.
+K4V3 has mean KL 0.01529 versus 0.00681 for K3V4. The paired
+K4V3-minus-K3V4 KL contrast is +0.00848 (95% bootstrap CI: +0.00777 to
++0.00927), and K4V3 has 1.86 points lower top-1 agreement. Thus, ordinary
+quality decisively favors preserving value precision.
+
+The powered speculative arm covers three disjoint 512-prompt shards. In the
+direct K4V3-versus-K3V4 comparison, 1,526 valid paired prompt occurrences give
+an acceptance contrast of -0.65 points (95% CI: -1.16 to -0.15), again favoring
+K3V4. Relative to native BF16 draft caches, K3V4 changes acceptance by only
+-0.06 points (95% CI: -0.46 to +0.34), while K4V3 loses 0.71 points (95% CI:
+-1.19 to -0.24). K3V4 saves 69.03% of draft-cache bytes and 27.01% of combined
+target-plus-draft KV. The powered result therefore rejects both the original
+objective-reversal hypothesis and a geometry-independent claim that keys always
 require more precision.
 
 The broader cross-family result suggests a practical two-stage policy even
@@ -306,8 +326,8 @@ objective-specific differences instead of assuming they exist.
 
 ## Experiments In Flight
 
-- Diagnostic WikiText Qwen2.5-7B/3B replication, followed by a corrected,
-  disjoint-shard FineWeb-Edu K4V3-versus-K3V4 test.
+- The powered disjoint-shard FineWeb-Edu Qwen2.5-7B/3B
+  K4V3-versus-K3V4 test is complete.
 - Qwen HellaSwag and eight-shot ARC-Challenge are complete; dependency-gated
   cross-family task replication is now running.
 - Dependency-gated cross-family HellaSwag and ARC-Challenge validation on
@@ -316,9 +336,8 @@ objective-specific differences instead of assuming they exist.
 - Controlled 4K quantizer-geometry factorial replication.
 - All-layer FineWeb-Edu calibration of separate ordinary-quality and
   speculative-acceptance allocations, followed by equal-budget cross-objective
-  evaluation on disjoint held-out blocks. The Qwen campaign is dependency-gated
-  behind the powered 7B/3B replication; an OLMo-2 7B/1B replication is queued
-  behind the completed robustness chain.
+  evaluation on disjoint held-out blocks. The Qwen profile jobs are running;
+  OLMo-2 and Llama replications are dependency-gated behind them.
 - A dependency-chained 4/8/16-sample calibration ablation will reconstruct
   sensitivity maps from the same per-example FineWeb rows and compare both
   risk rankings and the actual selected K/V bit maps without additional GPU
