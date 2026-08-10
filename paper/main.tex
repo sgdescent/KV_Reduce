@@ -37,8 +37,12 @@ acceptance, revealing that persistent key-channel outliers---not an intrinsic ne
 for more key bits---drive the apparent asymmetry. This motivates a matched study
 of mixed-precision allocations using KIVI-style per-channel affine keys and
 per-token affine values under two downstream objectives: ordinary language-model
-quality and speculative acceptance. \todo{Insert the final multi-seed objective
-grid, cross-family result, and selected Pareto point after jobs 12639--12658.}
+quality and speculative acceptance. Across three seeds, K4V4 removes 66.3--69.9\%
+of the draft cache (29.0--30.6\% of total target-plus-draft KV) at 1K--4K while
+changing acceptance by $-0.43$ to $-0.05$ percentage points; both confidence
+intervals include zero and ordinary-quality KL remains below 0.01. However,
+equal-memory K/V pairs show no objective-preference reversal, rejecting a
+universal speculative-specific precision rule.
 The target verifier is never quantized; we separately audit finite-precision
 differences between batched verification and tokenwise BF16 decoding.
 \end{abstract}
@@ -398,7 +402,28 @@ acceptance; the sensitivity-aware solutions stay near the 100\% line.
   \label{fig:pareto}
 \end{figure}
 
-\subsection{Objective-specific profiles differ, but do not improve acceptance consistently}
+\subsection{Matched downstream objectives mostly agree}
+
+We directly evaluate the same 20 non-native K/V configurations under speculative
+acceptance and teacher-forced ordinary-LM quality. At 1K, K4V4 saves 66.3\% of
+the draft cache and 29.0\% of total target-plus-draft KV; its acceptance change
+is $-0.43$ points (95\% CI $[-1.41,0.55]$), with KL $0.00781$ (CI
+$[0.00718,0.00851]$). At 4K, residual overhead is amortized: K4V4 saves 69.9\%
+of draft KV and 30.6\% total, with acceptance change $-0.05$ points (CI
+$[-1.76,1.73]$) and KL $0.00837$ (CI $[0.00728,0.00963]$). It is the maximum
+savings configuration satisfying our conservative two-point acceptance and
+0.01-KL budgets at both contexts.
+
+The objectives are not independent. Acceptance harm and quality KL have Spearman
+rank correlation $0.964$ at 1K and $0.878$ at 4K. Across ten predeclared paired
+comparisons, including six within 0.2 percentage points of total-cache savings,
+we observe no preference reversal. In particular, matched K4V3 versus K3V4
+comparisons favor K3V4 under both objectives, indicating that values require more
+precision under this outlier-aware key quantizer. Objective-specific choices can
+differ at coarse minimum-savings thresholds, but their measured regrets are small
+and do not establish a distinct speculative allocation rule.
+
+\subsection{Objective-specific profiles do not improve acceptance consistently}
 
 Optimizing the sensitivity profile under the speculative loop is not reliably
 better than profiling ordinary language-model quality. In a powered Qwen
@@ -493,7 +518,11 @@ be interpreted independently of quantization axis, grouping, and zero-points: a
 naive quantizer can manufacture an apparent K/V asymmetry that an outlier-aware
 quantizer removes. Our final analysis therefore compares speculative acceptance
 and ordinary language-model quality using the same KIVI-style quantizer at matched
-memory. \todo{Insert final objective-specific and cross-family conclusions.}
+memory. On Qwen, uniform K4V4 provides a reproducible 29--31\% total-cache
+reduction with no statistically resolved acceptance loss and KL below 0.01, but
+matched objective rankings remain strongly correlated and show no equal-memory
+reversal. Cross-family and joint target/draft role-allocation experiments are
+required before claiming a speculative-specific policy.
 These findings motivate packed asymmetric kernels and allocation policies trained
 against the downstream decoding objective rather than reconstruction error alone.
 
