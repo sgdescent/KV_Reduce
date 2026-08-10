@@ -8,6 +8,7 @@ from pathlib import Path
 
 from acceptance_risk_statistics import paired_drop_statistics
 from aggregate_objective_kv_matrix import classify_exactness
+from benchmark_spec_kv_quantization import last_token_logits_kwargs
 from kv_cache_quantization import parse_csv_ints, parse_quant_config_specs
 from prepare_objective_kv_matrix import heuristic_component_bits
 
@@ -35,6 +36,23 @@ def write_profile(path: Path, risk_field: str, risks: dict[tuple[int, str, int],
 
 
 class ObjectiveKVPipelineTest(unittest.TestCase):
+    def test_last_token_logits_kwarg_matches_model_api(self) -> None:
+        class CurrentModel:
+            def forward(self, input_ids, logits_to_keep=None):
+                return None
+
+        class LegacyModel:
+            def forward(self, input_ids, num_logits_to_keep=None):
+                return None
+
+        class UnsupportedModel:
+            def forward(self, input_ids):
+                return None
+
+        self.assertEqual(last_token_logits_kwargs(CurrentModel()), {"logits_to_keep": 1})
+        self.assertEqual(last_token_logits_kwargs(LegacyModel()), {"num_logits_to_keep": 1})
+        self.assertEqual(last_token_logits_kwargs(UnsupportedModel()), {})
+
     def test_matched_memory_heuristics_prioritize_k_or_v(self) -> None:
         self.assertEqual(heuristic_component_bits(4, prioritize="k"), (4, 4))
         self.assertEqual(heuristic_component_bits(4, prioritize="v"), (4, 4))

@@ -13,6 +13,7 @@ are recorded explicitly. Only the draft model's cached K/V tensors are fake-quan
 import argparse
 import atexit
 import csv
+import inspect
 import json
 import math
 import os
@@ -216,10 +217,27 @@ def crop_cache_to_length(past_key_values, length: int):
     return legacy_to_cache(cropped)
 
 
+def last_token_logits_kwargs(model) -> Dict[str, int]:
+    """Request only final-token logits when the model API supports it."""
+    try:
+        parameters = inspect.signature(model.forward).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "logits_to_keep" in parameters:
+        return {"logits_to_keep": 1}
+    if "num_logits_to_keep" in parameters:
+        return {"num_logits_to_keep": 1}
+    return {}
+
+
 @torch.no_grad()
 def cached_prefill(model, input_ids: torch.Tensor, device: str) -> Dict[str, Any]:
     input_on_device = input_ids.to(device)
-    out = model(input_ids=input_on_device, use_cache=True)
+    out = model(
+        input_ids=input_on_device,
+        use_cache=True,
+        **last_token_logits_kwargs(model),
+    )
     return {
         "logits": out.logits[:, -1, :],
         "cache": out.past_key_values,
