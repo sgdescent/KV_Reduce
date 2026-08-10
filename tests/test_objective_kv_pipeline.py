@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from acceptance_risk_statistics import paired_drop_statistics
 from aggregate_objective_kv_matrix import classify_exactness
 from kv_cache_quantization import parse_csv_ints, parse_quant_config_specs
 
@@ -33,6 +34,22 @@ def write_profile(path: Path, risk_field: str, risks: dict[tuple[int, str, int],
 
 
 class ObjectiveKVPipelineTest(unittest.TestCase):
+    def test_paired_acceptance_risk_reports_upper_confidence_bound(self) -> None:
+        baseline = [
+            {"prompt_idx": 0, "accept_rate": 0.5},
+            {"prompt_idx": 1, "accept_rate": 0.8},
+        ]
+        candidate = [
+            {"prompt_idx": 0, "accept_rate": 0.4},
+            {"prompt_idx": 1, "accept_rate": 0.6},
+        ]
+        stats = paired_drop_statistics(baseline, candidate)
+
+        self.assertAlmostEqual(stats["accept_rate_drop_prompt_mean"], 0.15)
+        self.assertAlmostEqual(stats["accept_rate_drop_prompt_se"], 0.05)
+        self.assertAlmostEqual(stats["accept_rate_drop_ucb95"], 0.248)
+        self.assertAlmostEqual(stats["accept_rate_drop_ucb95_clipped"], 0.248)
+
     def test_exactness_classification_distinguishes_numerical_ties(self) -> None:
         exact = {"matches_target_greedy": "1.0", "mismatch_min_top1_margin": "nan"}
         tie = {"matches_target_greedy": "0.0", "mismatch_min_top1_margin": "0.0005"}

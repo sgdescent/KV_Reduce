@@ -21,6 +21,7 @@ EXCLUDE_NODES="${EXCLUDE_NODES:-catalyst-0-9,catalyst-0-15}"
 WANDB_PROJECT="${WANDB_PROJECT:-kv-reduce}"
 ENABLE_WANDB="${ENABLE_WANDB:-1}"
 START_DEPENDENCY="${START_DEPENDENCY:-}"
+ACCEPTANCE_RISK_FIELD="${ACCEPTANCE_RISK_FIELD:-accept_rate_drop}"
 
 QUALITY_PROFILE="$ROOT/quality_profile"
 ACCEPTANCE_PROFILE="$ROOT/acceptance_profile"
@@ -44,7 +45,7 @@ quality_job=$(submit "${start_dependency_args[@]}" --export=ALL,MODEL="$SMALL_MO
 acceptance_job=$(submit "${start_dependency_args[@]}" --export=ALL,BIG_MODEL="$BIG_MODEL",SMALL_MODEL="$SMALL_MODEL",PROMPT_LEN="$PROMPT_LEN",NUM_PROMPTS="$NUM_PROFILE",WARMUP_PROMPTS=1,LAYERS="$LAYERS",BITS="$EXPORT_BITS",OUT_DIR="$ACCEPTANCE_PROFILE",ENABLE_WANDB="$ENABLE_WANDB",WANDB_PROJECT="$WANDB_PROJECT",WANDB_GROUP=objective-profile,WANDB_RUN_NAME="${TAG}_acceptance_profile" scripts/profile_spec_kv_sensitivity.slurm)
 
 quality_alloc_job=$(submit --dependency="afterok:$quality_job" --export=ALL,PROFILE_CSV="$QUALITY_PROFILE/profile_summary.csv",NUM_LAYERS="$NUM_LAYERS",RISK_FIELD=quality_risk,TARGET_PROFILED_MEAN_BITS="$TARGET_PROFILED_MEAN_BITS",NAME=quality_optimized,OUT_DIR="$QUALITY_ALLOCATION" scripts/search_kv_bit_allocation.slurm)
-acceptance_alloc_job=$(submit --dependency="afterok:$acceptance_job" --export=ALL,PROFILE_CSV="$ACCEPTANCE_PROFILE/profile_summary.csv",NUM_LAYERS="$NUM_LAYERS",RISK_FIELD=accept_rate_drop,TARGET_PROFILED_MEAN_BITS="$TARGET_PROFILED_MEAN_BITS",NAME=acceptance_optimized,OUT_DIR="$ACCEPTANCE_ALLOCATION" scripts/search_kv_bit_allocation.slurm)
+acceptance_alloc_job=$(submit --dependency="afterok:$acceptance_job" --export=ALL,PROFILE_CSV="$ACCEPTANCE_PROFILE/profile_summary.csv",NUM_LAYERS="$NUM_LAYERS",RISK_FIELD="$ACCEPTANCE_RISK_FIELD",TARGET_PROFILED_MEAN_BITS="$TARGET_PROFILED_MEAN_BITS",NAME=acceptance_optimized,OUT_DIR="$ACCEPTANCE_ALLOCATION" scripts/search_kv_bit_allocation.slurm)
 
 both_allocations="afterok:$quality_alloc_job:$acceptance_alloc_job"
 comparison_job=$(submit --dependency="$both_allocations" --export=ALL,QUALITY_PROFILE_CSV="$QUALITY_PROFILE/profile_summary.csv",ACCEPTANCE_PROFILE_CSV="$ACCEPTANCE_PROFILE/profile_summary.csv",QUALITY_ALLOCATION="$QUALITY_ALLOCATION/allocation.json",ACCEPTANCE_ALLOCATION="$ACCEPTANCE_ALLOCATION/allocation.json",OUT_DIR="$COMPARISON" scripts/compare_kv_objectives.slurm)

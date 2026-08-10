@@ -25,4 +25,6 @@ python3 -u prepare_objective_kv_matrix.py \
   --contexts "${CONTEXTS:-512,1024,4096}" \
   --seeds "${SEEDS:-0,1,2}" \
   --num_eval "${NUM_EVAL:-32}" \
+  --quality_risk_field "${QUALITY_RISK_FIELD:-quality_risk}" \
+  --acceptance_risk_field "${ACCEPTANCE_RISK_FIELD:-accept_rate_drop}" \
   --out_dir "${OUT_DIR:?Set OUT_DIR}"

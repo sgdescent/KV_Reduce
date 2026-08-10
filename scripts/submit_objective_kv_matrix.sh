@@ -14,6 +14,10 @@ MAX_CONCURRENT="${MAX_CONCURRENT:-2}"
 ENABLE_WANDB="${ENABLE_WANDB:-1}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-catalyst-0-9,catalyst-0-15}"
 SOURCE_DEPENDENCY="${SOURCE_DEPENDENCY:-}"
+QUALITY_PROFILE_CSV="${QUALITY_PROFILE_CSV:-$SOURCE_ROOT/quality_profile/profile_summary.csv}"
+ACCEPTANCE_PROFILE_CSV="${ACCEPTANCE_PROFILE_CSV:-$SOURCE_ROOT/acceptance_profile/profile_summary.csv}"
+QUALITY_RISK_FIELD="${QUALITY_RISK_FIELD:-quality_risk}"
+ACCEPTANCE_RISK_FIELD="${ACCEPTANCE_RISK_FIELD:-accept_rate_drop}"
 
 count_items() {
   local normalized="${1//;/,}"
@@ -26,7 +30,7 @@ if [[ -n "$SOURCE_DEPENDENCY" ]]; then
   dependency_args+=(--dependency="afterok:$SOURCE_DEPENDENCY")
 fi
 prep=$(sbatch --parsable --exclude="$EXCLUDE_NODES" "${dependency_args[@]}" \
-  --export=ALL,QUALITY_PROFILE_CSV="$SOURCE_ROOT/quality_profile/profile_summary.csv",ACCEPTANCE_PROFILE_CSV="$SOURCE_ROOT/acceptance_profile/profile_summary.csv",NUM_LAYERS="$NUM_LAYERS",BUDGETS="${BUDGETS//,/;}",CONTEXTS="${CONTEXTS//,/;}",SEEDS="${SEEDS//,/;}",NUM_EVAL="$NUM_EVAL",OUT_DIR="$MATRIX_ROOT" \
+  --export=ALL,QUALITY_PROFILE_CSV="$QUALITY_PROFILE_CSV",ACCEPTANCE_PROFILE_CSV="$ACCEPTANCE_PROFILE_CSV",QUALITY_RISK_FIELD="$QUALITY_RISK_FIELD",ACCEPTANCE_RISK_FIELD="$ACCEPTANCE_RISK_FIELD",NUM_LAYERS="$NUM_LAYERS",BUDGETS="${BUDGETS//,/;}",CONTEXTS="${CONTEXTS//,/;}",SEEDS="${SEEDS//,/;}",NUM_EVAL="$NUM_EVAL",OUT_DIR="$MATRIX_ROOT" \
   scripts/prepare_objective_kv_matrix.slurm)
 array=$(sbatch --parsable --exclude="$EXCLUDE_NODES" --dependency="afterok:$prep" \
   --array="0-$((num_tasks - 1))%$MAX_CONCURRENT" \

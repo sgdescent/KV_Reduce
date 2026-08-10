@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import torch
 
+from acceptance_risk_statistics import paired_drop_statistics, zero_drop_statistics
 from benchmark_spec_kv_quantization import (
     estimate_total_kv_memory,
     generate_target_reference_records,
@@ -298,6 +299,7 @@ def main() -> None:
             "bits": FULL_PRECISION_BITS,
             "accept_rate": baseline_summary.get("overall_accept_rate", 0.0),
             "accept_rate_drop": 0.0,
+            **zero_drop_statistics(),
             "round_js": baseline_summary.get("round_js", 0.0),
             "round_top1_match": baseline_summary.get("round_top1_match", 0.0),
             "total_cache_saved_fraction": 0.0,
@@ -350,6 +352,10 @@ def main() -> None:
                     scale_bits=args.scale_bits,
                 )
                 candidate_summary = result["summary"]
+                paired_risk = paired_drop_statistics(
+                    baseline_result["rows"],
+                    result["rows"],
+                )
                 row = {
                     "candidate": name,
                     "layer": int(layer),
@@ -358,6 +364,7 @@ def main() -> None:
                     "accept_rate": candidate_summary.get("overall_accept_rate", 0.0),
                     "accept_rate_drop": baseline_summary.get("overall_accept_rate", 0.0)
                     - candidate_summary.get("overall_accept_rate", 0.0),
+                    **paired_risk,
                     "accepted_per_round": candidate_summary.get("accepted_per_round", 0.0),
                     "accepted_per_round_drop": baseline_summary.get("accepted_per_round", 0.0)
                     - candidate_summary.get("accepted_per_round", 0.0),

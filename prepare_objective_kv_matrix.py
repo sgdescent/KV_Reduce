@@ -23,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--contexts", default="512,1024,4096")
     parser.add_argument("--seeds", default="0,1,2")
     parser.add_argument("--num_eval", type=int, default=32)
+    parser.add_argument("--quality_risk_field", default="quality_risk")
+    parser.add_argument("--acceptance_risk_field", default="accept_rate_drop")
     parser.add_argument("--out_dir", required=True)
     return parser
 
@@ -71,7 +73,7 @@ def main() -> None:
         budget_root = root / f"budget_{budget}"
         quality_allocation = run_allocator(
             profile_csv=args.quality_profile_csv,
-            risk_field="quality_risk",
+            risk_field=args.quality_risk_field,
             budget=budget,
             name=f"quality_b{budget}",
             out_dir=budget_root / "quality_allocation",
@@ -79,7 +81,7 @@ def main() -> None:
         )
         acceptance_allocation = run_allocator(
             profile_csv=args.acceptance_profile_csv,
-            risk_field="accept_rate_drop",
+            risk_field=args.acceptance_risk_field,
             budget=budget,
             name=f"acceptance_b{budget}",
             out_dir=budget_root / "acceptance_allocation",
