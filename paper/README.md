@@ -25,6 +25,18 @@ python paper/aggregate_campaign.py \
   --out_dir paper/campaign_artifacts
 ```
 
+For the objective-aware KV quantization campaign, validated complete matrices can
+be collected into common CSV, figure, and LaTeX artifacts with:
+
+```bash
+python paper/aggregate_objective_campaign.py \
+  --results_root outputs/objective_kv \
+  --out_dir paper/objective_campaign_artifacts
+```
+
+By default, incomplete matrices, stale evaluator outputs, and smoke runs are not
+included in the paper artifacts.
+
 The current objective-matrix aggregator accepts only `cached_dynamic_v4` speculative
 summaries and `teacher_forced_cached_v1` ordinary-quality summaries, computes prompt-level
 bootstrap confidence intervals and paired equal-memory effects, audits numerical
