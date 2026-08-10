@@ -19,17 +19,20 @@ if [[ -f .venv/bin/activate ]]; then
 fi
 
 task_id="${SLURM_ARRAY_TASK_ID:-0}"
-contexts=(16384 32768)
+total_contexts=(16384 32768)
 seeds=(0 1 2)
-context="${contexts[$((task_id / ${#seeds[@]}))]}"
+total_context="${total_contexts[$((task_id / ${#seeds[@]}))]}"
 seed="${seeds[$((task_id % ${#seeds[@]}))]}"
 num_prompts="${NUM_PROMPTS_16K:-8}"
-if (( context == 32768 )); then
+max_new_tokens=16
+prompt_len="$total_context"
+if (( total_context == 32768 )); then
   num_prompts="${NUM_PROMPTS_32K:-4}"
+  prompt_len=$((total_context - max_new_tokens))
 fi
 
 root="${SPEC_ROOT:-outputs/kivi_objective_long_context/qwen25_3b_15b/spec}"
-out_dir="$root/ctx_${context}/seed_${seed}"
+out_dir="$root/ctx_${total_context}/seed_${seed}"
 configs="${QUANT_CONFIGS:-none;k8v4;k4v8;k4v4;k3v3;k2v4;k4v2;k2v2}"
 
 export TOKENIZERS_PARALLELISM=false
@@ -47,11 +50,11 @@ python3 -u benchmark_spec_kv_quantization.py \
   --eval_split validation \
   --stream_eval \
   --shuffle_eval \
-  --prompt_len "$context" \
+  --prompt_len "$prompt_len" \
   --num_prompts "$num_prompts" \
   --warmup_prompts 1 \
   --draft_steps 4 \
-  --max_new_tokens 16 \
+  --max_new_tokens "$max_new_tokens" \
   --seed "$seed" \
   --quant_configs "$configs" \
   --key_quant_axis per_channel \
@@ -62,4 +65,4 @@ python3 -u benchmark_spec_kv_quantization.py \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
   --wandb_group kivi-objective-long-context-spec \
-  --wandb_run_name "kivi_long_spec_c${context}_s${seed}"
+  --wandb_run_name "kivi_long_spec_c${total_context}_s${seed}"
