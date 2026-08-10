@@ -41,6 +41,7 @@ SKIP_PROMPTS="${SKIP_PROMPTS:-0}"
 DRAFT_STEPS="${DRAFT_STEPS:-4}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16}"
 SEED="${SEED:-0}"
+ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
 OUT="${OUT:-outputs/target_verification_diagnostic/seed_${SEED}_skip_${SKIP_PROMPTS}.json}"
 
 cmd=(
@@ -49,7 +50,7 @@ cmd=(
   --small_model "$SMALL_MODEL"
   --device cuda:0
   --dtype bf16
-  --attn_implementation sdpa
+  --attn_implementation "$ATTN_IMPLEMENTATION"
   --dataset_name "$DATASET_NAME"
   --dataset_config "$DATASET_CONFIG"
   --eval_split "$EVAL_SPLIT"
