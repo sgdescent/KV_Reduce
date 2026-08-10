@@ -24,7 +24,33 @@ if [[ -z "$line" ]]; then
   echo "No manifest row for task $SLURM_ARRAY_TASK_ID" >&2
   exit 1
 fi
-IFS=$'\t' read -r objective budget context seed num_eval quant_configs quality_allocation acceptance_allocation out_dir <<< "$line"
+IFS=$'\t' read -r -a manifest_fields <<< "$line"
+if (( ${#manifest_fields[@]} == 9 )); then
+  # Original matrix schema without matched-memory heuristic baselines.
+  objective="${manifest_fields[0]}"
+  budget="${manifest_fields[1]}"
+  context="${manifest_fields[2]}"
+  seed="${manifest_fields[3]}"
+  num_eval="${manifest_fields[4]}"
+  quant_configs="${manifest_fields[5]}"
+  quality_allocation="${manifest_fields[6]}"
+  acceptance_allocation="${manifest_fields[7]}"
+  out_dir="${manifest_fields[8]}"
+elif (( ${#manifest_fields[@]} == 11 )); then
+  # Extended schema adds K-priority and V-priority allocation paths.
+  objective="${manifest_fields[0]}"
+  budget="${manifest_fields[1]}"
+  context="${manifest_fields[2]}"
+  seed="${manifest_fields[3]}"
+  num_eval="${manifest_fields[4]}"
+  quant_configs="${manifest_fields[5]}"
+  quality_allocation="${manifest_fields[6]}"
+  acceptance_allocation="${manifest_fields[7]}"
+  out_dir="${manifest_fields[10]}"
+else
+  echo "Unsupported manifest schema with ${#manifest_fields[@]} fields" >&2
+  exit 1
+fi
 mkdir -p "$out_dir"
 
 common_wandb=()
