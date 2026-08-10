@@ -317,8 +317,11 @@ disagreements.
 
 The separation grows with long PG19 prefixes. At 16K, K-priority is $1.03$
 points below native (CI $[-4.47,2.14]$), while V-priority is $44.76$ points
-below native (CI $[-52.50,-38.14]$). An exploratory 32K aggregate gives a
-$52.38$-point K-priority advantage over V-priority (CI $[40.45,66.35]$).
+below native (CI $[-52.50,-38.14]$), giving a paired K-priority advantage of
+$43.73$ points (CI $[37.07,51.28]$). At 32K, K-priority is $3.37$ points below
+native (CI $[-6.89,-0.17]$), while V-priority drops by $55.51$ points; their
+paired difference is $52.13$ points (CI $[43.22,61.73]$). Both contexts use two
+seeds and contain no non-tie target disagreements.
 These results indicate that routing precision becomes more, rather than less,
 important as each query chooses among a longer cached prefix.
 
@@ -374,8 +377,11 @@ multi-token verification and tokenwise greedy decoding invoke different GPU kern
 shapes. Across 2,010 prompt--configuration outputs, 308 sequence disagreements
 occur where either target path has top-1 margin at most $10^{-3}$, and 33 (1.64\%)
 remain above that threshold. Focused diagnostics found no causal-mask leakage and
-no cache-crop top-1 error; the remaining flips arise from small BF16 logit drift
-(e.g., KL below $10^{-2}$ in traced cases). We therefore do not claim bitwise
+no cache-crop top-1 error. On a traced non-tie prompt, the flip occurs only with
+BF16 SDPA; BF16 eager and both FP32 backends produce zero speculative mismatches,
+while all four settings produce zero suffix or rollback errors. The remaining
+flips therefore arise from finite-precision kernel-path drift rather than cache
+corruption. We consequently do not claim bitwise
 equality to tokenwise BF16 greedy decoding, while the target verification rule
 itself remains unquantized.
 
