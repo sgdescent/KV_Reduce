@@ -339,12 +339,13 @@ objective-specific differences instead of assuming they exist.
 
 - The powered disjoint-shard FineWeb-Edu Qwen2.5-7B/3B
   K4V3-versus-K3V4 test is complete.
-- Qwen HellaSwag and eight-shot ARC-Challenge are complete; dependency-gated
-  cross-family task replication is now running.
-- Dependency-gated cross-family HellaSwag and ARC-Challenge validation on
-  Llama-3.2-3B, OLMo-2-1B, and SmolLM2-360M using two disjoint 128-example
-  shards per task and the same matched-memory K/V policies.
-- Controlled 4K quantizer-geometry factorial replication.
+- Qwen HellaSwag and eight-shot ARC-Challenge are complete. The first corrected
+  Llama task aggregate is complete, while OLMo-2 and SmolLM2 are running or
+  dependency-gated. A powered replication will cover 576 disjoint HellaSwag
+  examples and 297 disjoint ARC examples per model.
+- Controlled 1K/4K quantizer-geometry factorial replication, followed by a
+  three-shard FineWeb-Edu matched grid over native, K8V4, K4V8, K4V4, K3V4,
+  and K4V3.
 - All-layer FineWeb-Edu calibration of separate ordinary-quality and
   speculative-acceptance allocations, followed by equal-budget cross-objective
   evaluation on disjoint held-out blocks. The Qwen profile jobs are running;
@@ -353,7 +354,11 @@ objective-specific differences instead of assuming they exist.
   sensitivity maps from the same per-example FineWeb rows and compare both
   risk rankings and the actual selected K/V bit maps without additional GPU
   inference.
-- C4, GSM8K, and HumanEval robustness aggregation and paper integration.
+- Long-context objective replication on OLMo-2 and Llama after their all-layer
+  campaigns complete.
+- Matched, explicitly disjoint C4, GSM8K, and HumanEval robustness evaluation
+  with three seeds and nine precision policies, including aggressive 2-bit
+  controls, followed by aggregation and paper integration.
 
 ## Closest Work
 
