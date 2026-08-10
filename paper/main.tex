@@ -405,6 +405,17 @@ The same knee holds across three 4K-context seeds: K8V4 changes acceptance by
 $-0.34$ points (CI $[-1.95,1.21]$), K8V3 drops $2.28$ points
 (CI $[-4.25,-0.35]$), and K8V2 drops $24.09$ points.
 
+The asymmetry persists when the speculative proposal length changes. At
+$\gamma=2$, three disjoint seeds provide 191 valid paired prompts. K4V2, which
+reduces value precision, loses $5.43$ acceptance points relative to BF16
+(CI $[-7.32,-3.58]$), whereas K2V4, which reduces key precision, loses $1.43$
+points (CI $[-2.58,-0.31]$). The direct paired K4V2--K2V4 contrast is $-4.01$
+points (CI $[-5.82,-2.15]$). Both policies use the same nominal mean bit-width;
+because key metadata is asymmetric, their total-cache savings are near rather
+than exactly equal (31.76% versus 31.38%). Under the deployed KIVI geometry,
+aggressive value quantization is therefore significantly more harmful than
+aggressive key quantization in this setting.
+
 \subsection{A conservative learned allocation}
 
 Profiling the top eight draft layers and selecting precision under a five-point

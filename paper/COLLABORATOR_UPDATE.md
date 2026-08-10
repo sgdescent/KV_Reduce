@@ -73,6 +73,16 @@ changes acceptance by -1.01 points and has KL 0.0327, while K3V4 changes
 acceptance by -0.32 points and has KL 0.0111. Gaussian perturbation sensitivity
 therefore cannot be treated as a direct proxy for quantization sensitivity.
 
+The completed three-seed `gamma=2` test resolves this asymmetry at two bits.
+Across 191 paired prompts, K4V2 loses 5.43 acceptance points from BF16 (95% CI:
+-7.32 to -3.58), while K2V4 loses 1.43 points (CI: -2.58 to -0.31). The direct
+paired K4V2-minus-K2V4 contrast is -4.01 points (CI: -5.82 to -2.15). The two
+policies have the same nominal mean bit-width and near-equal estimated total-KV
+savings (31.76% versus 31.38%); the small byte difference comes from asymmetric
+key metadata. This is evidence that, with grouped per-channel KIVI keys,
+aggressive value quantization can be more harmful than aggressive key
+quantization. The `gamma=4` and `gamma=8` replications are still running.
+
 We see one raw equal-memory objective-preference reversal on Qwen2.5-7B/3B:
 speculative acceptance favors K4V3 over K3V4 by +0.43 points, while ordinary
 quality significantly favors K3V4. However, the speculative confidence interval

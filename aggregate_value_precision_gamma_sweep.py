@@ -21,7 +21,7 @@ from spec_kv_statistics import bootstrap_acceptance_contrast
 
 
 EXPECTED_EVALUATOR_VERSION = "cached_dynamic_v4"
-EQUAL_MEMORY_PAIRS = (
+MATCHED_BIT_PAIRS = (
     ("k8v4", "k4v8", "K8V4 - K4V8"),
     ("k4v3", "k3v4", "K4V3 - K3V4"),
     ("k4v2", "k2v4", "K4V2 - K2V4"),
@@ -129,7 +129,7 @@ def make_contrast_plot(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
     fig.tight_layout()
     paths = []
     for extension in ("png", "pdf"):
-        path = out_dir / f"equal_memory_gamma_contrasts.{extension}"
+        path = out_dir / f"matched_bit_gamma_contrasts.{extension}"
         fig.savefig(path, dpi=240, bbox_inches="tight")
         paths.append(str(path))
     plt.close(fig)
@@ -181,7 +181,7 @@ def main() -> None:
         invalid_prompts += invalid
         for name, values in effects.items():
             prompt_effects[(draft_steps, name)].extend(values)
-        for config_a, config_b, _ in EQUAL_MEMORY_PAIRS:
+        for config_a, config_b, _ in MATCHED_BIT_PAIRS:
             paired_effects[(draft_steps, config_a, config_b)].extend(
                 pair_config_effects(effects, config_a, config_b)
             )
@@ -235,7 +235,7 @@ def main() -> None:
 
     paired_comparisons: List[Dict[str, Any]] = []
     for draft_steps in sorted({int(row["draft_steps"]) for row in grouped}):
-        for config_a, config_b, label in EQUAL_MEMORY_PAIRS:
+        for config_a, config_b, label in MATCHED_BIT_PAIRS:
             values = paired_effects[(draft_steps, config_a, config_b)]
             if not values:
                 continue
