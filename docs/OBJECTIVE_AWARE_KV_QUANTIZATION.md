@@ -37,6 +37,41 @@ speculative acceptance at equal memory while the quality allocation retains
 better NLL/KL. Similar sensitivity maps and cross-evaluation results would
 falsify the stronger objective-specific claim.
 
+## Joint target/draft role allocation
+
+Draft-only quantization cannot change the intended target distribution; it only
+changes proposal quality and acceptance. Quantizing the target cache can save a
+much larger fraction of total KV memory, but may also move the verifier logits.
+The joint experiment therefore evaluates every target/draft pair directly:
+
+```text
+maximize total target + draft KV memory saved
+subject to target KL / token-fidelity budget
+           and speculative-acceptance budget
+```
+
+`benchmark_spec_kv_quantization.py --target_quant_configs ...` crosses target
+configs with the existing draft `--quant_configs`. The BF16 target sequence is
+generated once outside timing. Each candidate reports acceptance, sequence and
+token agreement with that reference, non-tie divergence counts, and separate
+target/draft/total cache bytes. Accepted proposal KV is quantized before the
+target bonus step; rejected speculative state is cropped before promotion, so
+the fake-quantized runtime follows commit-only cache semantics.
+
+The default `--target_quant_configs none` retains the audited
+`cached_dynamic_v4` draft-only artifact format. Joint artifacts use
+`cached_dynamic_v5_joint_target_draft`; target-quantized output changes are
+quality outcomes, while only a non-tie mismatch in the fully BF16 baseline
+invalidates a prompt.
+
+Run the three-seed 1K/4K joint grid with:
+
+```bash
+ROOT=outputs/kivi_joint_target_draft/qwen25_3b_15b \
+ARRAY_THROTTLE=1 \
+bash scripts/submit_joint_target_draft_grid.sh
+```
+
 ## Run the development campaign
 
 ```bash
