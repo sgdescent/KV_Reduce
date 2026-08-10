@@ -10,7 +10,7 @@ from acceptance_risk_statistics import paired_drop_statistics
 from aggregate_objective_kv_matrix import classify_exactness
 from benchmark_spec_kv_quantization import build_joint_quant_configs, last_token_logits_kwargs
 from kv_cache_quantization import parse_csv_ints, parse_quant_config_specs
-from prepare_objective_kv_matrix import heuristic_component_bits
+from prepare_objective_kv_matrix import evaluation_skip_blocks, heuristic_component_bits
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +60,33 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
         self.assertEqual(heuristic_component_bits(6, prioritize="v"), (4, 8))
         self.assertEqual(heuristic_component_bits(10, prioritize="k"), (16, 4))
         self.assertEqual(heuristic_component_bits(12, prioritize="v"), (8, 16))
+
+    def test_objective_matrix_uses_disjoint_seed_shards(self) -> None:
+        quality = [
+            evaluation_skip_blocks(
+                "quality",
+                seed_index=index,
+                num_eval=32,
+                quality_skip_base=128,
+                acceptance_skip_base=256,
+                acceptance_warmup_prompts=2,
+            )
+            for index in range(3)
+        ]
+        acceptance = [
+            evaluation_skip_blocks(
+                "acceptance",
+                seed_index=index,
+                num_eval=32,
+                quality_skip_base=128,
+                acceptance_skip_base=256,
+                acceptance_warmup_prompts=2,
+            )
+            for index in range(3)
+        ]
+
+        self.assertEqual(quality, [128, 160, 192])
+        self.assertEqual(acceptance, [256, 290, 324])
 
     def test_paired_acceptance_risk_reports_upper_confidence_bound(self) -> None:
         baseline = [

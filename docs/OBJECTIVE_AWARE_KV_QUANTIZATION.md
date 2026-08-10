@@ -113,3 +113,23 @@ bash scripts/submit_objective_kv_matrix.sh
 This creates 72 GPU evaluation tasks but allows only two to run concurrently.
 The final aggregation reports seed confidence intervals and paired objective
 advantages at each memory budget and context length.
+
+For a paper result, use a streaming held-out source and set each skip base past
+the blocks consumed by calibration. The manifest then assigns non-overlapping
+contiguous shards to every seed, including speculative warmup prompts. Explicit
+shards deliberately disable dataset shuffling so offsets remain disjoint:
+
+```bash
+DATASET_NAME=HuggingFaceFW/fineweb-edu \
+DATASET_CONFIG=sample-10BT \
+EVAL_SPLIT=train \
+STREAM_EVAL=1 \
+QUALITY_SKIP_BASE=1024 \
+ACCEPTANCE_SKIP_BASE=2048 \
+bash scripts/submit_objective_kv_matrix.sh
+```
+
+The skip bases are experiment metadata, not universal defaults; choose values
+larger than the corresponding calibration consumption. Older 9- and 11-column
+manifests remain runnable, but they are diagnostic because seed shuffling does
+not prove example-level disjointness on a finite split.

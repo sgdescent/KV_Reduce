@@ -27,10 +27,54 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--contexts", default="512,1024,4096")
     parser.add_argument("--seeds", default="0,1,2")
     parser.add_argument("--num_eval", type=int, default=32)
+    parser.add_argument(
+        "--quality_skip_base",
+        type=int,
+        default=0,
+        help="Skip at least this many token blocks before ordinary-quality evaluation shards.",
+    )
+    parser.add_argument(
+        "--acceptance_skip_base",
+        type=int,
+        default=0,
+        help="Skip at least this many token blocks before speculative-evaluation shards.",
+    )
+    parser.add_argument(
+        "--acceptance_warmup_prompts",
+        type=int,
+        default=2,
+        help="Warmup prompts reserved inside each disjoint speculative shard.",
+    )
     parser.add_argument("--quality_risk_field", default="quality_risk")
     parser.add_argument("--acceptance_risk_field", default="accept_rate_drop")
     parser.add_argument("--out_dir", required=True)
     return parser
+
+
+def evaluation_skip_blocks(
+    objective: str,
+    *,
+    seed_index: int,
+    num_eval: int,
+    quality_skip_base: int,
+    acceptance_skip_base: int,
+    acceptance_warmup_prompts: int,
+) -> int:
+    """Return a deterministic non-overlapping evaluation-shard offset."""
+    if min(
+        seed_index,
+        num_eval,
+        quality_skip_base,
+        acceptance_skip_base,
+        acceptance_warmup_prompts,
+    ) < 0:
+        raise ValueError("Evaluation shard sizes and skip offsets must be nonnegative.")
+    if objective == "quality":
+        return quality_skip_base + seed_index * num_eval
+    if objective == "acceptance":
+        shard_size = num_eval + acceptance_warmup_prompts
+        return acceptance_skip_base + seed_index * shard_size
+    raise ValueError(f"Unknown objective: {objective!r}")
 
 
 def heuristic_component_bits(budget: int, *, prioritize: str) -> tuple[int, int]:
@@ -179,7 +223,7 @@ def main() -> None:
             f"allocation:{k_priority_allocation};allocation:{v_priority_allocation}"
         )
         for context in contexts:
-            for seed in seeds:
+            for seed_index, seed in enumerate(seeds):
                 eval_root = budget_root / f"ctx_{context}" / f"seed_{seed}"
                 for objective in ("quality", "acceptance"):
                     rows.append(
@@ -189,6 +233,17 @@ def main() -> None:
                             "context": context,
                             "seed": seed,
                             "num_eval": args.num_eval,
+                            "skip_blocks": evaluation_skip_blocks(
+                                objective,
+                                seed_index=seed_index,
+                                num_eval=args.num_eval,
+                                quality_skip_base=args.quality_skip_base,
+                                acceptance_skip_base=args.acceptance_skip_base,
+                                acceptance_warmup_prompts=args.acceptance_warmup_prompts,
+                            ),
+                            "warmup_prompts": (
+                                args.acceptance_warmup_prompts if objective == "acceptance" else 0
+                            ),
                             "quant_configs": configs,
                             "quality_allocation": str(quality_allocation),
                             "acceptance_allocation": str(acceptance_allocation),

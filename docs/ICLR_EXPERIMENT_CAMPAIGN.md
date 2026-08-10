@@ -100,6 +100,11 @@ gated 9B checkpoint.
     KVTuner-style attention-output sensitivity, RateQuant-style calibrated
     rate--distortion allocation, and Block-GTQ-style RoPE-aware key allocation at
     exactly matched packed-cache budgets.
+21. `held_out_allocator_matrix`: fit allocations on calibration shards, then
+    cross-evaluate ordinary quality and speculative acceptance on explicit,
+    non-overlapping streaming shards. Manifest-level block offsets include
+    speculative warmups and use a fixed dataset order, preventing finite-split
+    reshuffling from being mistaken for independent replication.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in

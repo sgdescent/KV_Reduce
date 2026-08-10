@@ -36,6 +36,9 @@ if (( ${#manifest_fields[@]} == 9 )); then
   quality_allocation="${manifest_fields[6]}"
   acceptance_allocation="${manifest_fields[7]}"
   out_dir="${manifest_fields[8]}"
+  skip_blocks=0
+  warmup_prompts=2
+  shuffle_args=(--shuffle_eval)
 elif (( ${#manifest_fields[@]} == 11 )); then
   # Extended schema adds K-priority and V-priority allocation paths.
   objective="${manifest_fields[0]}"
@@ -47,6 +50,25 @@ elif (( ${#manifest_fields[@]} == 11 )); then
   quality_allocation="${manifest_fields[6]}"
   acceptance_allocation="${manifest_fields[7]}"
   out_dir="${manifest_fields[10]}"
+  skip_blocks=0
+  warmup_prompts=2
+  shuffle_args=(--shuffle_eval)
+elif (( ${#manifest_fields[@]} == 13 )); then
+  # Held-out schema adds an explicit disjoint token-block offset.
+  objective="${manifest_fields[0]}"
+  budget="${manifest_fields[1]}"
+  context="${manifest_fields[2]}"
+  seed="${manifest_fields[3]}"
+  num_eval="${manifest_fields[4]}"
+  skip_blocks="${manifest_fields[5]}"
+  warmup_prompts="${manifest_fields[6]}"
+  quant_configs="${manifest_fields[7]}"
+  quality_allocation="${manifest_fields[8]}"
+  acceptance_allocation="${manifest_fields[9]}"
+  out_dir="${manifest_fields[12]}"
+  # Explicit offsets are disjoint only when every shard traverses the same
+  # dataset order. The seed remains available for model-side randomness.
+  shuffle_args=()
 else
   echo "Unsupported manifest schema with ${#manifest_fields[@]} fields" >&2
   exit 1
@@ -75,8 +97,9 @@ if [[ "$objective" == "quality" ]]; then
     --prompt_len "$context" \
     --continuation_len "${CONTINUATION_LEN:-32}" \
     --num_sequences "$num_eval" \
+    --skip_sequences "$skip_blocks" \
     --seed "$seed" \
-    --shuffle_eval \
+    "${shuffle_args[@]}" \
     --quant_configs "$quant_configs" \
     --out_dir "$out_dir" \
     --wandb_run_name "quality_b${budget}_c${context}_s${seed}" \
@@ -95,11 +118,12 @@ elif [[ "$objective" == "acceptance" ]]; then
     --eval_split "${EVAL_SPLIT:-validation}" \
     --prompt_len "$context" \
     --num_prompts "$num_eval" \
-    --warmup_prompts 2 \
+    --warmup_prompts "$warmup_prompts" \
+    --skip_prompts "$skip_blocks" \
     --draft_steps "${DRAFT_STEPS:-4}" \
     --max_new_tokens "${MAX_NEW_TOKENS:-16}" \
     --seed "$seed" \
-    --shuffle_eval \
+    "${shuffle_args[@]}" \
     --quant_configs "$quant_configs" \
     --out_dir "$out_dir" \
     --wandb_run_name "acceptance_b${budget}_c${context}_s${seed}" \
