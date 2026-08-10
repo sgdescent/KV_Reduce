@@ -140,7 +140,13 @@ def main() -> None:
     prompt_effects: Dict[Tuple[int, int], Dict[str, List[float]]] = defaultdict(
         lambda: {"acceptance": [], "quality_kl": [], "quality_delta_nll": []}
     )
+    kv_prompt_effects: Dict[Tuple[int, int], Dict[str, List[float]]] = defaultdict(
+        lambda: {"acceptance": [], "quality_kl": [], "quality_delta_nll": []}
+    )
     acceptance_prompt_counts: Dict[Tuple[int, int], Dict[str, int]] = defaultdict(
+        lambda: {"candidate_pairs": 0, "excluded_non_tie": 0, "used": 0}
+    )
+    kv_acceptance_prompt_counts: Dict[Tuple[int, int], Dict[str, int]] = defaultdict(
         lambda: {"candidate_pairs": 0, "excluded_non_tie": 0, "used": 0}
     )
     exactness_counts: Dict[Tuple[int, int, int], Dict[str, int]] = defaultdict(
@@ -157,6 +163,7 @@ def main() -> None:
             allocation_path = budget_dir / f"{objective}_allocation" / "allocation.json"
             if allocation_path.exists():
                 allocations.append((objective, read_json(allocation_path)))
+        allocation_names = {objective: str(allocation["name"]) for objective, allocation in allocations}
         for context_dir in sorted(budget_dir.glob("ctx_*")):
             context = int(context_dir.name.split("_", 1)[1])
             for seed_dir in sorted(context_dir.glob("seed_*")):
@@ -205,6 +212,9 @@ def main() -> None:
 
                 quality_name = str(quality_allocation["name"])
                 acceptance_name = str(acceptance_allocation["name"])
+                k_priority_name = allocation_names.get("k_priority")
+                v_priority_name = allocation_names.get("v_priority")
+                tracked_names = set(allocation_names.values())
                 acceptance_rows = read_csv(seed_dir / "acceptance" / "benchmark_rows.csv")
                 acceptance_by_prompt: Dict[str, Dict[str, float]] = defaultdict(dict)
                 invalid_prompts = set()
@@ -225,36 +235,61 @@ def main() -> None:
                                     "mismatch_min_top1_margin": row.get("mismatch_min_top1_margin", "nan"),
                                 }
                             )
-                    if row["config"] in {quality_name, acceptance_name}:
+                    if row["config"] in tracked_names:
                         acceptance_by_prompt[row["prompt_idx"]][row["config"]] = float(row["accept_rate"])
                 exactness_counts[(budget, context, seed)]["invalid_prompts"] = len(invalid_prompts)
                 prompt_count = acceptance_prompt_counts[(budget, context)]
                 for prompt_idx, pair in acceptance_by_prompt.items():
-                    if set(pair) == {quality_name, acceptance_name}:
+                    if {quality_name, acceptance_name}.issubset(pair):
                         prompt_count["candidate_pairs"] += 1
                         if prompt_idx in invalid_prompts:
                             prompt_count["excluded_non_tie"] += 1
-                            continue
-                        prompt_count["used"] += 1
-                        prompt_effects[(budget, context)]["acceptance"].append(
-                            pair[acceptance_name] - pair[quality_name]
-                        )
+                        else:
+                            prompt_count["used"] += 1
+                            prompt_effects[(budget, context)]["acceptance"].append(
+                                pair[acceptance_name] - pair[quality_name]
+                            )
+                    if (
+                        k_priority_name is not None
+                        and v_priority_name is not None
+                        and {k_priority_name, v_priority_name}.issubset(pair)
+                    ):
+                        kv_count = kv_acceptance_prompt_counts[(budget, context)]
+                        kv_count["candidate_pairs"] += 1
+                        if prompt_idx in invalid_prompts:
+                            kv_count["excluded_non_tie"] += 1
+                        else:
+                            kv_count["used"] += 1
+                            kv_prompt_effects[(budget, context)]["acceptance"].append(
+                                pair[k_priority_name] - pair[v_priority_name]
+                            )
 
                 quality_rows = read_csv(seed_dir / "quality" / "raw_sequence_rows.csv")
                 quality_by_sequence: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(dict)
                 for row in quality_rows:
-                    if row["candidate"] in {quality_name, acceptance_name}:
+                    if row["candidate"] in tracked_names:
                         quality_by_sequence[row["sequence_idx"]][row["candidate"]] = {
                             "kl": float(row["kl_p_to_q"]),
                             "delta_nll": float(row["delta_nll"]),
                         }
                 for pair in quality_by_sequence.values():
-                    if set(pair) == {quality_name, acceptance_name}:
+                    if {quality_name, acceptance_name}.issubset(pair):
                         prompt_effects[(budget, context)]["quality_kl"].append(
                             pair[acceptance_name]["kl"] - pair[quality_name]["kl"]
                         )
                         prompt_effects[(budget, context)]["quality_delta_nll"].append(
                             pair[acceptance_name]["delta_nll"] - pair[quality_name]["delta_nll"]
+                        )
+                    if (
+                        k_priority_name is not None
+                        and v_priority_name is not None
+                        and {k_priority_name, v_priority_name}.issubset(pair)
+                    ):
+                        kv_prompt_effects[(budget, context)]["quality_kl"].append(
+                            pair[v_priority_name]["kl"] - pair[k_priority_name]["kl"]
+                        )
+                        kv_prompt_effects[(budget, context)]["quality_delta_nll"].append(
+                            pair[v_priority_name]["delta_nll"] - pair[k_priority_name]["delta_nll"]
                         )
 
     if not rows:
@@ -289,6 +324,7 @@ def main() -> None:
         paired[(int(row["budget"]), int(row["context"]), int(row["seed"]))][str(row["allocation_objective"])] = row
     effects: Dict[Tuple[int, int], List[Tuple[float, float]]] = defaultdict(list)
     heuristic_effects: Dict[Tuple[int, int, str], List[Tuple[float, float, float]]] = defaultdict(list)
+    kv_priority_effects: Dict[Tuple[int, int], List[Tuple[float, float, float]]] = defaultdict(list)
     for (budget, context, _), pair in paired.items():
         if not {"quality", "acceptance"}.issubset(pair):
             continue
@@ -308,6 +344,17 @@ def main() -> None:
                     float(pair[heuristic]["quality_kl"]) - float(pair["quality"]["quality_kl"]),
                     float(pair[heuristic]["quality_delta_nll"])
                     - float(pair["quality"]["quality_delta_nll"]),
+                )
+            )
+        if {"k_priority", "v_priority"}.issubset(pair):
+            kv_priority_effects[(budget, context)].append(
+                (
+                    float(pair["k_priority"]["spec_accept_rate"])
+                    - float(pair["v_priority"]["spec_accept_rate"]),
+                    float(pair["v_priority"]["quality_kl"])
+                    - float(pair["k_priority"]["quality_kl"]),
+                    float(pair["v_priority"]["quality_delta_nll"])
+                    - float(pair["k_priority"]["quality_delta_nll"]),
                 )
             )
     effect_rows = []
@@ -359,6 +406,34 @@ def main() -> None:
             }
         )
 
+    kv_priority_effect_rows = []
+    for (budget, context), values in sorted(kv_priority_effects.items()):
+        row = {
+            "budget": budget,
+            "context": context,
+            "num_seeds": len(values),
+            "k_priority_acceptance_advantage_mean": mean(value[0] for value in values),
+            "k_priority_acceptance_advantage_ci95": ci95([value[0] for value in values]),
+            "k_priority_quality_kl_advantage_mean": mean(value[1] for value in values),
+            "k_priority_quality_kl_advantage_ci95": ci95([value[1] for value in values]),
+            "k_priority_quality_delta_nll_advantage_mean": mean(value[2] for value in values),
+            "k_priority_quality_delta_nll_advantage_ci95": ci95([value[2] for value in values]),
+        }
+        for metric, metric_values in kv_prompt_effects[(budget, context)].items():
+            estimate, low, high = bootstrap_mean_ci(
+                metric_values,
+                seed=budget * 200000 + context * 20 + len(metric),
+            )
+            row[f"paired_{metric}_n"] = len(metric_values)
+            row[f"paired_{metric}_mean"] = estimate
+            row[f"paired_{metric}_ci_low"] = low
+            row[f"paired_{metric}_ci_high"] = high
+        prompt_count = kv_acceptance_prompt_counts[(budget, context)]
+        row["paired_acceptance_candidate_n"] = prompt_count["candidate_pairs"]
+        row["paired_acceptance_excluded_non_tie_n"] = prompt_count["excluded_non_tie"]
+        row["paired_acceptance_valid_n"] = prompt_count["used"]
+        kv_priority_effect_rows.append(row)
+
     budget_prompt_effects: Dict[int, Dict[str, List[float]]] = defaultdict(
         lambda: {"acceptance": [], "quality_kl": [], "quality_delta_nll": []}
     )
@@ -380,6 +455,27 @@ def main() -> None:
             row[f"paired_{metric}_ci_high"] = high
         cross_context_rows.append(row)
 
+    kv_budget_prompt_effects: Dict[int, Dict[str, List[float]]] = defaultdict(
+        lambda: {"acceptance": [], "quality_kl": [], "quality_delta_nll": []}
+    )
+    for (budget, _), metrics in kv_prompt_effects.items():
+        for metric, values in metrics.items():
+            kv_budget_prompt_effects[budget][metric].extend(values)
+    kv_cross_context_rows = []
+    for budget, metrics in sorted(kv_budget_prompt_effects.items()):
+        row = {"budget": budget}
+        for metric, values in metrics.items():
+            estimate, low, high = bootstrap_mean_ci(
+                values,
+                seed=budget * 2000000 + len(metric),
+                samples=5000,
+            )
+            row[f"paired_{metric}_n"] = len(values)
+            row[f"paired_{metric}_mean"] = estimate
+            row[f"paired_{metric}_ci_low"] = low
+            row[f"paired_{metric}_ci_high"] = high
+        kv_cross_context_rows.append(row)
+
     exactness_rows = []
     for (budget, context, seed), counts in sorted(exactness_counts.items()):
         exactness_rows.append({"budget": budget, "context": context, "seed": seed, **counts})
@@ -393,6 +489,8 @@ def main() -> None:
     write_csv(effect_rows, out_dir / "cross_objective_effects.csv")
     write_csv(cross_context_rows, out_dir / "cross_context_effects.csv")
     write_csv(heuristic_effect_rows, out_dir / "heuristic_effects.csv")
+    write_csv(kv_priority_effect_rows, out_dir / "kv_priority_effects.csv")
+    write_csv(kv_cross_context_rows, out_dir / "kv_priority_cross_context_effects.csv")
     write_csv(exactness_rows, out_dir / "exactness_audit.csv")
     payload = {
         "num_complete_rows": len(rows),
@@ -410,6 +508,8 @@ def main() -> None:
         "cross_objective_effects": effect_rows,
         "cross_context_effects": cross_context_rows,
         "heuristic_effects": heuristic_effect_rows,
+        "kv_priority_effects": kv_priority_effect_rows,
+        "kv_priority_cross_context_effects": kv_cross_context_rows,
         "plots": make_plot(grouped_rows, out_dir),
     }
     with (out_dir / "summary.json").open("w", encoding="utf-8") as f:
