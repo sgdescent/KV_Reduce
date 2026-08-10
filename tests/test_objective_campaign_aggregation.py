@@ -40,6 +40,15 @@ def write_summary(root: Path, name: str, *, missing: int = 0) -> None:
                 "paired_quality_kl_mean": 0.03,
             }
         ],
+        "native_acceptance_cross_context_effects": [
+            {
+                "budget": 6,
+                "allocation_objective": "quality",
+                "paired_acceptance_mean": -0.005,
+                "paired_acceptance_ci_low": -0.01,
+                "paired_acceptance_ci_high": 0.0,
+            }
+        ],
         "exactness_audit": {
             "totals": {
                 "exact": 90,
@@ -100,6 +109,7 @@ class ObjectiveCampaignAggregationTest(unittest.TestCase):
 
             self.assertEqual(rows["objective"][0]["total_cache_saved_fraction"], 0.25)
             self.assertEqual(rows["kv"][0]["paired_quality_kl_mean"], 0.03)
+            self.assertEqual(rows["native"][0]["paired_acceptance_mean"], -0.005)
             self.assertAlmostEqual(rows["exactness"][0]["exact_or_tie_fraction"], 0.99)
 
     def test_discovers_and_flattens_final_result_campaigns(self) -> None:

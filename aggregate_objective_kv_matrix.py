@@ -143,10 +143,14 @@ def main() -> None:
     kv_prompt_effects: Dict[Tuple[int, int], Dict[str, List[float]]] = defaultdict(
         lambda: {"acceptance": [], "quality_kl": [], "quality_delta_nll": []}
     )
+    native_prompt_effects: Dict[Tuple[int, int, str], List[float]] = defaultdict(list)
     acceptance_prompt_counts: Dict[Tuple[int, int], Dict[str, int]] = defaultdict(
         lambda: {"candidate_pairs": 0, "excluded_non_tie": 0, "used": 0}
     )
     kv_acceptance_prompt_counts: Dict[Tuple[int, int], Dict[str, int]] = defaultdict(
+        lambda: {"candidate_pairs": 0, "excluded_non_tie": 0, "used": 0}
+    )
+    native_acceptance_prompt_counts: Dict[Tuple[int, int, str], Dict[str, int]] = defaultdict(
         lambda: {"candidate_pairs": 0, "excluded_non_tie": 0, "used": 0}
     )
     exactness_counts: Dict[Tuple[int, int, int], Dict[str, int]] = defaultdict(
@@ -235,11 +239,22 @@ def main() -> None:
                                     "mismatch_min_top1_margin": row.get("mismatch_min_top1_margin", "nan"),
                                 }
                             )
-                    if row["config"] in tracked_names:
+                    if row["config"] in tracked_names or row["config"] == "none":
                         acceptance_by_prompt[row["prompt_idx"]][row["config"]] = float(row["accept_rate"])
                 exactness_counts[(budget, context, seed)]["invalid_prompts"] = len(invalid_prompts)
                 prompt_count = acceptance_prompt_counts[(budget, context)]
                 for prompt_idx, pair in acceptance_by_prompt.items():
+                    for objective, name in allocation_names.items():
+                        if {"none", name}.issubset(pair):
+                            native_count = native_acceptance_prompt_counts[(budget, context, objective)]
+                            native_count["candidate_pairs"] += 1
+                            if prompt_idx in invalid_prompts:
+                                native_count["excluded_non_tie"] += 1
+                            else:
+                                native_count["used"] += 1
+                                native_prompt_effects[(budget, context, objective)].append(
+                                    pair[name] - pair["none"]
+                                )
                     if {quality_name, acceptance_name}.issubset(pair):
                         prompt_count["candidate_pairs"] += 1
                         if prompt_idx in invalid_prompts:
@@ -434,6 +449,28 @@ def main() -> None:
         row["paired_acceptance_valid_n"] = prompt_count["used"]
         kv_priority_effect_rows.append(row)
 
+    native_acceptance_effect_rows = []
+    for (budget, context, objective), values in sorted(native_prompt_effects.items()):
+        estimate, low, high = bootstrap_mean_ci(
+            values,
+            seed=budget * 300000 + context * 30 + len(objective),
+        )
+        prompt_count = native_acceptance_prompt_counts[(budget, context, objective)]
+        native_acceptance_effect_rows.append(
+            {
+                "budget": budget,
+                "context": context,
+                "allocation_objective": objective,
+                "paired_acceptance_n": len(values),
+                "paired_acceptance_mean": estimate,
+                "paired_acceptance_ci_low": low,
+                "paired_acceptance_ci_high": high,
+                "paired_acceptance_candidate_n": prompt_count["candidate_pairs"],
+                "paired_acceptance_excluded_non_tie_n": prompt_count["excluded_non_tie"],
+                "paired_acceptance_valid_n": prompt_count["used"],
+            }
+        )
+
     budget_prompt_effects: Dict[int, Dict[str, List[float]]] = defaultdict(
         lambda: {"acceptance": [], "quality_kl": [], "quality_delta_nll": []}
     )
@@ -476,6 +513,27 @@ def main() -> None:
             row[f"paired_{metric}_ci_high"] = high
         kv_cross_context_rows.append(row)
 
+    native_budget_prompt_effects: Dict[Tuple[int, str], List[float]] = defaultdict(list)
+    for (budget, _, objective), values in native_prompt_effects.items():
+        native_budget_prompt_effects[(budget, objective)].extend(values)
+    native_cross_context_rows = []
+    for (budget, objective), values in sorted(native_budget_prompt_effects.items()):
+        estimate, low, high = bootstrap_mean_ci(
+            values,
+            seed=budget * 3000000 + len(objective),
+            samples=5000,
+        )
+        native_cross_context_rows.append(
+            {
+                "budget": budget,
+                "allocation_objective": objective,
+                "paired_acceptance_n": len(values),
+                "paired_acceptance_mean": estimate,
+                "paired_acceptance_ci_low": low,
+                "paired_acceptance_ci_high": high,
+            }
+        )
+
     exactness_rows = []
     for (budget, context, seed), counts in sorted(exactness_counts.items()):
         exactness_rows.append({"budget": budget, "context": context, "seed": seed, **counts})
@@ -491,6 +549,8 @@ def main() -> None:
     write_csv(heuristic_effect_rows, out_dir / "heuristic_effects.csv")
     write_csv(kv_priority_effect_rows, out_dir / "kv_priority_effects.csv")
     write_csv(kv_cross_context_rows, out_dir / "kv_priority_cross_context_effects.csv")
+    write_csv(native_acceptance_effect_rows, out_dir / "native_acceptance_effects.csv")
+    write_csv(native_cross_context_rows, out_dir / "native_acceptance_cross_context_effects.csv")
     write_csv(exactness_rows, out_dir / "exactness_audit.csv")
     payload = {
         "num_complete_rows": len(rows),
@@ -510,6 +570,8 @@ def main() -> None:
         "heuristic_effects": heuristic_effect_rows,
         "kv_priority_effects": kv_priority_effect_rows,
         "kv_priority_cross_context_effects": kv_cross_context_rows,
+        "native_acceptance_effects": native_acceptance_effect_rows,
+        "native_acceptance_cross_context_effects": native_cross_context_rows,
         "plots": make_plot(grouped_rows, out_dir),
     }
     with (out_dir / "summary.json").open("w", encoding="utf-8") as f:

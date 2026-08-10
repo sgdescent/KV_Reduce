@@ -139,6 +139,7 @@ def collect_rows(records: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]
     grouped_rows = []
     objective_rows = []
     kv_rows = []
+    native_rows = []
     exactness_rows = []
     for record in records:
         summary = record["summary"]
@@ -168,6 +169,15 @@ def collect_rows(records: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]
                     "total_cache_saved_fraction": savings.get(budget, float("nan")),
                 }
             )
+        for row in summary.get("native_acceptance_cross_context_effects", []):
+            budget = int(row["budget"])
+            native_rows.append(
+                {
+                    **prefix,
+                    **row,
+                    "total_cache_saved_fraction": savings.get(budget, float("nan")),
+                }
+            )
         totals = summary.get("exactness_audit", {}).get("totals", {})
         exact = int(totals.get("exact", 0))
         ties = int(totals.get("numerical_tie", 0))
@@ -188,6 +198,7 @@ def collect_rows(records: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]
         "grouped": grouped_rows,
         "objective": objective_rows,
         "kv": kv_rows,
+        "native": native_rows,
         "exactness": exactness_rows,
     }
 
@@ -349,6 +360,62 @@ def plot_final_results(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
     return paths
 
 
+def plot_native_acceptance(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
+    usable = [
+        row
+        for row in rows
+        if finite(row.get("total_cache_saved_fraction"))
+        and finite(row.get("paired_acceptance_mean"))
+        and finite(row.get("paired_acceptance_ci_low"))
+        and finite(row.get("paired_acceptance_ci_high"))
+    ]
+    if not usable:
+        return []
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return []
+    colors = {
+        "quality": "#26456E",
+        "acceptance": "#D1495B",
+        "k_priority": "#2A9D8F",
+        "v_priority": "#E9C46A",
+    }
+    fig, axis = plt.subplots(figsize=(10.0, 5.6))
+    for objective in ("quality", "acceptance", "k_priority", "v_priority"):
+        selected = [row for row in usable if row.get("allocation_objective") == objective]
+        if not selected:
+            continue
+        x = [100.0 * float(row["total_cache_saved_fraction"]) for row in selected]
+        y = [100.0 * float(row["paired_acceptance_mean"]) for row in selected]
+        low = [
+            100.0 * (float(row["paired_acceptance_mean"]) - float(row["paired_acceptance_ci_low"]))
+            for row in selected
+        ]
+        high = [
+            100.0 * (float(row["paired_acceptance_ci_high"]) - float(row["paired_acceptance_mean"]))
+            for row in selected
+        ]
+        axis.errorbar(
+            x,
+            y,
+            yerr=[low, high],
+            fmt="o",
+            capsize=3,
+            color=colors[objective],
+            label=objective.replace("_", " "),
+        )
+    axis.axhline(0.0, color="#222222", linewidth=1)
+    axis.set_xlabel("Total speculative KV cache saved (%)")
+    axis.set_ylabel("Acceptance change from native draft (percentage points)")
+    axis.set_title("Acceptance Retention Under KV Quantization", fontweight="bold")
+    axis.legend(frameon=False, ncol=2)
+    fig.tight_layout()
+    paths = save_figure(fig, out_dir, "native_acceptance_retention")
+    plt.close(fig)
+    return paths
+
+
 def latex_escape(value: Any) -> str:
     return str(value).replace("_", r"\_").replace("%", r"\%")
 
@@ -375,7 +442,7 @@ def write_latex_tables(
         saved = 100.0 * float(row["total_cache_saved_fraction"])
         objective_lines.append(
             f"{latex_escape(row['matrix_label'])} & {row['budget']} & "
-            f"{fmt_ci(row, 'acceptance', scale=100.0, digits=2)} & {saved:.1f}\\% \\\\" 
+            f"{fmt_ci(row, 'acceptance', scale=100.0, digits=2)} & {saved:.1f}\\% \\\\"
         )
     objective_lines.extend([r"\bottomrule", r"\end{tabular}"])
     objective_path = out_dir / "objective_campaign_table.tex"
@@ -396,6 +463,24 @@ def write_latex_tables(
     kv_lines.extend([r"\bottomrule", r"\end{tabular}"])
     kv_path = out_dir / "kv_priority_table.tex"
     kv_path.write_text("\n".join(kv_lines) + "\n", encoding="utf-8")
+
+    native_lines = [
+        r"\begin{tabular}{lllrr}",
+        r"\toprule",
+        r"Matrix & Bits & Allocation & $\Delta$ acceptance vs native (pp) & Total KV saved \\",
+        r"\midrule",
+    ]
+    for row in rows["native"]:
+        saved = 100.0 * float(row["total_cache_saved_fraction"])
+        native_lines.append(
+            f"{latex_escape(row['matrix_label'])} & {row['budget']} & "
+            f"{latex_escape(row['allocation_objective'])} & "
+            f"{fmt_ci(row, 'acceptance', scale=100.0, digits=2)} & "
+            f"{saved:.1f}\\% \\\\"
+        )
+    native_lines.extend([r"\bottomrule", r"\end{tabular}"])
+    native_path = out_dir / "native_acceptance_table.tex"
+    native_path.write_text("\n".join(native_lines) + "\n", encoding="utf-8")
     final_lines = [
         r"\begin{tabular}{llrrr}",
         r"\toprule",
@@ -414,7 +499,7 @@ def write_latex_tables(
     final_lines.extend([r"\bottomrule", r"\end{tabular}"])
     final_path = out_dir / "objective_final_results_table.tex"
     final_path.write_text("\n".join(final_lines) + "\n", encoding="utf-8")
-    return [str(objective_path), str(kv_path), str(final_path)]
+    return [str(objective_path), str(kv_path), str(native_path), str(final_path)]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -447,6 +532,7 @@ def main() -> None:
         configure_plot_style()
         plots.extend(plot_objective_effects(rows["objective"], args.out_dir))
         plots.extend(plot_kv_effects(rows["kv"], args.out_dir))
+        plots.extend(plot_native_acceptance(rows["native"], args.out_dir))
         plots.extend(plot_final_results(final_rows, args.out_dir))
     except ImportError:
         pass
