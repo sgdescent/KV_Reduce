@@ -40,8 +40,8 @@ gated 9B checkpoint.
    benchmark against full-precision draft KV.
 5. `robustness`: two shuffled C4 validation seeds for representative Qwen,
    Llama, and OLMo pairs.
-6. `long_context`: exploratory 8K and 16K Qwen2.5 runs before increasing the
-   prompt count for the final long-context result.
+6. `long_context`: exploratory 16K and 32K Qwen2.5 runs on PG19 before
+   increasing the prompt count for the final long-context result.
 7. `matched_objectives`: the same 21 uniform K/V configurations are evaluated
    under cached speculative decoding and teacher-forced LM quality at 1K and 4K.
 8. `zero_residual`: repeat the equal-memory objective comparisons with no BF16
