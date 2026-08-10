@@ -73,6 +73,9 @@ cmd=(
 if [[ "${SHUFFLE_EVAL:-1}" == "1" ]]; then
   cmd+=(--shuffle_eval)
 fi
+if [[ "${SKIP_UNIT_AUDIT:-0}" == "1" ]]; then
+  cmd+=(--skip_unit_audit)
+fi
 
 printf 'Running command:\n'
 printf ' %q' "${cmd[@]}"

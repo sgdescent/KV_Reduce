@@ -431,6 +431,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip_prompts", type=int, default=0)
     parser.add_argument("--draft_steps", type=int, default=4)
     parser.add_argument("--max_new_tokens", type=int, default=16)
+    parser.add_argument("--skip_unit_audit", action="store_true")
     parser.add_argument("--run_speculative_audit", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=str, default="outputs/target_verification_diagnostic/summary.json")
@@ -463,7 +464,7 @@ def main() -> None:
         )
     ]
     prompts = all_prompts[args.skip_prompts :]
-    audits = [
+    audits = [] if args.skip_unit_audit else [
         audit_prompt(
             model=model,
             prompt_ids=prompt,
