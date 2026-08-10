@@ -926,6 +926,13 @@ def run_one_config(
             if not math.isnan(margin)
         ]
         mismatch_min_margin = min(finite_margins) if finite_margins else float("nan")
+        compared_tokens = min(len(result["generated_tokens"]), len(target_tokens_list))
+        matching_tokens = sum(
+            int(generated_token == target_token)
+            for generated_token, target_token in zip(
+                result["generated_tokens"], target_tokens_list
+            )
+        )
         row = {
             "config": config_name,
             "prompt_idx": int(prompt_idx),
@@ -934,6 +941,12 @@ def run_one_config(
             "tokens_per_second": float(generated_tokens / elapsed_s) if elapsed_s > 0 else 0.0,
             "ms_per_generated_token": float(1000.0 * elapsed_s / generated_tokens) if generated_tokens > 0 else 0.0,
             "matches_target_greedy": float(result["generated_tokens"] == target_tokens_list),
+            "target_token_match_fraction": (
+                float(matching_tokens / compared_tokens) if compared_tokens > 0 else 0.0
+            ),
+            "target_prefix_match_tokens": int(
+                compared_tokens if first_mismatch < 0 else first_mismatch
+            ),
             "first_target_mismatch": int(first_mismatch),
             "mismatch_source": mismatch_source,
             "mismatch_target_top1_margin": float(mismatch_verifier_margin),
