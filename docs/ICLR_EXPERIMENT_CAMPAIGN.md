@@ -68,6 +68,11 @@ gated 9B checkpoint.
     at speculative proposal lengths `2/4/8`, with three seeds each. This tests
     whether a precision policy remains stable as quantization errors affect a
     longer unverified draft trajectory.
+15. `qwen7_reversal_powered`: replicate the seed-20 Qwen2.5-7B/3B K4V3-versus-
+    K3V4 objective reversal with 512 speculative prompts and 256 ordinary-
+    quality sequences per seed across three new seeds. This is a predeclared
+    confirmation experiment for a small acceptance effect, not an exploratory
+    source of additional allocation comparisons.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -147,6 +152,13 @@ placed after the cross-family role analysis:
 ```bash
 AFTER_JOB=<dependency-job> CAMPAIGN_CONCURRENCY=1 \
   bash scripts/submit_kivi_gamma_sweep.sh
+```
+
+The targeted Qwen2.5-7B/3B confirmation should run only after the exploratory
+cross-family and gamma analyses complete:
+
+```bash
+AFTER_JOB=<dependency-job> bash scripts/submit_qwen7_reversal_powered.sh
 ```
 
 The missing quantizer-factorial cell is launched with:
