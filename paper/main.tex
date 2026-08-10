@@ -30,7 +30,8 @@ implementations retain a separate key--value (KV) cache for each model. We study
 how the draft cache can be compressed while preserving the quantity that directly
 controls speculative speed: token acceptance. Our central observation is that
 acceptance is strongly asymmetric in key and value precision. Across six
-target--draft pairs, two text distributions, and contexts from 1K to 16K, 8-bit
+target--draft pairs, held-out text, mathematics, and code prompts, and contexts
+up to 32K, 8-bit
 keys with 4-bit values (K8V4) outperform the equal-memory K4V8 assignment in
 19 of 20 matched comparisons. On Qwen2.5-3B/1.5B, K8V4 improves acceptance by
 0.312 at 1K and 0.336 at 4K while reducing total target-plus-draft KV memory by
@@ -214,8 +215,9 @@ matrix uses 32 held-out sequences, three shuffle seeds, contexts 512, 1K, and
 4K, and profiled mean budgets $B\in\{6,8,10,12\}$. We separately repeat the
 Qwen matrix on streaming C4 and compare 16- versus 64-prompt acceptance
 calibration. Main profiles cover the top eight draft layers; an all-layer Qwen
-run measures the larger attainable memory reduction. Cross-family evaluation
-includes Qwen2.5, Llama 3, and OLMo 2 before optional broader-family validation.
+run measures the larger attainable memory reduction. Domain-shift experiments
+use GSM8K answers and HumanEval prompts, while PG19 supplies 16K--32K prefixes.
+Cross-family evaluation includes Qwen2.5, Qwen3, Llama 3, OLMo 2, and SmolLM2.
 We also vary the proposal length over $\gamma\in\{2,4,8\}$ to test whether
 allocation rankings change as rejection wastes longer draft blocks. All pairs
 are checked for tokenizer compatibility.
@@ -302,6 +304,24 @@ and $+0.026,+0.090$ for Llama. For Qwen at 8K and 16K, the differences remain
 $+0.260$ and $+0.140$, respectively, although these exploratory long-context runs
 contain only four and two prompts.
 
+\subsection{The asymmetry transfers to mathematics, code, and long prefixes}
+
+At the six-bit all-layer budget, K-priority remains close to native while
+V-priority fails across held-out domains. On GSM8K answers, K8V4 exceeds K4V8 by
+$22.72$ points at 512-token context (95\% CI $[19.34,25.90]$) and $25.18$
+points at 1K (CI $[20.76,29.81]$); K8V4 itself is within $0.12$ and $0.09$
+points of native acceptance. On HumanEval prompts, the corresponding K8V4--K4V8
+gaps are $27.03$ points at 256 tokens (CI $[21.22,33.26]$) and $32.93$ points
+at 512 (CI $[27.32,38.48]$). The HumanEval aggregate contains no non-tie target
+disagreements.
+
+The separation grows with long PG19 prefixes. At 16K, K-priority is $1.03$
+points below native (CI $[-4.47,2.14]$), while V-priority is $44.76$ points
+below native (CI $[-52.50,-38.14]$). An exploratory 32K aggregate gives a
+$52.38$-point K-priority advantage over V-priority (CI $[40.45,66.35]$).
+These results indicate that routing precision becomes more, rather than less,
+important as each query chooses among a longer cached prefix.
+
 \subsection{A conservative learned allocation}
 
 Profiling the top eight draft layers and selecting precision under a five-point
@@ -322,8 +342,8 @@ acceptance; the sensitivity-aware solutions stay near the 100\% line.
 \subsection{Objective-specific profiles differ, but do not improve acceptance consistently}
 
 Optimizing the sensitivity profile under the speculative loop is not reliably
-better than profiling ordinary language-model quality. On the powered Qwen
-experiment, the acceptance-mass allocation changes several layer-wise K/V bit
+better than profiling ordinary language-model quality. On the initial Qwen
+matrix, the acceptance-mass allocation changes several layer-wise K/V bit
 assignments but improves held-out acceptance over the quality allocation by only
 $0.53$ percentage points (95\% CI $[-0.39,1.51]$). The corresponding effects are
 $-1.74$ points for Llama (CI $[-4.47,0.86]$) and $-0.10$ points for OLMo
@@ -386,9 +406,10 @@ The present quantizer uses per-vector symmetric fake quantization. It does not y
 implement packed storage, residual windows, per-channel key grouping, or fused
 attention kernels; therefore analytical cache bytes, not wall-clock latency, are
 the reliable systems metric. Although the campaign spans six pairs and includes
-two C4 seeds for three pairs, prompt counts remain modest, especially at 8K--16K.
-Broader PG19/LongBench evaluation and task-conditioned code and mathematics prompts
-are needed. Our BF16 audit also shows that mathematically distribution-preserving
+two C4 seeds for three pairs, prompt counts remain modest at 16K--32K and on
+task-conditioned code and mathematics prompts. Broader LongBench evaluation and
+larger PG19, HumanEval, and GSM8K samples are needed. Our BF16 audit also shows
+that mathematically distribution-preserving
 speculation need not be bitwise identical to tokenwise decoding across kernel
 shapes; higher-precision and production-kernel audits remain important.
 
