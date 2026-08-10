@@ -48,6 +48,19 @@ is wide (-1.68 to +2.65 points), so this reversal is not statistically resolved.
 A predeclared powered replication uses three new seeds, 512 speculative prompts
 per seed, and 256 ordinary-quality sequences per seed.
 
+The broader cross-family result suggests a practical two-stage policy even
+without a resolved preference reversal. Across 48 model-pair/configuration cells,
+ordinary-quality KL and speculative-acceptance harm have Spearman correlation
+0.849; the model-pair macro average is 0.794 (95% bootstrap CI: 0.631 to 0.929).
+A leave-one-model-pair-out linear predictor using only ordinary-quality log-KL and
+top-1 agreement predicts acceptance harm with 1.01-point RMSE and R-squared 0.724.
+A conservative KL <= 0.01 gate selects 19 cells, and all 19 remain within a
+two-point acceptance-loss budget, although it recovers only 54.3% of all safe
+cells. Thus, ordinary-LM evaluation can cheaply reject risky configurations;
+acceptance evaluation is still needed to identify additional aggressive but safe
+operating points. This is an empirical screen on the tested cells, not a formal
+guarantee.
+
 ## Is This Sufficiently Novel For A Main Track?
 
 KV-cache quantization alone is not novel. KIVI established asymmetric K/V
@@ -75,7 +88,12 @@ If those do not hold, the honest contribution is still useful but should be
 framed as a broad empirical finding: quantizer geometry reverses the apparent
 K/V asymmetry, correct geometry largely aligns the two objectives, K4V4 is a
 robust draft-cache operating point, and Gaussian noise can give misleading K/V
-conclusions.
+conclusions. The new quality-surrogate result adds a practical contribution: a
+two-stage calibration procedure can use cheap ordinary-LM metrics as a
+conservative gate and reserve expensive speculative evaluation for candidates
+near the memory--quality frontier. This strengthens the systems methodology but,
+without a new allocator or packed-kernel gain, is not yet sufficient on its own
+for a main-track novelty claim.
 
 ## Why Not Quantize Ordinary LLM Caches Too?
 
@@ -104,6 +122,8 @@ quantization, then measure which objective selects which precision allocation.
 - Expanded cross-family target-cache quality and role comparison.
 - C4, GSM8K, and HumanEval robustness evaluation.
 - Eight-shot HellaSwag and ARC-Challenge task accuracy across disjoint seeds.
+- Synthetic passkey retrieval at 4K, 8K, and 16K context and three insertion
+  depths, using exact token-length construction.
 - 16K and 32K PG19 long-context evaluation.
 - Draft-only versus target-only versus joint target/draft quantization.
 - Speculation-length (`gamma`) sensitivity.

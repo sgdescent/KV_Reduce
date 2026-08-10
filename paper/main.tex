@@ -443,6 +443,27 @@ precision under this outlier-aware key quantizer. Objective-specific choices can
 differ at coarse minimum-savings thresholds, but their measured regrets are small
 and do not establish a distinct speculative allocation rule.
 
+This agreement is useful operationally. Across 48 model-pair/configuration cells,
+ordinary-quality KL and speculative-acceptance harm have Spearman correlation
+$0.849$; the macro average across the six model pairs is $0.794$ (95\% model-pair
+bootstrap CI $[0.631,0.929]$). A leave-one-model-pair-out linear predictor using
+only log-KL and top-1 agreement predicts acceptance harm with $1.01$-point RMSE,
+$0.70$-point MAE, and $R^2=0.724$. A conservative KL threshold of $0.01$ selects
+19 of 48 cells, all within a two-point acceptance-loss budget, but recovers only
+54.3\% of all cells satisfying that budget. Ordinary quality can therefore act as
+a cheap conservative screen, while direct acceptance evaluation remains useful
+for recovering more aggressive candidates. These empirical rates are descriptive
+of the tested cells rather than a distribution-free safety guarantee.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.88\linewidth]{campaign_artifacts/quality_acceptance_surrogate.pdf}
+  \caption{Ordinary-LM quality is a useful but incomplete surrogate for
+  speculative acceptance harm across six held-out model pairs. The dashed line
+  denotes the conservative KL $\leq 0.01$ screen.}
+  \label{fig:quality-surrogate}
+\end{figure}
+
 \subsection{Objective-specific profiles do not improve acceptance consistently}
 
 Optimizing the sensitivity profile under the speculative loop is not reliably
@@ -545,8 +566,11 @@ loss and KL below 0.01, but matched objective rankings remain strongly correlate
 and show no statistically resolved equal-memory reversal. Powered task,
 long-context, and joint target/draft experiments are required before claiming a
 speculative-specific policy.
-These findings motivate packed asymmetric kernels and allocation policies trained
-against the downstream decoding objective rather than reconstruction error alone.
+The observed cross-family correlation supports a two-stage calibration procedure:
+ordinary-quality metrics cheaply reject risky configurations, then direct
+acceptance testing searches the remaining memory frontier. These findings
+motivate packed asymmetric kernels and allocation policies trained against the
+downstream decoding objective rather than reconstruction error alone.
 
 \bibliography{references}
 \bibliographystyle{template/iclr2026_conference}
