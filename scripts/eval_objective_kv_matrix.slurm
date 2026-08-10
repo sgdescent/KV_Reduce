@@ -27,7 +27,10 @@ fi
 IFS=$'\t' read -r objective budget context seed num_eval quant_configs quality_allocation acceptance_allocation out_dir <<< "$line"
 mkdir -p "$out_dir"
 
-common_wandb=(--wandb --wandb_project "${WANDB_PROJECT:-kv-reduce}" --wandb_group "${WANDB_GROUP:-objective-matrix}")
+common_wandb=()
+if [[ "${ENABLE_WANDB:-1}" == "1" ]]; then
+  common_wandb=(--wandb --wandb_project "${WANDB_PROJECT:-kv-reduce}" --wandb_group "${WANDB_GROUP:-objective-matrix}")
+fi
 if [[ "$objective" == "quality" ]]; then
   python3 -u profile_kv_quality_sensitivity.py \
     --model "${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}" \
