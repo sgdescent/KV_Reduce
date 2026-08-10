@@ -30,18 +30,20 @@ implementations retain a separate key--value (KV) cache for each model. We study
 how the draft cache can be compressed while preserving the quantity that directly
 controls speculative speed: token acceptance. We show that conclusions about key
 versus value precision depend critically on quantizer geometry. A naive per-token
-symmetric quantizer makes 8-bit keys with 4-bit values (K8V4) appear dramatically
-better than equal-memory K4V8 across models and contexts. However, replacing only
-the key quantizer with grouped per-channel affine quantization recovers the lost
-acceptance, revealing that persistent key-channel outliers---not an intrinsic need
-for more key bits---drive the apparent asymmetry. This motivates a matched study
+symmetric quantizer makes 8-bit keys with 4-bit values (K8V4) outperform
+equal-memory K4V8 by 10.87 acceptance points across six model pairs. Replacing
+only the key quantizer with grouped per-channel affine quantization changes the
+same contrast to $-0.25$ points; the paired geometry shift is $-11.12$ points
+(95\% model-pair bootstrap CI $[-19.71,-4.25]$). This reveals that persistent
+key-channel outliers---not an intrinsic need for more key bits---drive the
+apparent asymmetry. This motivates a matched study
 of mixed-precision allocations using KIVI-style per-channel affine keys and
 per-token affine values under two downstream objectives: ordinary language-model
-quality and speculative acceptance. Across three seeds, K4V4 removes 66.3--69.9\%
-of the draft cache (29.0--30.6\% of total target-plus-draft KV) at 1K--4K while
-changing acceptance by $-0.43$ to $-0.05$ percentage points; both confidence
-intervals include zero and ordinary-quality KL remains below 0.01. However,
-equal-memory K/V pairs show no objective-preference reversal, rejecting a
+quality and speculative acceptance. Across the six pairs, K4V4 removes 66.13\%
+of the draft cache and 22.64\% of total target-plus-draft KV at 1K, with a
+$+0.10$ point acceptance change (95\% CI $[-0.04,+0.25]$), ordinary-quality
+KL 0.00730, and 95.99\% top-1 agreement. However, no equal-memory comparison
+shows a statistically resolved objective-preference reversal, rejecting a
 universal speculative-specific precision rule.
 The target verifier is never quantized; we separately audit finite-precision
 differences between batched verification and tokenwise BF16 decoding.
@@ -375,6 +377,24 @@ K4V8 changes acceptance by $+0.77$ points (CI $[-0.57,2.18]$) while saving
 K4V8 and K4V4 save 25.7\% and 31.2\% total KV, respectively, with confidence
 intervals that still include no acceptance change.
 
+The effect generalizes beyond Qwen. Figure~\ref{fig:geometry-asymmetry} pairs the
+same six model families under the two quantizer geometries at 1K. The naive
+K8V4--K4V8 contrast averages $+10.87$ acceptance points (95\% model-pair
+bootstrap CI $[+3.75,+19.68]$), while the KIVI contrast averages $-0.25$ points
+(CI $[-0.56,+0.04]$). Their paired difference is $-11.12$ points
+(CI $[-19.71,-4.25]$). K8V4 wins five of six families under the naive geometry
+but only two of six under KIVI, demonstrating that the apparent role asymmetry
+cannot be interpreted independently of quantization axis and grouping.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{campaign_artifacts/quantizer_geometry_asymmetry.pdf}
+  \caption{Equal-memory K8V4 minus K4V8 acceptance under matched model pairs.
+  Grouped per-channel affine key quantization removes the large asymmetry created
+  by naive per-token symmetric quantization.}
+  \label{fig:geometry-asymmetry}
+\end{figure}
+
 A fixed-key value-precision sweep identifies a sharp knee below four bits. Across
 three 1K-context seeds, K8V4 saves $27.00\%$ of total target-plus-draft KV memory
 with an acceptance change of $-1.06$ points (CI $[-2.33,0.19]$). K8V3 increases
@@ -516,13 +536,15 @@ Draft KV compression should be evaluated by the speculative work it preserves,
 not reconstruction error alone. Equally importantly, precision allocation cannot
 be interpreted independently of quantization axis, grouping, and zero-points: a
 naive quantizer can manufacture an apparent K/V asymmetry that an outlier-aware
-quantizer removes. Our final analysis therefore compares speculative acceptance
-and ordinary language-model quality using the same KIVI-style quantizer at matched
-memory. On Qwen, uniform K4V4 provides a reproducible 29--31\% total-cache
-reduction with no statistically resolved acceptance loss and KL below 0.01, but
-matched objective rankings remain strongly correlated and show no equal-memory
-reversal. Cross-family and joint target/draft role-allocation experiments are
-required before claiming a speculative-specific policy.
+quantizer removes. Across six model pairs, changing quantizer geometry shifts the
+K8V4--K4V8 acceptance contrast by $-11.12$ points. Our final analysis therefore
+compares speculative acceptance and ordinary language-model quality using the
+same KIVI-style quantizer at matched memory. Uniform K4V4 removes 66.13\% of the
+draft cache and 22.64\% of combined KV with no statistically resolved acceptance
+loss and KL below 0.01, but matched objective rankings remain strongly correlated
+and show no statistically resolved equal-memory reversal. Powered task,
+long-context, and joint target/draft experiments are required before claiming a
+speculative-specific policy.
 These findings motivate packed asymmetric kernels and allocation policies trained
 against the downstream decoding objective rather than reconstruction error alone.
 

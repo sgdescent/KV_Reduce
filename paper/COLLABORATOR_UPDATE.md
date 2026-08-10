@@ -24,13 +24,22 @@ draft cache and 18.36% of total KV memory, with a +0.41 point acceptance change
 small positive acceptance deltas as preservation, not as evidence that
 quantization improves the model.
 
-The current evidence also shows that quantizer geometry matters. Under the
-outlier-aware KIVI geometry, reducing value precision from four to three bits
+The clearest result so far is that quantizer geometry changes the apparent K/V
+sensitivity. We paired the same six model families at 1K context. With naive
+per-token symmetric quantization, K8V4 beats equal-memory K4V8 by 10.87
+acceptance points on average (95% model-pair bootstrap CI: 3.75 to 19.68) and
+wins five of six pairs. With KIVI-style grouped per-channel affine keys, the
+same contrast is -0.25 points (CI: -0.56 to +0.04) and K8V4 wins only two of
+six. The paired geometry shift is -11.12 points (CI: -19.71 to -4.25). Thus,
+the earlier conclusion that keys inherently require more precision was largely
+an artifact of applying a poor quantization axis to persistent key-channel
+outliers.
+
+Within the KIVI geometry, reducing value precision from four to three bits
 (K4V3) is more harmful on average than reducing key precision (K3V4): K4V3
 changes acceptance by -1.01 points and has KL 0.0327, while K3V4 changes
-acceptance by -0.32 points and has KL 0.0111. This differs from our earlier
-Gaussian-noise diagnostic, so perturbation sensitivity cannot be treated as a
-direct proxy for quantization sensitivity.
+acceptance by -0.32 points and has KL 0.0111. Gaussian perturbation sensitivity
+therefore cannot be treated as a direct proxy for quantization sensitivity.
 
 We see one raw equal-memory objective-preference reversal on Qwen2.5-7B/3B:
 speculative acceptance favors K4V3 over K3V4 by +0.43 points, while ordinary
@@ -46,9 +55,9 @@ quantization, KVmix and RateQuant study importance-aware or rate-distortion bit
 allocation, and QuantSpec and Quasar combine quantization with speculative
 decoding. The potential main-track contribution is narrower:
 
-> KV-cache precision allocation should be optimized for the downstream decoding
-> objective, and speculative acceptance may induce a different allocation from
-> ordinary language-model quality at the same memory budget.
+> KV-cache sensitivity is jointly determined by tensor role, quantizer geometry,
+> and downstream decoding objective; conclusions drawn from isotropic noise or
+> one quantization axis do not reliably transfer to a deployed quantizer.
 
 The current cross-family K4V4 result is strong evidence that draft-cache
 quantization is practical, but it is not yet enough by itself for a main-track
@@ -63,9 +72,10 @@ establishes at least one of the following:
    capacity gains at long context, not only fake-quantization memory estimates.
 
 If those do not hold, the honest contribution is still useful but should be
-framed as a broad empirical finding: correct quantizer geometry largely aligns
-the two objectives, K4V4 is a robust draft-cache operating point, and Gaussian
-noise can give misleading K/V conclusions.
+framed as a broad empirical finding: quantizer geometry reverses the apparent
+K/V asymmetry, correct geometry largely aligns the two objectives, K4V4 is a
+robust draft-cache operating point, and Gaussian noise can give misleading K/V
+conclusions.
 
 ## Why Not Quantize Ordinary LLM Caches Too?
 

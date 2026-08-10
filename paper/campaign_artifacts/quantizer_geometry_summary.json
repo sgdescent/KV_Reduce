@@ -1,0 +1,116 @@
+{
+  "inputs": {
+    "naive_summary": "outputs/paper_campaign_current/campaign_aggregate.json",
+    "kivi_preference_csv": "outputs/kivi_objective_cross_family/meta_aggregate_current/preference_rows.csv"
+  },
+  "num_paired_model_pairs": 6,
+  "contrast": "acceptance(K8V4) - acceptance(K4V8)",
+  "inference_unit": "model_pair",
+  "naive_macro": {
+    "mean": 0.10872256141464613,
+    "ci_low": 0.037466533551430294,
+    "ci_high": 0.19683299532725496
+  },
+  "kivi_macro": {
+    "mean": -0.002505560964819279,
+    "ci_low": -0.005550067314753548,
+    "ci_high": 0.0004272214429659656
+  },
+  "geometry_shift_kivi_minus_naive": {
+    "mean": -0.1112281223794654,
+    "ci_low": -0.19705124174394092,
+    "ci_high": -0.042454766988829495
+  },
+  "naive_k8v4_win_count": 5,
+  "kivi_k8v4_win_count": 2,
+  "rows": [
+    {
+      "pair": "llama31_8b_llama32_3b",
+      "pair_label": "Llama 3.1/3.2",
+      "naive_k8v4_minus_k4v8": 0.011300922655363643,
+      "naive_ci_low": -0.019074159383851083,
+      "naive_ci_high": 0.042819465812714466,
+      "kivi_k8v4_minus_k4v8": -0.00440904627194022,
+      "kivi_ci_low": -0.019401283911695988,
+      "kivi_ci_high": 0.010594039255530097,
+      "geometry_shift_kivi_minus_naive": -0.015709968927303863,
+      "naive_total_saved_fraction": 0.28802083333333334,
+      "kivi_total_saved_fraction": 0.2552644230769231,
+      "kivi_equal_memory_gap": 0.008076923076923037
+    },
+    {
+      "pair": "olmo2_7b_1b",
+      "pair_label": "OLMo 2 7B/1B",
+      "naive_k8v4_minus_k4v8": -0.0018762437875292082,
+      "naive_ci_low": -0.023018937014631705,
+      "naive_ci_high": 0.020491197413737627,
+      "kivi_k8v4_minus_k4v8": -0.00795994465755967,
+      "kivi_ci_low": -0.022153116808450557,
+      "kivi_ci_high": 0.004534412955465583,
+      "geometry_shift_kivi_minus_naive": -0.006083700870030462,
+      "naive_total_saved_fraction": 0.1234375,
+      "kivi_total_saved_fraction": 0.10939903846153846,
+      "kivi_equal_memory_gap": 0.0034615384615384603
+    },
+    {
+      "pair": "qwen25_3b_15b",
+      "pair_label": "Qwen2.5 3B/1.5B",
+      "naive_k8v4_minus_k4v8": 0.3118274513082585,
+      "naive_ci_low": 0.23328884403185088,
+      "naive_ci_high": 0.3900371823539156,
+      "kivi_k8v4_minus_k4v8": 0.0019505415072045285,
+      "kivi_ci_low": -0.012774283717679857,
+      "kivi_ci_high": 0.016841828858701335,
+      "geometry_shift_kivi_minus_naive": -0.309876909801054,
+      "naive_total_saved_fraction": 0.27001953125,
+      "kivi_total_saved_fraction": 0.2393103966346154,
+      "kivi_equal_memory_gap": 0.0075721153846153855
+    },
+    {
+      "pair": "qwen25_7b_3b",
+      "pair_label": "Qwen2.5 7B/3B",
+      "naive_k8v4_minus_k4v8": 0.12513339473887097,
+      "naive_ci_low": 0.07539387430909947,
+      "naive_ci_high": 0.17836890463402047,
+      "kivi_k8v4_minus_k4v8": 0.0018368846436443986,
+      "kivi_ci_low": -0.010879961740793864,
+      "kivi_ci_high": 0.01498297477660021,
+      "geometry_shift_kivi_minus_naive": -0.12329651009522657,
+      "naive_total_saved_fraction": 0.24150815217391305,
+      "kivi_total_saved_fraction": 0.21404159698996655,
+      "kivi_equal_memory_gap": 0.0067725752508361325
+    },
+    {
+      "pair": "qwen3_8b_4b",
+      "pair_label": "Qwen3 8B/4B",
+      "naive_k8v4_minus_k4v8": 0.1090813006445196,
+      "naive_ci_low": 0.046129248442413215,
+      "naive_ci_high": 0.1726969161204975,
+      "kivi_k8v4_minus_k4v8": -0.005849323638302872,
+      "kivi_ci_low": -0.018750125147674268,
+      "kivi_ci_high": 0.006439920391570597,
+      "geometry_shift_kivi_minus_naive": -0.11493062428282247,
+      "naive_total_saved_fraction": 0.23557692307692307,
+      "kivi_total_saved_fraction": 0.20857988165680474,
+      "kivi_equal_memory_gap": 0.006656804733727817
+    },
+    {
+      "pair": "smollm2_17b_360m",
+      "pair_label": "SmolLM2 1.7B/360M",
+      "naive_k8v4_minus_k4v8": 0.09686854292839331,
+      "naive_ci_low": 0.05357800500726446,
+      "naive_ci_high": 0.14305293791550153,
+      "kivi_k8v4_minus_k4v8": -0.0006024773719618404,
+      "kivi_ci_low": -0.009835869916982487,
+      "kivi_ci_high": 0.00842587754666474,
+      "geometry_shift_kivi_minus_naive": -0.09747102030035515,
+      "naive_total_saved_fraction": 0.1050646551724138,
+      "kivi_total_saved_fraction": 0.09296253315649866,
+      "kivi_equal_memory_gap": 0.0029840848806366033
+    }
+  ],
+  "plots": [
+    "outputs/quantizer_geometry_comparison/quantizer_geometry_asymmetry.png",
+    "outputs/quantizer_geometry_comparison/quantizer_geometry_asymmetry.pdf"
+  ]
+}
