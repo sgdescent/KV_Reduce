@@ -183,6 +183,14 @@ def main() -> None:
         parser.error("Provide at least two --profile LABEL=PATH arguments.")
 
     profiles = [(label, read_rows(path)) for label, path in args.profile]
+    common_candidates = set.intersection(*(set(rows) for _, rows in profiles))
+    if not common_candidates:
+        raise ValueError("The supplied profiles have no common K/V candidates.")
+    # Profile-size ablations must compare the same layer/component/bit cells.
+    profiles = [
+        (label, {name: rows[name] for name in sorted(common_candidates)})
+        for label, rows in profiles
+    ]
     args.out_dir.mkdir(parents=True, exist_ok=True)
     component_rows = component_summary(profiles)
     stability_rows = []
@@ -194,6 +202,7 @@ def main() -> None:
     payload = {
         "profiles": [label for label, _ in profiles],
         "reference_profile": profiles[-1][0],
+        "num_common_candidates": len(common_candidates),
         "component_sensitivity": component_rows,
         "stability": stability_rows,
         "plots": plots,
