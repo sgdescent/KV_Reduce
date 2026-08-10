@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 from spec_kv_statistics import bootstrap_acceptance_contrast
+from aggregate_value_precision_sweep import parse_seed_filter
 
 
 def read_json(path: Path) -> Dict[str, Any]:
@@ -64,10 +65,15 @@ def exact_enough(row: Dict[str, str], tie_margin: float) -> bool:
     return math.isfinite(margin) and margin <= tie_margin
 
 
-def load_spec_rows(root: Path) -> Tuple[Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]], Dict[Tuple[int, str], List[float]]]:
+def load_spec_rows(
+    root: Path, seeds: set[int] | None = None
+) -> Tuple[Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]], Dict[Tuple[int, str], List[float]]]:
     grouped: Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]] = {}
     memory: Dict[Tuple[int, str], List[float]] = defaultdict(list)
     for seed_dir in sorted(root.glob("ctx_*/seed_*")):
+        seed_hint = int(seed_dir.name.removeprefix("seed_"))
+        if seeds is not None and seed_hint not in seeds:
+            continue
         summary_path = seed_dir / "summary.json"
         rows_path = seed_dir / "benchmark_rows.csv"
         if not summary_path.exists() or not rows_path.exists():
@@ -77,6 +83,8 @@ def load_spec_rows(root: Path) -> Tuple[Dict[Tuple[int, int, str], Dict[str, Dic
             raise ValueError(f"Stale speculative evaluator in {summary_path}")
         context = int(summary["config"]["prompt_len"])
         seed = int(summary["config"]["seed"])
+        if seeds is not None and seed not in seeds:
+            continue
         for row in read_csv(rows_path):
             grouped.setdefault((context, seed, row["prompt_idx"]), {})[row["config"]] = row
         for config, metrics in summary["summaries"].items():
@@ -84,9 +92,14 @@ def load_spec_rows(root: Path) -> Tuple[Dict[Tuple[int, int, str], Dict[str, Dic
     return grouped, memory
 
 
-def load_quality_rows(root: Path) -> Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]]:
+def load_quality_rows(
+    root: Path, seeds: set[int] | None = None
+) -> Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]]:
     grouped: Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]] = {}
     for seed_dir in sorted(root.glob("ctx_*/seed_*")):
+        seed_hint = int(seed_dir.name.removeprefix("seed_"))
+        if seeds is not None and seed_hint not in seeds:
+            continue
         summary_path = seed_dir / "summary.json"
         rows_path = seed_dir / "raw_sequence_rows.csv"
         if not summary_path.exists() or not rows_path.exists():
@@ -96,6 +109,8 @@ def load_quality_rows(root: Path) -> Dict[Tuple[int, int, str], Dict[str, Dict[s
             raise ValueError(f"Stale quality evaluator in {summary_path}")
         context = int(summary["config"]["prompt_len"])
         seed = int(summary["config"]["seed"])
+        if seeds is not None and seed not in seeds:
+            continue
         for row in read_csv(rows_path):
             grouped.setdefault((context, seed, row["sequence_idx"]), {})[row["candidate"]] = row
     return grouped
@@ -202,6 +217,11 @@ def main() -> None:
     )
     parser.add_argument("--tie_margin", type=float, default=1e-3)
     parser.add_argument(
+        "--seeds",
+        default="",
+        help="Optional comma-separated seed allowlist for provenance-safe partial aggregation.",
+    )
+    parser.add_argument(
         "--max_memory_gap",
         type=float,
         default=0.002,
@@ -210,8 +230,9 @@ def main() -> None:
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    spec_rows, memory = load_spec_rows(args.spec_dir)
-    quality_rows = load_quality_rows(args.quality_dir)
+    selected_seeds = parse_seed_filter(args.seeds)
+    spec_rows, memory = load_spec_rows(args.spec_dir, selected_seeds)
+    quality_rows = load_quality_rows(args.quality_dir, selected_seeds)
     rows = aggregate_preferences(
         spec_rows=spec_rows,
         quality_rows=quality_rows,
@@ -231,6 +252,7 @@ def main() -> None:
             bool(row["memory_matched"] and row["preference_reversal"]) for row in rows
         ),
         "max_memory_gap": args.max_memory_gap,
+        "selected_seeds": sorted(selected_seeds) if selected_seeds is not None else None,
         "comparisons": rows,
     }
     (args.out_dir / "preference_summary.json").write_text(

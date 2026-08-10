@@ -11,7 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from aggregate_value_precision_sweep import parse_config_bits
+from aggregate_value_precision_sweep import parse_config_bits, parse_seed_filter
 from spec_kv_statistics import bootstrap_mean_ci
 
 
@@ -89,12 +89,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sweep_dir", required=True, type=Path)
     parser.add_argument("--out_dir", required=True, type=Path)
+    parser.add_argument(
+        "--seeds",
+        default="",
+        help="Optional comma-separated seed allowlist for provenance-safe partial aggregation.",
+    )
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    selected_seeds = parse_seed_filter(args.seeds)
     run_rows: List[Dict[str, Any]] = []
     sequence_metrics: Dict[Tuple[int, str], Dict[str, List[float]]] = defaultdict(
         lambda: defaultdict(list)
@@ -102,6 +108,9 @@ def main() -> None:
     missing = []
 
     for seed_dir in sorted(args.sweep_dir.glob("ctx_*/seed_*")):
+        seed_hint = int(seed_dir.name.removeprefix("seed_"))
+        if selected_seeds is not None and seed_hint not in selected_seeds:
+            continue
         summary_path = seed_dir / "summary.json"
         raw_path = seed_dir / "raw_sequence_rows.csv"
         if not summary_path.exists() or not raw_path.exists():
@@ -113,6 +122,8 @@ def main() -> None:
             raise ValueError(f"Stale evaluator {version!r} in {summary_path}")
         context = int(summary["config"]["prompt_len"])
         seed = int(summary["config"]["seed"])
+        if selected_seeds is not None and seed not in selected_seeds:
+            continue
         for raw in read_csv(raw_path):
             name = raw["candidate"]
             if name == "none":
@@ -182,6 +193,7 @@ def main() -> None:
     payload = {
         "num_complete_runs": len({(row["context"], row["seed"]) for row in run_rows}),
         "missing_runs": missing,
+        "selected_seeds": sorted(selected_seeds) if selected_seeds is not None else None,
         "grouped": grouped,
         "plots": make_plot(grouped, args.out_dir),
     }

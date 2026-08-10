@@ -136,12 +136,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sweep_dir", required=True, type=Path)
     parser.add_argument("--out_dir", required=True, type=Path)
     parser.add_argument("--exactness_tie_margin", type=float, default=1e-3)
+    parser.add_argument(
+        "--seeds",
+        default="",
+        help="Optional comma-separated seed allowlist for provenance-safe partial aggregation.",
+    )
     return parser
+
+
+def parse_seed_filter(value: str) -> set[int] | None:
+    seeds = {int(item.strip()) for item in value.split(",") if item.strip()}
+    return seeds or None
 
 
 def main() -> None:
     args = build_parser().parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    selected_seeds = parse_seed_filter(args.seeds)
     run_rows: List[Dict[str, Any]] = []
     prompt_effects: Dict[
         Tuple[int, str], List[Tuple[Dict[str, str], Dict[str, str]]]
@@ -151,6 +162,9 @@ def main() -> None:
     missing = []
 
     for seed_dir in sorted(args.sweep_dir.glob("ctx_*/seed_*")):
+        seed_hint = int(seed_dir.name.removeprefix("seed_"))
+        if selected_seeds is not None and seed_hint not in selected_seeds:
+            continue
         summary_path = seed_dir / "summary.json"
         benchmark_path = seed_dir / "benchmark_rows.csv"
         if not summary_path.exists() or not benchmark_path.exists():
@@ -163,6 +177,8 @@ def main() -> None:
         config = summary["config"]
         context = int(config["prompt_len"])
         seed = int(config["seed"])
+        if selected_seeds is not None and seed not in selected_seeds:
+            continue
         names = [name for name in summary["quant_configs"] if name != "none"]
         effects, counts, invalid = aggregate_prompt_effects(
             read_csv(benchmark_path),
@@ -228,6 +244,7 @@ def main() -> None:
     payload = {
         "num_complete_runs": len({(row["context"], row["seed"]) for row in run_rows}),
         "missing_runs": missing,
+        "selected_seeds": sorted(selected_seeds) if selected_seeds is not None else None,
         "exactness_tie_margin": args.exactness_tie_margin,
         "exactness": dict(exactness),
         "invalid_prompt_occurrences": invalid_prompts,
