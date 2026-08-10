@@ -1,20 +1,30 @@
 # KV-Cache Quantization: Collaborator Update
 
-Status: provisional results as of August 10, 2026. Powered allocation,
-long-context, task, and speculation-length experiments are still running. The
-four-condition verifier exactness audit is complete.
+Status: provisional results as of August 10, 2026. The matched-objective grid,
+three-length speculation sweep, 16K/32K speculative long-context sweep, and
+four-condition verifier audit are complete. The powered 7B/3B replication,
+task-accuracy checks, and controlled 4K quantizer-factorial cells are still
+running.
 
 ## Copy-Paste Message
 
 The cache-quantization pivot is promising, but I would not yet call the current
 result sufficient for a main-track paper. KV-cache quantization, asymmetric K/V
-precision, and mixed-precision search already have strong prior work. Our sharper
-potential contribution is to show that the *downstream objective* matters: the
-precision policy that preserves ordinary LM quality need not be the policy that
-maximizes speculative acceptance and serving efficiency. A main-track case needs
-a statistically resolved objective-specific allocation or an allocator that
-beats ordinary-quality and uniform baselines at equal memory, ideally with packed
-kernels and end-to-end long-context gains.
+precision, and quantized speculative decoding already have strong prior work.
+Our completed matched-objective grid also rejects the strongest version of our
+initial hypothesis: speculative acceptance harm and ordinary-LM KL are strongly
+rank-correlated at 1K and 4K (Spearman 0.964 and 0.878), with no statistically
+resolved equal-memory preference reversal. We should not claim that speculative
+decoding universally needs a different K/V bit allocation.
+
+The sharper result is instead that *quantizer geometry controls the apparent K/V
+sensitivity*. Holding model, prompts, value quantizer, and nominal bit budget
+fixed, changing only keys from per-token to grouped per-channel quantization
+moves the K8V4-minus-K4V8 acceptance contrast from +28.70 to -0.33 points and
+reverses the two-bit K/V preference. A credible main-track story would combine
+this controlled mechanism result with a geometry-aware allocator and packed
+kernels that improve long-context memory, batch capacity, or throughput over
+KIVI, uniform precision, and QuantSpec-style baselines.
 
 This should not be restricted to speculative decoding. We are now evaluating the
 same quantizer under three deployment regimes: ordinary autoregressive decoding,
@@ -67,13 +77,24 @@ the earlier conclusion that keys inherently require more precision was largely
 an artifact of applying a poor quantization axis to persistent key-channel
 outliers.
 
+The controlled three-seed factorial result is even sharper. Holding affine value
+quantization, model, prompts, and nominal bit budget fixed, per-token keys make
+K8V4 beat K4V8 by 28.70 acceptance points across 186 paired prompts (95% CI:
+26.10 to 31.38). Changing only the key axis to grouped per-channel quantization
+makes the same contrast -0.33 points across 189 prompts (CI: -1.26 to 0.62).
+At two bits, K4V2-minus-K2V4 reverses from +15.05 points (CI: 13.58 to 16.65)
+to -3.66 points (CI: -5.80 to -1.56). Ordinary-quality KL independently flips
+in the same direction: the K8V4-minus-K4V8 KL contrast changes from -2.023 to
++0.00440. This establishes a controlled geometry-induced preference reversal,
+not merely a cross-family correlation.
+
 Within the KIVI geometry, reducing value precision from four to three bits
 (K4V3) is more harmful on average than reducing key precision (K3V4): K4V3
 changes acceptance by -1.01 points and has KL 0.0327, while K3V4 changes
 acceptance by -0.32 points and has KL 0.0111. Gaussian perturbation sensitivity
 therefore cannot be treated as a direct proxy for quantization sensitivity.
 
-The completed three-seed `gamma=2` test resolves this asymmetry at two bits.
+The completed three-seed proposal-length sweep resolves this asymmetry at two bits.
 Across 191 paired prompts, K4V2 loses 5.43 acceptance points from BF16 (95% CI:
 -7.32 to -3.58), while K2V4 loses 1.43 points (CI: -2.58 to -0.31). The direct
 paired K4V2-minus-K2V4 contrast is -4.01 points (CI: -5.82 to -2.15). The two
@@ -84,7 +105,25 @@ aggressive value quantization can be more harmful than aggressive key
 quantization. This replicates at `gamma=4` across 189 paired prompts: K4V2
 loses 6.48 points (CI: -8.39 to -4.61), K2V4 loses 2.41 points
 (CI: -3.83 to -0.98), and the direct contrast is -4.07 points
-(CI: -5.95 to -2.26). The `gamma=8` replication is still running.
+(CI: -5.95 to -2.26). At `gamma=8`, the direct contrast remains -3.08 points
+across 191 paired prompts (CI: -4.70 to -1.48). The sign and statistical
+conclusion are therefore stable across proposal lengths 2, 4, and 8.
+
+The direct 20-configuration objective grid is now complete at 1K and 4K with
+three seeds per context. Acceptance harm and ordinary-quality KL have Spearman
+correlations 0.964 and 0.878, respectively, and none of six near-memory-matched
+comparisons reverses preference. K4V4 is the maximum-savings configuration that
+meets the predeclared two-point acceptance and 0.01-KL budgets at both contexts,
+saving 29.02% of combined target-plus-draft KV at 1K and 30.58% at 4K. This is a
+useful negative result: ordinary quality is a strong screening objective, while
+direct acceptance remains the final systems metric rather than a proven source
+of a different bit policy.
+
+The speculative PG19 sweep is also complete. At 16K, K4V4 saves 70.79% of the
+draft cache and 30.97% of combined KV with a +0.30-point acceptance change
+(CI: -2.25 to +3.04) across 24 paired prompts. At 32K it saves 70.94% of the
+draft cache and 31.04% combined KV; the -2.22-point estimate has a wide interval
+(-5.81 to 0.00) over only 11 prompts, so we treat 32K as preliminary.
 
 We see one raw equal-memory objective-preference reversal on Qwen2.5-7B/3B:
 speculative acceptance favors K4V3 over K3V4 by +0.43 points, while ordinary
@@ -201,15 +240,16 @@ difference is correctness:
 
 This gives us a clean comparative study: use the same quantization policy for
 ordinary decoding, draft-only speculative decoding, and joint target/draft
-quantization, then measure which objective selects which precision allocation.
+quantization, then measure both common robustness structure and any genuine
+objective-specific differences instead of assuming they exist.
 
 ## Experiments In Flight
 
 - Powered Qwen2.5-7B/3B equal-memory K4V3 versus K3V4 test.
-- C4, GSM8K, and HumanEval robustness evaluation.
 - Eight-shot HellaSwag and ARC-Challenge task accuracy across disjoint seeds.
-- 16K and 32K PG19 long-context evaluation.
-- Speculation-length (`gamma`) sensitivity.
+- Controlled 4K quantizer-geometry factorial replication.
+- Additional 16K/32K ordinary-quality sequences once GPU capacity permits.
+- C4, GSM8K, and HumanEval robustness aggregation and paper integration.
 
 ## Closest Work
 

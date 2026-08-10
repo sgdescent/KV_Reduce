@@ -377,6 +377,19 @@ K4V8 changes acceptance by $+0.77$ points (CI $[-0.57,2.18]$) while saving
 K4V8 and K4V4 save 25.7\% and 31.2\% total KV, respectively, with confidence
 intervals that still include no acceptance change.
 
+A controlled factorial cell keeps affine value quantization fixed, removes the
+residual window, and changes only the key axis. With per-token keys, equal-memory
+K8V4 beats K4V8 by $28.70$ acceptance points across 186 paired prompts
+(CI $[26.10,31.38]$); with grouped per-channel keys, the contrast becomes
+$-0.33$ points across 189 prompts (CI $[-1.26,0.62]$). The more aggressive
+K4V2--K2V4 comparison reverses sign from $+15.05$ points
+(CI $[13.58,16.65]$) to $-3.66$ points (CI $[-5.80,-1.56]$).
+Teacher-forced quality exhibits the same reversal: the K8V4--K4V8 KL contrast is
+$-2.023$ under per-token keys (CI $[-2.119,-1.927]$), but $+0.00440$ under
+per-channel keys (CI $[0.00391,0.00494]$). Thus, the key axis alone can reverse
+both the speculative and ordinary-quality preference while value geometry,
+model, prompts, and nominal bit budget remain fixed.
+
 The effect generalizes beyond Qwen. Figure~\ref{fig:geometry-asymmetry} pairs the
 same six model families under the two quantizer geometries at 1K. The naive
 K8V4--K4V8 contrast averages $+10.87$ acceptance points (95\% model-pair
@@ -418,7 +431,16 @@ aggressive key quantization in this setting. The result replicates at
 $\gamma=4$ across 189 paired prompts: K4V2 loses $6.48$ points
 (CI $[-8.39,-4.61]$), K2V4 loses $2.41$ points
 (CI $[-3.83,-0.98]$), and their direct contrast is $-4.07$ points
-(CI $[-5.95,-2.26]$).
+(CI $[-5.95,-2.26]$). At $\gamma=8$, the direct contrast remains
+$-3.08$ points across 191 paired prompts (CI $[-4.70,-1.48]$). Thus, the
+deployed-geometry conclusion is stable over proposal lengths 2, 4, and 8.
+
+The same KIVI geometry remains viable at long prefix lengths. On PG19 at 16K,
+K4V4 saves 70.79\% of draft-cache bytes and 30.97\% of combined target--draft
+KV, with a $+0.30$-point acceptance change across 24 paired prompts
+(CI $[-2.25,3.04]$). At 32K, it saves 70.94\% of draft KV and 31.04\% combined
+KV; the estimated acceptance change is $-2.22$ points (CI $[-5.81,0.00]$), but
+only 11 prompts are available, so we treat the 32K estimate as preliminary.
 
 \subsection{A conservative learned allocation}
 
@@ -634,8 +656,10 @@ not reconstruction error alone. Equally importantly, precision allocation cannot
 be interpreted independently of quantization axis, grouping, and zero-points: a
 naive quantizer can manufacture an apparent K/V asymmetry that an outlier-aware
 quantizer removes. Across six model pairs, changing quantizer geometry shifts the
-K8V4--K4V8 acceptance contrast by $-11.12$ points. Our final analysis therefore
-compares speculative acceptance and ordinary language-model quality using the
+K8V4--K4V8 acceptance contrast by $-11.12$ points. In the controlled same-model
+axis intervention, changing only the key axis moves the contrast from $+28.70$
+to $-0.33$ points and reverses the two-bit K/V preference. Our final analysis
+therefore compares speculative acceptance and ordinary language-model quality using the
 same KIVI-style quantizer at matched memory. Uniform K4V4 removes 66.13\% of the
 draft cache and 22.64\% of combined KV with no statistically resolved acceptance
 loss and KL below 0.01, but matched objective rankings remain strongly correlated
