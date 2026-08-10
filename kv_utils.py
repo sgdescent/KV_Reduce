@@ -303,9 +303,14 @@ def iter_token_blocks(
             column = text_column or find_text_column(first)
 
             def iter_texts():
-                yield first.get(column)
-                for example in iterator:
-                    yield example.get(column)
+                try:
+                    yield first.get(column)
+                    for example in iterator:
+                        yield example.get(column)
+                finally:
+                    close = getattr(iterator, "close", None)
+                    if close is not None:
+                        close()
 
             texts = iter_texts()
         else:
@@ -322,27 +327,32 @@ def iter_token_blocks(
     seen_blocks = 0
     eos_id = tokenizer.eos_token_id
 
-    for text in texts:
-        if text is None:
-            continue
-        text = str(text)
-        if not text.strip():
-            continue
-        ids = tokenizer(text, add_special_tokens=False)["input_ids"]
-        if not ids:
-            continue
-        buffer.extend(ids)
-        if add_eos_between_examples and eos_id is not None:
-            buffer.append(eos_id)
-        while len(buffer) >= seq_len:
-            block = torch.tensor(buffer[:seq_len], dtype=torch.long)
-            if seen_blocks >= skip_blocks:
-                yield block
-                yielded += 1
-                if yielded >= max_blocks:
-                    return
-            seen_blocks += 1
-            buffer = buffer[seq_len:]
+    try:
+        for text in texts:
+            if text is None:
+                continue
+            text = str(text)
+            if not text.strip():
+                continue
+            ids = tokenizer(text, add_special_tokens=False)["input_ids"]
+            if not ids:
+                continue
+            buffer.extend(ids)
+            if add_eos_between_examples and eos_id is not None:
+                buffer.append(eos_id)
+            while len(buffer) >= seq_len:
+                block = torch.tensor(buffer[:seq_len], dtype=torch.long)
+                if seen_blocks >= skip_blocks:
+                    yield block
+                    yielded += 1
+                    if yielded >= max_blocks:
+                        return
+                seen_blocks += 1
+                buffer = buffer[seq_len:]
+    finally:
+        close = getattr(texts, "close", None)
+        if close is not None:
+            close()
 
 
 
