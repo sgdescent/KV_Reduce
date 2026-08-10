@@ -15,7 +15,7 @@
 \newcommand{\method}{\textsc{SpecKV}}
 \newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
 
-\title{Keys Decide, Values Describe: Acceptance-Aware KV Cache Compression for Speculative Decoding}
+\title{Keys Decide, Values Describe: Sensitivity-Aware KV Cache Compression for Speculative Decoding}
 
 \author{Anonymous authors}
 
@@ -37,10 +37,13 @@ keys with 4-bit values (K8V4) outperform the equal-memory K4V8 assignment in
 27.0\%. Controlled Gaussian perturbations expose the same mechanism: key noise
 changes attention routing and rapidly destroys top-1 stability, whereas value
 noise is tolerated at much larger magnitudes. Based on this observation, \method
-profiles each draft layer and cache component under the actual speculative loop,
-then selects mixed precision under an acceptance-drop budget. The target verifier
-is never quantized; we separately audit finite-precision differences between
-batched verification and tokenwise BF16 decoding.
+profiles each draft layer and cache component under both ordinary language-model
+quality and the actual speculative loop, then cross-evaluates equal-memory mixed-
+precision allocations. The two objectives produce different sensitivity maps,
+but acceptance-optimized allocation does not consistently outperform the simpler
+quality-trained K-first policy on held-out prompts. The target verifier is never
+quantized; we separately audit finite-precision differences between batched
+verification and tokenwise BF16 decoding.
 \end{abstract}
 
 \section{Introduction}
@@ -58,7 +61,8 @@ metrics do not reveal whether a compressed cache remains a useful speculator. A
 small distributional error can move the draft's top proposal away from the
 target's token and terminate an entire speculative block. Conversely, errors in
 directions irrelevant to the verifier may have little effect on acceptance. This
-motivates an acceptance-aware rather than reconstruction-aware objective.
+motivates measuring compression inside the speculative loop and testing whether
+an acceptance-aware objective improves upon ordinary language-model quality.
 
 Our investigation starts from the attention decomposition
 \begin{equation}
@@ -74,13 +78,16 @@ prior KV quantization analyses~\citep{liu2024kivi,hariri2025more}, but we ask a
 different operational question: \emph{which errors can a draft model tolerate
 without losing speculative acceptance?}
 
-Our findings support three claims. First, Gaussian key perturbations
+Our findings support four claims. First, Gaussian key perturbations
 are dramatically more destructive to next-token stability than value
 perturbations. Second, K8V4 dominates K4V8 in 19 of 20 equal-memory comparisons
 across six model pairs; the only reversal is an OLMo difference of $-0.002$ whose
 confidence interval includes zero. Third, a conservative layer-wise allocator
 retains 94.9--102.8\% of native acceptance while saving 2.9--9.9\% of total KV
-memory.
+memory. Fourth, directly fitting the allocator to speculative acceptance changes
+its selected precision map but does not consistently improve held-out acceptance;
+the stable result is the K/V asymmetry itself, not superiority of one profiling
+objective.
 
 \section{Background and Problem Formulation}
 
@@ -312,6 +319,27 @@ acceptance; the sensitivity-aware solutions stay near the 100\% line.
   \label{fig:pareto}
 \end{figure}
 
+\subsection{Objective-specific profiles differ, but do not improve acceptance consistently}
+
+Optimizing the sensitivity profile under the speculative loop is not reliably
+better than profiling ordinary language-model quality. On the powered Qwen
+experiment, the acceptance-mass allocation changes several layer-wise K/V bit
+assignments but improves held-out acceptance over the quality allocation by only
+$0.53$ percentage points (95\% CI $[-0.39,1.51]$). The corresponding effects are
+$-1.74$ points for Llama (CI $[-4.47,0.86]$) and $-0.10$ points for OLMo
+(CI $[-2.49,2.33]$). Under the more aggressive three-bit mean budget on Qwen,
+acceptance optimization is significantly worse by $4.93$ points
+(CI $[-7.29,-2.64]$).
+
+These results reject the strongest version of our initial hypothesis: directly
+optimizing a small calibration set for speculative acceptance is not sufficient
+to discover a better held-out allocation. Greedy acceptance is discrete and
+high variance, while the additive allocator ignores interactions among jointly
+quantized components. In contrast, quality profiling repeatedly recovers the
+stable K-first solution and has lower held-out KL. We therefore treat downstream
+acceptance as the evaluation criterion, but not yet as a proven superior training
+objective.
+
 \subsection{Finite-precision verification audit}
 
 The target cache and weights remain BF16 and are never quantized. Nevertheless,
@@ -376,11 +404,13 @@ serving-capacity claims.
 Draft KV compression should be evaluated by the speculative work it preserves,
 not reconstruction error alone. Across six model pairs, K8V4 wins 19 of 20
 equal-memory comparisons, showing that keys are acceptance-critical routing state
-while values usually tolerate more aggressive compression. Acceptance-aware
-profiling preserves near-native draft quality with conservative savings, and the
-Qwen results show that substantially larger savings are possible. These results
-motivate packed asymmetric kernels and interaction-aware allocation optimized
-directly for speculative acceptance.
+while values usually tolerate more aggressive compression. Conservative K-first
+allocations preserve near-native draft behavior, and the Qwen results show that
+substantially larger savings are possible. Direct acceptance-trained allocation
+does not yet improve reliably over quality profiling, exposing calibration noise
+and component interactions as important open problems. These findings motivate
+packed asymmetric kernels and better interaction-aware allocation evaluated by
+speculative acceptance rather than reconstruction error alone.
 
 \bibliography{references}
 \bibliographystyle{template/iclr2026_conference}
