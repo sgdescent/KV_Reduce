@@ -61,6 +61,15 @@ def mean_dict(rows: Iterable[Dict[str, float]]) -> Dict[str, float]:
     return {key: sums[key] / counts[key] for key in sums if counts[key]}
 
 
+def validate_labels(label: torch.Tensor, num_classes: int) -> None:
+    min_label = int(label.min().item())
+    max_label = int(label.max().item())
+    if min_label < 0 or max_label >= num_classes:
+        raise ValueError(
+            f"Label IDs [{min_label}, {max_label}] fall outside the model output vocabulary [0, {num_classes})."
+        )
+
+
 def build_candidate_bits(
     *,
     num_layers: int,
@@ -95,6 +104,7 @@ def collect_reference_logits(
 
     for token_idx in range(int(continuation_ids.shape[1])):
         label = continuation_ids[:, token_idx].to(device)
+        validate_labels(label, int(logits.shape[-1]))
         reference_logits.append(logits.detach().cpu())
         nll_values.append(float(F.cross_entropy(logits.float(), label).item()))
         if token_idx + 1 >= int(continuation_ids.shape[1]):
@@ -134,6 +144,7 @@ def evaluate_quantized_sequence(
 
     for token_idx, reference_cpu in enumerate(reference_logits):
         label = continuation_ids[:, token_idx].to(device)
+        validate_labels(label, int(logits.shape[-1]))
         reference = reference_cpu.to(device)
         metrics = distribution_metrics(reference, logits, topk=topk)
         quantized_nll = float(F.cross_entropy(logits.float(), label).item())
@@ -224,7 +235,9 @@ def main() -> None:
         attn_implementation=args.attn_implementation,
     )
     num_layers = int(model.config.num_hidden_layers)
-    vocab_size = min(int(tokenizer.vocab_size), int(model.config.vocab_size))
+    # tokenizer.vocab_size excludes added special tokens for tokenizers such as
+    # Qwen, while model.config.vocab_size includes their valid output IDs.
+    vocab_size = int(model.config.vocab_size)
 
     if args.quant_configs:
         configs = parse_quant_config_specs(args.quant_configs, num_layers)
