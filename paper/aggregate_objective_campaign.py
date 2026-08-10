@@ -22,6 +22,7 @@ MATRIX_LABELS = {
     "llama_mass_matrix_v1": "Llama / WikiText / top-8 / mass-UCB",
     "olmo2_mass_matrix_v1": "OLMo / WikiText / top-8 / mass-UCB",
     "qwen25_all_layers_long_context_v1": "Qwen / C4 / all-layer / 8K-16K",
+    "qwen25_all_layers_gsm8k_v1": "Qwen / GSM8K answers / all-layer",
 }
 
 

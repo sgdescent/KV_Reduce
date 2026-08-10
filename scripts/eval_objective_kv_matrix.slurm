@@ -61,6 +61,10 @@ stream_args=()
 if [[ "${STREAM_EVAL:-0}" == "1" ]]; then
   stream_args+=(--stream_eval)
 fi
+text_column_args=()
+if [[ -n "${TEXT_COLUMN:-}" ]]; then
+  text_column_args+=(--text_column "$TEXT_COLUMN")
+fi
 if [[ "$objective" == "quality" ]]; then
   python3 -u profile_kv_quality_sensitivity.py \
     --model "${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}" \
@@ -77,6 +81,7 @@ if [[ "$objective" == "quality" ]]; then
     --out_dir "$out_dir" \
     --wandb_run_name "quality_b${budget}_c${context}_s${seed}" \
     "${stream_args[@]}" \
+    "${text_column_args[@]}" \
     "${common_wandb[@]}"
 elif [[ "$objective" == "acceptance" ]]; then
   python3 -u benchmark_spec_kv_quantization.py \
@@ -98,6 +103,7 @@ elif [[ "$objective" == "acceptance" ]]; then
     --out_dir "$out_dir" \
     --wandb_run_name "acceptance_b${budget}_c${context}_s${seed}" \
     "${stream_args[@]}" \
+    "${text_column_args[@]}" \
     "${common_wandb[@]}"
 else
   echo "Unknown objective: $objective" >&2
