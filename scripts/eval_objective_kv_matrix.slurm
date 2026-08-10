@@ -31,6 +31,10 @@ common_wandb=()
 if [[ "${ENABLE_WANDB:-1}" == "1" ]]; then
   common_wandb=(--wandb --wandb_project "${WANDB_PROJECT:-kv-reduce}" --wandb_group "${WANDB_GROUP:-objective-matrix}")
 fi
+stream_args=()
+if [[ "${STREAM_EVAL:-0}" == "1" ]]; then
+  stream_args+=(--stream_eval)
+fi
 if [[ "$objective" == "quality" ]]; then
   python3 -u profile_kv_quality_sensitivity.py \
     --model "${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}" \
@@ -46,6 +50,7 @@ if [[ "$objective" == "quality" ]]; then
     --quant_configs "$quant_configs" \
     --out_dir "$out_dir" \
     --wandb_run_name "quality_b${budget}_c${context}_s${seed}" \
+    "${stream_args[@]}" \
     "${common_wandb[@]}"
 elif [[ "$objective" == "acceptance" ]]; then
   python3 -u benchmark_spec_kv_quantization.py \
@@ -66,6 +71,7 @@ elif [[ "$objective" == "acceptance" ]]; then
     --quant_configs "$quant_configs" \
     --out_dir "$out_dir" \
     --wandb_run_name "acceptance_b${budget}_c${context}_s${seed}" \
+    "${stream_args[@]}" \
     "${common_wandb[@]}"
 else
   echo "Unknown objective: $objective" >&2
