@@ -55,7 +55,7 @@ python3 -u benchmark_spec_kv_quantization.py \
   --quant_configs "$configs" \
   --key_quant_axis per_channel \
   --key_group_size 32 \
-  --key_residual_length 128 \
+  --key_residual_length "${KEY_RESIDUAL_LENGTH:-128}" \
   --value_quant_scheme affine \
   --out_dir "$out_dir" \
   --wandb \

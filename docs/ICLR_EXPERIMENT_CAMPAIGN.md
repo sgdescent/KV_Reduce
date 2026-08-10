@@ -1,17 +1,20 @@
 # ICLR Experiment Campaign
 
-This campaign tests whether speculative acceptance has a consistent asymmetric
-dependence on draft-cache key and value precision across model families and
-model-size gaps.
+This campaign tests how quantizer geometry and the downstream decoding objective
+change draft-cache key/value precision requirements across model families,
+model-size gaps, contexts, and held-out domains.
 
 ## Primary hypothesis
 
-At equal cache memory, preserving key precision and reducing value precision
-(`K8V4`) should retain more speculative acceptance than the reverse allocation
-(`K4V8`). Keys determine attention routing through `softmax(QK^T)`, while values
-carry the payload after routing. The target verifier remains full precision, so
-the correction rule is distribution preserving in exact arithmetic; separate
-audits measure BF16 differences between batched and tokenwise kernel paths.
+The controlled hypothesis is that ordinary LM quality and speculative acceptance
+may rank equal-memory K/V allocations differently. Keys determine attention
+routing through `softmax(QK^T)`, while values carry the payload after routing,
+but bit width alone is not meaningful without fixing axis, grouping, zero-point,
+and residual-window choices. Main matched runs therefore use grouped per-channel
+affine keys and per-token affine values. The target verifier remains full
+precision, so the correction rule is distribution preserving in exact arithmetic;
+separate audits measure BF16 differences between batched and tokenwise kernel
+paths.
 
 ## Model pairs
 
@@ -39,6 +42,11 @@ gated 9B checkpoint.
    Llama, and OLMo pairs.
 6. `long_context`: exploratory 8K and 16K Qwen2.5 runs before increasing the
    prompt count for the final long-context result.
+7. `matched_objectives`: the same 21 uniform K/V configurations are evaluated
+   under cached speculative decoding and teacher-forced LM quality at 1K and 4K.
+8. `zero_residual`: repeat the equal-memory objective comparisons with no BF16
+   key tail. This removes the small byte mismatch introduced by the standard
+   128-token KIVI residual window.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -84,6 +92,12 @@ After stages complete, generate confidence intervals, tables, and figures with:
 python paper/aggregate_campaign.py \
   --results_root outputs/iclr_spec_kv \
   --out_dir paper/campaign_artifacts
+```
+
+The strict zero-residual objective replication can be queued independently:
+
+```bash
+AFTER_JOB=<dependency-job> bash scripts/submit_kivi_no_residual_grid.sh
 ```
 
 To run only a subset of pairs:

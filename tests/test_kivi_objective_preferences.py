@@ -39,7 +39,29 @@ class KiviObjectivePreferenceTest(unittest.TestCase):
         self.assertEqual(rows[0]["spec_preference"], "k8v4")
         self.assertEqual(rows[0]["quality_preference"], "k4v8")
         self.assertTrue(rows[0]["preference_reversal"])
+        self.assertFalse(rows[0]["memory_matched"])
+        self.assertAlmostEqual(rows[0]["absolute_total_saved_fraction_gap"], 0.01)
         self.assertAlmostEqual(rows[0]["spec_acceptance_a_minus_b_mean"], 0.15)
+
+    def test_flags_an_equal_memory_comparison(self) -> None:
+        spec = {(1024, 0, "0"): {"k8v4": spec_row(0.8), "k4v8": spec_row(0.7)}}
+        quality = {
+            (1024, 0, "0"): {
+                "k8v4": quality_row(0.02, 0.03),
+                "k4v8": quality_row(0.01, 0.02),
+            }
+        }
+        memory = {(1024, "k8v4"): [0.25], (1024, "k4v8"): [0.249]}
+
+        rows = aggregate_preferences(
+            spec_rows=spec,
+            quality_rows=quality,
+            memory=memory,
+            pairs=[("k8v4", "k4v8")],
+            tie_margin=1e-3,
+        )
+
+        self.assertTrue(rows[0]["memory_matched"])
 
 
 if __name__ == "__main__":

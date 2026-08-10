@@ -130,6 +130,7 @@ def aggregate_preferences(
     memory: Dict[Tuple[int, str], List[float]],
     pairs: Iterable[Tuple[str, str]],
     tie_margin: float,
+    max_memory_gap: float = 0.002,
 ) -> List[Dict[str, Any]]:
     contexts = sorted({key[0] for key in spec_rows} & {key[0] for key in quality_rows})
     output = []
@@ -161,6 +162,9 @@ def aggregate_preferences(
             spec_ci = bootstrap_mean_ci(spec_differences, seed=seed)
             quality_kl_ci = bootstrap_mean_ci(quality_kl_differences, seed=seed + 1)
             quality_nll_ci = bootstrap_mean_ci(quality_nll_differences, seed=seed + 2)
+            config_a_saved = statistics.mean(memory[(context, config_a)])
+            config_b_saved = statistics.mean(memory[(context, config_b)])
+            memory_gap = abs(config_a_saved - config_b_saved)
             output.append(
                 {
                     "context": context,
@@ -177,8 +181,10 @@ def aggregate_preferences(
                     "quality_delta_nll_a_minus_b_mean": quality_nll_ci["mean"],
                     "quality_delta_nll_a_minus_b_ci_low": quality_nll_ci["ci_low"],
                     "quality_delta_nll_a_minus_b_ci_high": quality_nll_ci["ci_high"],
-                    "config_a_total_saved_fraction": statistics.mean(memory[(context, config_a)]),
-                    "config_b_total_saved_fraction": statistics.mean(memory[(context, config_b)]),
+                    "config_a_total_saved_fraction": config_a_saved,
+                    "config_b_total_saved_fraction": config_b_saved,
+                    "absolute_total_saved_fraction_gap": memory_gap,
+                    "memory_matched": memory_gap <= max_memory_gap,
                     **preference_label(spec_ci["mean"], quality_kl_ci["mean"], config_a, config_b),
                 }
             )
@@ -195,6 +201,12 @@ def main() -> None:
         default="k8v4,k4v8;k8v3,k3v8;k4v3,k3v4;k4v2,k2v4;k3v2,k2v3",
     )
     parser.add_argument("--tie_margin", type=float, default=1e-3)
+    parser.add_argument(
+        "--max_memory_gap",
+        type=float,
+        default=0.002,
+        help="Maximum absolute total-cache savings gap for a pair to count as memory matched.",
+    )
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -206,6 +218,7 @@ def main() -> None:
         memory=memory,
         pairs=parse_pairs(args.config_pairs),
         tie_margin=args.tie_margin,
+        max_memory_gap=args.max_memory_gap,
     )
     if not rows:
         raise ValueError("No matched objective-preference rows were found.")
@@ -213,6 +226,11 @@ def main() -> None:
     payload = {
         "num_comparisons": len(rows),
         "num_preference_reversals": sum(bool(row["preference_reversal"]) for row in rows),
+        "num_memory_matched_comparisons": sum(bool(row["memory_matched"]) for row in rows),
+        "num_memory_matched_preference_reversals": sum(
+            bool(row["memory_matched"] and row["preference_reversal"]) for row in rows
+        ),
+        "max_memory_gap": args.max_memory_gap,
         "comparisons": rows,
     }
     (args.out_dir / "preference_summary.json").write_text(
