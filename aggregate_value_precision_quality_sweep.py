@@ -11,7 +11,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from aggregate_value_precision_sweep import parse_config_bits, parse_seed_filter
+from aggregate_value_precision_sweep import (
+    MATCHED_BIT_PAIRS,
+    parse_config_bits,
+    parse_seed_filter,
+)
 from spec_kv_statistics import bootstrap_mean_ci
 
 
@@ -37,6 +41,25 @@ def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def paired_sequence_metric_differences(
+    rows: List[Dict[str, str]],
+    *,
+    config_a: str,
+    config_b: str,
+    metric: str,
+) -> List[float]:
+    by_sequence: Dict[str, Dict[str, float]] = defaultdict(dict)
+    for row in rows:
+        candidate = row["candidate"]
+        if candidate in {config_a, config_b}:
+            by_sequence[row["sequence_idx"]][candidate] = float(row[metric])
+    return [
+        values[config_a] - values[config_b]
+        for values in by_sequence.values()
+        if config_a in values and config_b in values
+    ]
 
 
 def make_plot(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
@@ -105,6 +128,9 @@ def main() -> None:
     sequence_metrics: Dict[Tuple[int, str], Dict[str, List[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
+    paired_metrics: Dict[Tuple[int, str, str], Dict[str, List[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
     missing = []
 
     for seed_dir in sorted(args.sweep_dir.glob("ctx_*/seed_*")):
@@ -124,12 +150,23 @@ def main() -> None:
         seed = int(summary["config"]["seed"])
         if selected_seeds is not None and seed not in selected_seeds:
             continue
-        for raw in read_csv(raw_path):
+        raw_rows = read_csv(raw_path)
+        for raw in raw_rows:
             name = raw["candidate"]
             if name == "none":
                 continue
             for metric in ("kl_p_to_q", "delta_nll", "top1_match", "accept_mass"):
                 sequence_metrics[(context, name)][metric].append(float(raw[metric]))
+        for config_a, config_b, _ in MATCHED_BIT_PAIRS:
+            for metric in ("kl_p_to_q", "delta_nll", "top1_match", "accept_mass"):
+                paired_metrics[(context, config_a, config_b)][metric].extend(
+                    paired_sequence_metric_differences(
+                        raw_rows,
+                        config_a=config_a,
+                        config_b=config_b,
+                        metric=metric,
+                    )
+                )
         for name, metrics in summary["summaries"].items():
             if name == "none":
                 continue
@@ -188,13 +225,46 @@ def main() -> None:
 
     if not grouped:
         raise ValueError("No complete teacher-forced value-precision outputs were found.")
+    paired_comparisons: List[Dict[str, Any]] = []
+    for context in sorted({int(row["context"]) for row in grouped}):
+        for config_a, config_b, label in MATCHED_BIT_PAIRS:
+            metrics = paired_metrics[(context, config_a, config_b)]
+            if not metrics["kl_p_to_q"]:
+                continue
+            kl = bootstrap_mean_ci(
+                metrics["kl_p_to_q"],
+                seed=context * 10_000 + sum(map(ord, config_a + config_b)),
+            )
+            nll = bootstrap_mean_ci(
+                metrics["delta_nll"],
+                seed=context * 20_000 + sum(map(ord, config_a + config_b)),
+            )
+            paired_comparisons.append(
+                {
+                    "context": context,
+                    "comparison": label,
+                    "config_a": config_a,
+                    "config_b": config_b,
+                    "paired_sequence_count": len(metrics["kl_p_to_q"]),
+                    "kl_contrast_mean": kl["mean"],
+                    "kl_contrast_ci_low": kl["ci_low"],
+                    "kl_contrast_ci_high": kl["ci_high"],
+                    "delta_nll_contrast_mean": nll["mean"],
+                    "delta_nll_contrast_ci_low": nll["ci_low"],
+                    "delta_nll_contrast_ci_high": nll["ci_high"],
+                    "top1_match_contrast_mean": statistics.mean(metrics["top1_match"]),
+                    "accept_mass_contrast_mean": statistics.mean(metrics["accept_mass"]),
+                }
+            )
     write_csv(args.out_dir / "run_results.csv", run_rows)
     write_csv(args.out_dir / "grouped_results.csv", grouped)
+    write_csv(args.out_dir / "paired_precision_contrasts.csv", paired_comparisons)
     payload = {
         "num_complete_runs": len({(row["context"], row["seed"]) for row in run_rows}),
         "missing_runs": missing,
         "selected_seeds": sorted(selected_seeds) if selected_seeds is not None else None,
         "grouped": grouped,
+        "paired_precision_contrasts": paired_comparisons,
         "plots": make_plot(grouped, args.out_dir),
     }
     (args.out_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

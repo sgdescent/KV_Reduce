@@ -1,7 +1,10 @@
 import unittest
 
 from aggregate_value_precision_gamma_sweep import bootstrap_acceptance_contrast
-from aggregate_value_precision_quality_sweep import bootstrap_mean_ci
+from aggregate_value_precision_quality_sweep import (
+    bootstrap_mean_ci,
+    paired_sequence_metric_differences,
+)
 from spec_kv_statistics import align_config_rows_by_prompt
 
 
@@ -55,6 +58,26 @@ class SweepAggregatorImportsTest(unittest.TestCase):
             [(left["prompt_idx"], right["prompt_idx"]) for left, right in paired],
             [("0", "0"), ("1", "1")],
         )
+
+    def test_quality_pairing_aligns_rows_by_sequence(self) -> None:
+        rows = [
+            {"sequence_idx": "1", "candidate": "k8v4", "kl_p_to_q": "0.4"},
+            {"sequence_idx": "0", "candidate": "k4v8", "kl_p_to_q": "0.2"},
+            {"sequence_idx": "0", "candidate": "k8v4", "kl_p_to_q": "0.3"},
+            {"sequence_idx": "2", "candidate": "k4v8", "kl_p_to_q": "0.1"},
+            {"sequence_idx": "1", "candidate": "k4v8", "kl_p_to_q": "0.1"},
+        ]
+
+        differences = paired_sequence_metric_differences(
+            rows,
+            config_a="k8v4",
+            config_b="k4v8",
+            metric="kl_p_to_q",
+        )
+
+        self.assertEqual(len(differences), 2)
+        self.assertAlmostEqual(differences[0], 0.3)
+        self.assertAlmostEqual(differences[1], 0.1)
 
 
 if __name__ == "__main__":
