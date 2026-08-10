@@ -9,8 +9,9 @@ model-size gaps.
 At equal cache memory, preserving key precision and reducing value precision
 (`K8V4`) should retain more speculative acceptance than the reverse allocation
 (`K4V8`). Keys determine attention routing through `softmax(QK^T)`, while values
-carry the payload after routing. Final outputs remain exact because the target
-verifier is always full precision.
+carry the payload after routing. The target verifier remains full precision, so
+the correction rule is distribution preserving in exact arithmetic; separate
+audits measure BF16 differences between batched and tokenwise kernel paths.
 
 ## Model pairs
 
@@ -62,7 +63,7 @@ The evaluator performs one target and one draft prefill per prompt, reuses both
 dynamic caches across speculative rounds, verifies each proposal against the
 existing target cache, and crops rejected suffixes in place. Target-greedy
 reference generation is performed once outside each timed configuration. Runs
-missing `runtime.evaluator_version=cached_dynamic_v3` are rejected by the paper
+missing `runtime.evaluator_version=cached_dynamic_v4` are rejected by the paper
 aggregation script.
 
 Greedy exact-match is reported together with the target top-1 logit margin at
