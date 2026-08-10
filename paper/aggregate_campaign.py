@@ -15,6 +15,8 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
+from spec_kv_statistics import sample_count_status
+
 
 PAIR_LABELS = {
     "qwen25_3b_15b": "Qwen2.5 3B/1.5B",
@@ -198,8 +200,10 @@ def collect_campaign(
             rejected.append({"path": str(summary_path), "reason": "missing benchmark_rows.csv"})
             continue
 
+        benchmark_rows = read_csv(rows_path)
+        count_status = sample_count_status(summary, benchmark_rows)
         rows_by_config: Dict[str, List[Dict[str, str]]] = defaultdict(list)
-        for row in read_csv(rows_path):
+        for row in benchmark_rows:
             rows_by_config[row["config"]].append(row)
         context = context_from_label(run_label, summary)
         baseline = summary.get("summaries", {}).get("none", {})
@@ -249,6 +253,7 @@ def collect_campaign(
                     "config": config_name,
                     "config_label": CONFIG_LABELS.get(config_name, config_name),
                     "num_prompts": int(summary.get("num_prompts", len(prompt_rows))),
+                    **count_status,
                     "accept_rate": float(config_summary.get("overall_accept_rate", 0.0)),
                     "accept_ci_low": ci_low,
                     "accept_ci_high": ci_high,
@@ -473,16 +478,29 @@ def main() -> None:
     plot_sensitivity_heatmap(args.results_root, args.out_dir)
     write_latex_table(comparisons, args.out_dir)
 
+    underfilled_by_path = {
+        str(row["summary_path"]): {
+            "summary_path": str(row["summary_path"]),
+            "requested_num_prompts": int(row["requested_num_prompts"]),
+            "observed_num_prompts": int(row["observed_num_prompts"]),
+            "prompt_shortfall": int(row["prompt_shortfall"]),
+        }
+        for row in metrics
+        if bool(row["underfilled"])
+    }
+
     aggregate = {
         "results_root": str(args.results_root),
         "tie_tolerance": args.tie_tolerance,
         "num_metric_rows": len(metrics),
         "num_equal_memory_comparisons": len(comparisons),
         "num_rejected_artifacts": len(rejected),
+        "num_underfilled_runs": len(underfilled_by_path),
         "all_exact": all(row["valid_exact_generation"] for row in metrics) if metrics else False,
         "k8v4_wins": sum(bool(row["k8v4_wins"]) for row in comparisons),
         "comparisons": comparisons,
         "rejected_artifacts": rejected,
+        "underfilled_runs": list(underfilled_by_path.values()),
     }
     (args.out_dir / "campaign_aggregate.json").write_text(
         json.dumps(aggregate, indent=2) + "\n",
@@ -490,7 +508,8 @@ def main() -> None:
     )
     print(
         f"Aggregated {len(metrics)} metric rows and {len(comparisons)} equal-memory comparisons; "
-        f"rejected {len(rejected)} stale/incomplete artifacts."
+        f"rejected {len(rejected)} stale/incomplete artifacts; "
+        f"underfilled {len(underfilled_by_path)} runs."
     )
     if comparisons:
         print(
