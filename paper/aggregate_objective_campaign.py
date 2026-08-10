@@ -24,6 +24,7 @@ MATRIX_LABELS = {
     "qwen25_all_layers_long_context_v1": "Qwen / C4 / all-layer / 8K-16K",
     "qwen25_all_layers_gsm8k_v1": "Qwen / GSM8K answers / all-layer",
     "qwen25_all_layers_humaneval_v1": "Qwen / HumanEval prompts / all-layer",
+    "qwen25_all_layers_profile64_mass_matrix_v1": "Qwen / WikiText / all-layer / 64-cal",
 }
 
 
