@@ -79,7 +79,9 @@ def parse_layer_spec(spec: str, num_layers: int) -> List[int]:
 
 
 def parse_components(spec: str) -> List[str]:
-    components = parse_csv_items(spec)
+    # SLURM's --export uses commas as field separators, so launch scripts may
+    # encode a component list with semicolons instead.
+    components = parse_csv_items(spec.replace(";", ","))
     allowed = {"k", "v", "keys", "values"}
     out = []
     for component in components:

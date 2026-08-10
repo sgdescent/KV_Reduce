@@ -322,6 +322,13 @@ $52.38$-point K-priority advantage over V-priority (CI $[40.45,66.35]$).
 These results indicate that routing precision becomes more, rather than less,
 important as each query chooses among a longer cached prefix.
 
+A fixed-key value-precision sweep identifies a sharp knee below four bits. Across
+three 1K-context seeds, K8V4 saves $27.00\%$ of total target-plus-draft KV memory
+with an acceptance change of $-0.96$ points (CI $[-2.22,0.26]$). K8V3 increases
+savings to $28.37\%$ but incurs a small significant drop of $1.74$ points
+(CI $[-3.30,-0.20]$), while K8V2 collapses by $24.67$ points. We therefore use
+K8V4 as the conservative operating point and treat K8V3 as an aggressive option.
+
 \subsection{A conservative learned allocation}
 
 Profiling the top eight draft layers and selecting precision under a five-point
@@ -342,10 +349,10 @@ acceptance; the sensitivity-aware solutions stay near the 100\% line.
 \subsection{Objective-specific profiles differ, but do not improve acceptance consistently}
 
 Optimizing the sensitivity profile under the speculative loop is not reliably
-better than profiling ordinary language-model quality. On the initial Qwen
-matrix, the acceptance-mass allocation changes several layer-wise K/V bit
-assignments but improves held-out acceptance over the quality allocation by only
-$0.53$ percentage points (95\% CI $[-0.39,1.51]$). The corresponding effects are
+better than profiling ordinary language-model quality. In a powered Qwen
+replication with 384 held-out prompts, the acceptance-mass allocation changes
+several layer-wise K/V assignments but trails the quality allocation by $0.94$
+percentage points (95\% CI $[-1.76,-0.14]$). The corresponding effects are
 $-1.74$ points for Llama (CI $[-4.47,0.86]$) and $-0.10$ points for OLMo
 (CI $[-2.49,2.33]$). Under the more aggressive three-bit mean budget on Qwen,
 acceptance optimization is significantly worse by $4.93$ points
