@@ -20,6 +20,9 @@ from aggregate_value_precision_sweep import (
 from spec_kv_statistics import bootstrap_acceptance_contrast
 
 
+EXPECTED_EVALUATOR_VERSION = "cached_dynamic_v4"
+
+
 def make_plot(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
     try:
         import matplotlib.pyplot as plt
@@ -99,7 +102,7 @@ def main() -> None:
             continue
         summary = read_json(summary_path)
         version = str(summary.get("runtime", {}).get("evaluator_version", ""))
-        if not version.startswith("cached_dynamic_v"):
+        if version != EXPECTED_EVALUATOR_VERSION:
             raise ValueError(f"Stale evaluator {version!r} in {summary_path}")
         config = summary["config"]
         draft_steps = int(config["draft_steps"])
@@ -165,6 +168,7 @@ def main() -> None:
     write_csv(args.out_dir / "run_results.csv", run_rows)
     write_csv(args.out_dir / "grouped_results.csv", grouped)
     payload = {
+        "evaluator_version": EXPECTED_EVALUATOR_VERSION,
         "num_complete_runs": len({(row["draft_steps"], row["seed"]) for row in run_rows}),
         "missing_runs": missing,
         "exactness": dict(exactness),
