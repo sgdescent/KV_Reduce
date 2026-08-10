@@ -7,6 +7,7 @@ import argparse
 import csv
 import glob
 import json
+import math
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
@@ -25,6 +26,55 @@ MAX_FIELDS = (
     "max_causal_suffix_logit_delta",
     "max_rollback_logit_delta",
 )
+
+MISMATCH_CLASS_FIELDS = (
+    "speculative_tie_decisions",
+    "speculative_non_tie_or_unknown_decisions",
+    "speculative_prompts_with_only_tie_mismatches",
+    "speculative_prompts_with_non_tie_or_unknown_mismatches",
+    "independent_greedy_tie_prompts",
+    "independent_greedy_non_tie_or_unknown_prompts",
+)
+
+
+def is_numerical_tie(margin: Any, tie_margin: float) -> bool:
+    """Return whether a target top-1 margin satisfies the audit's tie rule."""
+    try:
+        value = abs(float(margin))
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(value) and value <= tie_margin
+
+
+def classify_speculative_mismatches(
+    payload: Dict[str, Any], tie_margin: float
+) -> Dict[str, int]:
+    """Classify cached-verifier disagreements by the reference target margin."""
+    counts = {field: 0 for field in MISMATCH_CLASS_FIELDS}
+    for audit in payload.get("speculative_audits", []):
+        mismatch_rows = [
+            row for row in audit.get("decisions", []) if float(row.get("top1_match", 1.0)) < 0.5
+        ]
+        tie_rows = [
+            row for row in mismatch_rows if is_numerical_tie(row.get("reference_margin"), tie_margin)
+        ]
+        non_tie_count = len(mismatch_rows) - len(tie_rows)
+        counts["speculative_tie_decisions"] += len(tie_rows)
+        counts["speculative_non_tie_or_unknown_decisions"] += non_tie_count
+        if mismatch_rows:
+            if non_tie_count:
+                counts["speculative_prompts_with_non_tie_or_unknown_mismatches"] += 1
+            else:
+                counts["speculative_prompts_with_only_tie_mismatches"] += 1
+
+        if not bool(audit.get("matches_independent_target_greedy", True)):
+            if is_numerical_tie(
+                audit.get("first_independent_reference_mismatch_margin"), tie_margin
+            ):
+                counts["independent_greedy_tie_prompts"] += 1
+            else:
+                counts["independent_greedy_non_tie_or_unknown_prompts"] += 1
+    return counts
 
 
 def write_csv(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
@@ -46,6 +96,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inputs", nargs="+", required=True, help="JSON paths or glob patterns.")
     parser.add_argument("--out_dir", required=True, type=Path)
+    parser.add_argument(
+        "--tie_margin",
+        type=float,
+        default=1e-3,
+        help="Target top-1 margin at or below which a mismatch is a numerical tie.",
+    )
     return parser
 
 
@@ -88,6 +144,7 @@ def main() -> None:
         }
         row.update({field: int(payload[field]) for field in COUNT_FIELDS})
         row.update({field: float(payload[field]) for field in MAX_FIELDS})
+        row.update(classify_speculative_mismatches(payload, args.tie_margin))
         rows.append(row)
 
     grouped_rows: List[Dict[str, Any]] = []
@@ -114,6 +171,9 @@ def main() -> None:
         grouped_row.update(
             {field: max(float(row[field]) for row in values) for field in MAX_FIELDS}
         )
+        grouped_row.update(
+            {f"total_{field}": sum(int(row[field]) for row in values) for field in MISMATCH_CLASS_FIELDS}
+        )
         grouped_rows.append(grouped_row)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -122,6 +182,7 @@ def main() -> None:
     summary = {
         "num_runs": len(rows),
         "num_unique_prompts": len({(row["seed"], row["skip_prompts"]) for row in rows}),
+        "tie_margin": args.tie_margin,
         "grouped": grouped_rows,
     }
     (args.out_dir / "summary.json").write_text(
