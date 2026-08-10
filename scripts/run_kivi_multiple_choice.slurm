@@ -34,7 +34,10 @@ case "$task_group" in
     ;;
   1)
     task=arc_challenge
-    examples="${ARC_EXAMPLES:-256}"
+    # ARC-Challenge validation has 299 examples. Partition the finite split
+    # across seeds so every requested shard is disjoint and non-empty.
+    arc_validation_size="${ARC_VALIDATION_SIZE:-299}"
+    examples="${ARC_EXAMPLES:-$((arc_validation_size / num_seeds))}"
     ;;
   *)
     echo "Unsupported task group $task_group" >&2
