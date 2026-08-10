@@ -326,6 +326,27 @@ def main() -> None:
         row["paired_acceptance_valid_n"] = prompt_count["used"]
         effect_rows.append(row)
 
+    budget_prompt_effects: Dict[int, Dict[str, List[float]]] = defaultdict(
+        lambda: {"acceptance": [], "quality_kl": [], "quality_delta_nll": []}
+    )
+    for (budget, _), metrics in prompt_effects.items():
+        for metric, values in metrics.items():
+            budget_prompt_effects[budget][metric].extend(values)
+    cross_context_rows = []
+    for budget, metrics in sorted(budget_prompt_effects.items()):
+        row: Dict[str, Any] = {"budget": budget}
+        for metric, values in metrics.items():
+            estimate, low, high = bootstrap_mean_ci(
+                values,
+                seed=budget * 1000000 + len(metric),
+                samples=5000,
+            )
+            row[f"paired_{metric}_n"] = len(values)
+            row[f"paired_{metric}_mean"] = estimate
+            row[f"paired_{metric}_ci_low"] = low
+            row[f"paired_{metric}_ci_high"] = high
+        cross_context_rows.append(row)
+
     exactness_rows = []
     for (budget, context, seed), counts in sorted(exactness_counts.items()):
         exactness_rows.append({"budget": budget, "context": context, "seed": seed, **counts})
@@ -337,6 +358,7 @@ def main() -> None:
     write_csv(rows, out_dir / "matrix_rows.csv")
     write_csv(grouped_rows, out_dir / "matrix_grouped.csv")
     write_csv(effect_rows, out_dir / "cross_objective_effects.csv")
+    write_csv(cross_context_rows, out_dir / "cross_context_effects.csv")
     write_csv(exactness_rows, out_dir / "exactness_audit.csv")
     payload = {
         "num_complete_rows": len(rows),
@@ -352,6 +374,7 @@ def main() -> None:
         },
         "grouped": grouped_rows,
         "cross_objective_effects": effect_rows,
+        "cross_context_effects": cross_context_rows,
         "plots": make_plot(grouped_rows, out_dir),
     }
     with (out_dir / "summary.json").open("w", encoding="utf-8") as f:
