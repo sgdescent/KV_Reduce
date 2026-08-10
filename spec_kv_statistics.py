@@ -3,26 +3,11 @@
 from __future__ import annotations
 
 import random
-from typing import Any, Dict, List, Mapping, Sequence, Tuple
+from typing import Dict, List, Mapping, Sequence, Tuple
 
 
 PromptRow = Dict[str, str]
 PromptEffect = Tuple[PromptRow, PromptRow]
-
-
-def sample_count_status(
-    summary: Mapping[str, Any],
-    rows: Sequence[Mapping[str, str]],
-) -> Dict[str, Any]:
-    """Compare a run's requested prompt count with unique observed prompts."""
-    observed = len({str(row["prompt_idx"]) for row in rows})
-    requested = int(summary.get("config", {}).get("num_prompts", observed))
-    return {
-        "requested_num_prompts": requested,
-        "observed_num_prompts": observed,
-        "underfilled": observed < requested,
-        "prompt_shortfall": max(0, requested - observed),
-    }
 
 
 def bootstrap_mean_ci(

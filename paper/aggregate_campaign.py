@@ -15,7 +15,10 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
-from spec_kv_statistics import sample_count_status
+if __package__:
+    from .campaign_provenance import sample_count_status
+else:
+    from campaign_provenance import sample_count_status
 
 
 PAIR_LABELS = {

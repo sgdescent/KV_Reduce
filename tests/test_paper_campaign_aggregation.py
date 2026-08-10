@@ -1,6 +1,6 @@
 import unittest
 
-from spec_kv_statistics import sample_count_status
+from paper.campaign_provenance import sample_count_status
 
 
 class PaperCampaignAggregationTest(unittest.TestCase):
