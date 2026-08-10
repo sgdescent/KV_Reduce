@@ -24,10 +24,13 @@ import torch
 import transformers
 
 from kv_cache_quantization import (
+    PER_CHANNEL_AXIS,
+    PER_TOKEN_AXIS,
     bit_allocation_stats,
     estimate_model_kv_cache_bytes,
     parse_quant_config_specs,
     quantize_dequantize_per_vector_symmetric,
+    quantize_key_cache_kivi_style,
     quantize_legacy_cache,
     uniform_bit_lists,
 )
@@ -175,6 +178,9 @@ def quantize_cache_for_next_step(
     v_bits: Sequence[int],
     *,
     new_tokens: Optional[int] = None,
+    key_quant_axis: str = PER_TOKEN_AXIS,
+    key_group_size: int = 32,
+    key_residual_length: int = 128,
 ):
     if all(int(bits) >= 16 for bits in k_bits) and all(int(bits) >= 16 for bits in v_bits):
         return past_key_values
@@ -183,19 +189,42 @@ def quantize_cache_for_next_step(
     if hasattr(past_key_values, "layers"):
         for layer_idx, layer in enumerate(past_key_values.layers):
             token_slice = slice(None) if new_tokens is None else slice(-new_tokens, None)
-            key_slice = layer.keys[..., token_slice, :]
             value_slice = layer.values[..., token_slice, :]
-            quantized_key = quantize_dequantize_per_vector_symmetric(key_slice, int(k_bits[layer_idx]))
             quantized_value = quantize_dequantize_per_vector_symmetric(value_slice, int(v_bits[layer_idx]))
+            if key_quant_axis == PER_TOKEN_AXIS:
+                key_slice = layer.keys[..., token_slice, :]
+                quantized_key = quantize_dequantize_per_vector_symmetric(
+                    key_slice, int(k_bits[layer_idx])
+                )
+                if new_tokens is None:
+                    layer.keys = quantized_key
+                else:
+                    key_slice.copy_(quantized_key)
+            elif key_quant_axis == PER_CHANNEL_AXIS:
+                previous_seq_len = 0 if new_tokens is None else int(layer.keys.shape[-2]) - new_tokens
+                layer.keys = quantize_key_cache_kivi_style(
+                    layer.keys,
+                    int(k_bits[layer_idx]),
+                    group_size=key_group_size,
+                    residual_length=key_residual_length,
+                    previous_seq_len=previous_seq_len,
+                )
+            else:
+                raise ValueError(f"Unsupported key_quant_axis: {key_quant_axis!r}")
             if new_tokens is None:
-                layer.keys = quantized_key
                 layer.values = quantized_value
             else:
-                key_slice.copy_(quantized_key)
                 value_slice.copy_(quantized_value)
         return past_key_values
     legacy = as_legacy_cache(past_key_values)
-    quantized = quantize_legacy_cache(legacy, k_bits, v_bits)
+    quantized = quantize_legacy_cache(
+        legacy,
+        k_bits,
+        v_bits,
+        key_quant_axis=key_quant_axis,
+        key_group_size=key_group_size,
+        key_residual_length=key_residual_length,
+    )
     return legacy_to_cache(quantized)
 
 
@@ -333,6 +362,9 @@ def draft_next_logits_from_cache(
     dtype: torch.dtype,
     k_bits: Sequence[int],
     v_bits: Sequence[int],
+    key_quant_axis: str,
+    key_group_size: int,
+    key_residual_length: int,
 ) -> Dict[str, Any]:
     input_ids = torch.tensor([[token]], dtype=dtype, device=small_device)
     step = cached_step(
@@ -342,7 +374,15 @@ def draft_next_logits_from_cache(
         cache_len=cache_len,
         device=small_device,
     )
-    cache = quantize_cache_for_next_step(step["cache"], k_bits, v_bits, new_tokens=1)
+    cache = quantize_cache_for_next_step(
+        step["cache"],
+        k_bits,
+        v_bits,
+        new_tokens=1,
+        key_quant_axis=key_quant_axis,
+        key_group_size=key_group_size,
+        key_residual_length=key_residual_length,
+    )
     return {"logits": step["logits"][:, -1, :], "cache": cache, "cache_len": int(step["cache_len"])}
 
 
@@ -360,6 +400,9 @@ def greedy_speculative_decode_cached_quantized(
     k_bits: Sequence[int],
     v_bits: Sequence[int],
     shared_vocab_size: int,
+    key_quant_axis: str = PER_TOKEN_AXIS,
+    key_group_size: int = 32,
+    key_residual_length: int = 128,
 ) -> Dict[str, Any]:
     target_state = cached_prefill(big_model, prompt_ids, big_device)
     target_logits = shared_token_logits(target_state["logits"], shared_vocab_size)
@@ -368,7 +411,14 @@ def greedy_speculative_decode_cached_quantized(
 
     draft_state = cached_prefill(small_model, prompt_ids, small_device)
     draft_logits = shared_token_logits(draft_state["logits"], shared_vocab_size)
-    draft_cache = quantize_cache_for_next_step(draft_state["cache"], k_bits, v_bits)
+    draft_cache = quantize_cache_for_next_step(
+        draft_state["cache"],
+        k_bits,
+        v_bits,
+        key_quant_axis=key_quant_axis,
+        key_group_size=key_group_size,
+        key_residual_length=key_residual_length,
+    )
     draft_cache_len = int(draft_state["cache_len"])
 
     if target_cache_len != draft_cache_len:
@@ -416,6 +466,9 @@ def greedy_speculative_decode_cached_quantized(
                 dtype=prompt_ids.dtype,
                 k_bits=k_bits,
                 v_bits=v_bits,
+                key_quant_axis=key_quant_axis,
+                key_group_size=key_group_size,
+                key_residual_length=key_residual_length,
             )
             draft_decode_calls += 1
             draft_logits = shared_token_logits(next_step["logits"], shared_vocab_size)
@@ -493,6 +546,9 @@ def greedy_speculative_decode_cached_quantized(
             dtype=prompt_ids.dtype,
             k_bits=k_bits,
             v_bits=v_bits,
+            key_quant_axis=key_quant_axis,
+            key_group_size=key_group_size,
+            key_residual_length=key_residual_length,
         )
         draft_decode_calls += 1
         draft_logits = shared_token_logits(draft_commit["logits"], shared_vocab_size)
@@ -529,6 +585,9 @@ def estimate_total_kv_memory(
     k_bits: Sequence[int],
     v_bits: Sequence[int],
     scale_bits: int,
+    key_quant_axis: str = PER_TOKEN_AXIS,
+    key_group_size: int = 32,
+    key_residual_length: int = 128,
 ) -> Dict[str, float]:
     big_layers = int(big_model.config.num_hidden_layers)
     target_k_bits, target_v_bits = uniform_bit_lists(big_layers, 16, 16)
@@ -556,6 +615,9 @@ def estimate_total_kv_memory(
         k_bits_by_layer=k_bits,
         v_bits_by_layer=v_bits,
         scale_bits=scale_bits,
+        key_quant_axis=key_quant_axis,
+        key_group_size=key_group_size,
+        key_residual_length=key_residual_length,
     )
 
     native_total = target["native_cache_bytes"] + draft_native["native_cache_bytes"]
@@ -575,6 +637,8 @@ def estimate_total_kv_memory(
         "native_total_cache_mib": native_total / (1024.0**2),
         "quantized_total_cache_mib": quant_total / (1024.0**2),
         "total_cache_mib_saved": (native_total - quant_total) / (1024.0**2),
+        "key_quantized_prefix_tokens": draft_quant["key_quantized_prefix_tokens"],
+        "key_residual_tokens": draft_quant["key_residual_tokens"],
         **{f"allocation/{key}": value for key, value in bit_allocation_stats(k_bits, v_bits).items()},
     }
 
@@ -637,6 +701,9 @@ def run_one_config(
     wandb_prefix: str,
     wandb_step_offset: int,
     shared_vocab_size: int,
+    key_quant_axis: str = PER_TOKEN_AXIS,
+    key_group_size: int = 32,
+    key_residual_length: int = 128,
     target_token_references: Optional[Sequence[Sequence[int]]] = None,
     target_margin_references: Optional[Sequence[Sequence[float]]] = None,
 ) -> Dict[str, Any]:
@@ -679,6 +746,9 @@ def run_one_config(
             k_bits=k_bits,
             v_bits=v_bits,
             shared_vocab_size=shared_vocab_size,
+            key_quant_axis=key_quant_axis,
+            key_group_size=key_group_size,
+            key_residual_length=key_residual_length,
         )
         sync_cuda(cuda_device_ids)
         elapsed_s = time.perf_counter() - prompt_start
@@ -825,6 +895,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated configs: none, 8, 4, k8v4, k4v8, or allocation:path.json.",
     )
     parser.add_argument("--scale_bits", type=int, default=16)
+    parser.add_argument(
+        "--key_quant_axis",
+        type=str,
+        default=PER_TOKEN_AXIS,
+        choices=[PER_TOKEN_AXIS, PER_CHANNEL_AXIS],
+        help="Quantize keys per token vector or per channel over token groups.",
+    )
+    parser.add_argument("--key_group_size", type=int, default=32)
+    parser.add_argument(
+        "--key_residual_length",
+        type=int,
+        default=128,
+        help="Recent key tokens kept at full precision for per-channel quantization.",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--allow_incompatible_tokenizers", action="store_true")
     parser.add_argument("--out_dir", type=str, default="outputs/spec_kv_quant_benchmark")
@@ -928,6 +1012,9 @@ def main() -> None:
                 wandb_prefix="warmup",
                 wandb_step_offset=0,
                 shared_vocab_size=shared_vocab_size,
+                key_quant_axis=args.key_quant_axis,
+                key_group_size=args.key_group_size,
+                key_residual_length=args.key_residual_length,
                 target_token_references=warmup_target_references,
                 target_margin_references=warmup_target_margins,
             )
@@ -955,6 +1042,9 @@ def main() -> None:
             wandb_prefix="spec_kv",
             wandb_step_offset=config_idx * len(benchmark_prompts),
             shared_vocab_size=shared_vocab_size,
+            key_quant_axis=args.key_quant_axis,
+            key_group_size=args.key_group_size,
+            key_residual_length=args.key_residual_length,
             target_token_references=benchmark_target_references,
             target_margin_references=benchmark_target_margins,
         )
@@ -967,6 +1057,9 @@ def main() -> None:
             k_bits=k_bits,
             v_bits=v_bits,
             scale_bits=args.scale_bits,
+            key_quant_axis=args.key_quant_axis,
+            key_group_size=args.key_group_size,
+            key_residual_length=args.key_residual_length,
         )
         summary = {**result["summary"], **memory}
         summary["metadata/spec"] = metadata.get("spec", name)
@@ -998,6 +1091,9 @@ def main() -> None:
             "target_cache_reused": True,
             "draft_cache_reused": True,
             "cache_crop_mode": "in_place",
+            "key_quant_axis": args.key_quant_axis,
+            "key_group_size": args.key_group_size,
+            "key_residual_length": args.key_residual_length,
             "quantization_update_mode": "prefill_once_then_new_tokens_only",
             "target_reference_generation_in_timing": False,
             "exactness_margin_mode": "minimum_of_tokenwise_reference_and_batched_verifier",

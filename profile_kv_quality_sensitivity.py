@@ -27,6 +27,8 @@ from benchmark_spec_kv_quantization import (
 )
 from kv_cache_quantization import (
     FULL_PRECISION_BITS,
+    PER_CHANNEL_AXIS,
+    PER_TOKEN_AXIS,
     bit_allocation_stats,
     estimate_model_kv_cache_bytes,
     parse_csv_ints,
@@ -135,10 +137,20 @@ def evaluate_quantized_sequence(
     topk: int,
     k_bits: Sequence[int],
     v_bits: Sequence[int],
+    key_quant_axis: str = PER_TOKEN_AXIS,
+    key_group_size: int = 32,
+    key_residual_length: int = 128,
 ) -> Dict[str, float]:
     state = cached_prefill(model, prompt_ids, device)
     logits = shared_token_logits(state["logits"], vocab_size)
-    cache = quantize_cache_for_next_step(state["cache"], k_bits, v_bits)
+    cache = quantize_cache_for_next_step(
+        state["cache"],
+        k_bits,
+        v_bits,
+        key_quant_axis=key_quant_axis,
+        key_group_size=key_group_size,
+        key_residual_length=key_residual_length,
+    )
     cache_len = int(state["cache_len"])
     token_rows: List[Dict[str, float]] = []
 
@@ -159,7 +171,15 @@ def evaluate_quantized_sequence(
             device=device,
         )
         logits = shared_token_logits(step["logits"][:, -1, :], vocab_size)
-        cache = quantize_cache_for_next_step(step["cache"], k_bits, v_bits, new_tokens=1)
+        cache = quantize_cache_for_next_step(
+            step["cache"],
+            k_bits,
+            v_bits,
+            new_tokens=1,
+            key_quant_axis=key_quant_axis,
+            key_group_size=key_group_size,
+            key_residual_length=key_residual_length,
+        )
         cache_len = int(step["cache_len"])
 
     summary = mean_dict(token_rows)
@@ -202,6 +222,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Benchmark configs instead of one-component profiles, e.g. none,allocation:path.json.",
     )
     parser.add_argument("--scale_bits", type=int, default=16)
+    parser.add_argument(
+        "--key_quant_axis",
+        type=str,
+        default=PER_TOKEN_AXIS,
+        choices=[PER_TOKEN_AXIS, PER_CHANNEL_AXIS],
+    )
+    parser.add_argument("--key_group_size", type=int, default=32)
+    parser.add_argument("--key_residual_length", type=int, default=128)
     parser.add_argument("--topk", type=int, default=5)
     parser.add_argument(
         "--quality_risk_metric",
@@ -362,6 +390,9 @@ def main() -> None:
                     topk=args.topk,
                     k_bits=candidate["k_bits"],
                     v_bits=candidate["v_bits"],
+                    key_quant_axis=args.key_quant_axis,
+                    key_group_size=args.key_group_size,
+                    key_residual_length=args.key_residual_length,
                 )
             metric_rows[name].append(metrics)
             raw_rows.append(
@@ -394,6 +425,9 @@ def main() -> None:
             k_bits_by_layer=candidate["k_bits"],
             v_bits_by_layer=candidate["v_bits"],
             scale_bits=args.scale_bits,
+            key_quant_axis=args.key_quant_axis,
+            key_group_size=args.key_group_size,
+            key_residual_length=args.key_residual_length,
         )
         row = {
             "candidate": name,
@@ -421,6 +455,9 @@ def main() -> None:
             "objective": "ordinary_language_model_quality",
             "quality_metric": "teacher_forced_continuation_nll",
             "allocation_risk_metric": args.quality_risk_metric,
+            "key_quant_axis": args.key_quant_axis,
+            "key_group_size": args.key_group_size,
+            "key_residual_length": args.key_residual_length,
         },
         "mode": mode,
         "model": args.model,

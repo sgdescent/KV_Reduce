@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=kv_value_gamma
+#SBATCH --job-name=kv_key_axis
 #SBATCH --partition=general
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=06:00:00
+#SBATCH --time=08:00:00
 #SBATCH --output=logs/%x-%A_%a.out
 #SBATCH --error=logs/%x-%A_%a.err
 
@@ -20,13 +20,21 @@ if [[ -f .venv/bin/activate ]]; then
 fi
 
 task_id="${SLURM_ARRAY_TASK_ID:-0}"
-draft_steps_values=(2 4 8)
+contexts=(1024 4096)
 seeds=(0 1 2)
-draft_steps="${draft_steps_values[$((task_id / ${#seeds[@]}))]}"
+context="${contexts[$((task_id / ${#seeds[@]}))]}"
 seed="${seeds[$((task_id % ${#seeds[@]}))]}"
-root="${SWEEP_ROOT:-outputs/value_precision_gamma/qwen25_3b_15b}"
-out_dir="$root/gamma_${draft_steps}/seed_${seed}"
-quant_configs="${QUANT_CONFIGS:-none;k8v8;k8v4;k8v3;k8v2;k4v8}"
+num_prompts="${NUM_PROMPTS_1K:-64}"
+if (( context == 4096 )); then
+  num_prompts="${NUM_PROMPTS_4K:-32}"
+fi
+
+axis="${KEY_QUANT_AXIS:-per_channel}"
+group_size="${KEY_GROUP_SIZE:-32}"
+residual_length="${KEY_RESIDUAL_LENGTH:-128}"
+variant="${AXIS_VARIANT:-${axis}_r${residual_length}}"
+root="${SWEEP_ROOT:-outputs/quant_axis_ablation/qwen25_3b_15b/$variant}"
+out_dir="$root/ctx_${context}/seed_${seed}"
 
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
@@ -41,16 +49,19 @@ python3 -u benchmark_spec_kv_quantization.py \
   --dataset_name wikitext \
   --dataset_config wikitext-2-raw-v1 \
   --eval_split validation \
-  --prompt_len 1024 \
-  --num_prompts "${NUM_PROMPTS:-64}" \
+  --prompt_len "$context" \
+  --num_prompts "$num_prompts" \
   --warmup_prompts 2 \
-  --draft_steps "$draft_steps" \
+  --draft_steps 4 \
   --max_new_tokens 16 \
   --seed "$seed" \
   --shuffle_eval \
-  --quant_configs "$quant_configs" \
+  --quant_configs "${QUANT_CONFIGS:-none;k8v8;k8v4;k4v8;k4v4}" \
+  --key_quant_axis "$axis" \
+  --key_group_size "$group_size" \
+  --key_residual_length "$residual_length" \
   --out_dir "$out_dir" \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
-  --wandb_group "${WANDB_GROUP:-value-precision-gamma}" \
-  --wandb_run_name "value_gamma_g${draft_steps}_s${seed}"
+  --wandb_group "${WANDB_GROUP:-key-quant-axis}" \
+  --wandb_run_name "key_axis_${variant}_c${context}_s${seed}"

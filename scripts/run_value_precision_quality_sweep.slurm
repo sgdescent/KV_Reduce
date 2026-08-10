@@ -11,7 +11,8 @@
 #SBATCH --error=logs/%x-%A_%a.err
 
 set -euo pipefail
-cd "${SLURM_SUBMIT_DIR:-$PWD}"
+repo_root="${REPO_ROOT:-/home/sakshamg/KV_Reduce}"
+cd "$repo_root"
 mkdir -p logs outputs
 if [[ -f .venv/bin/activate ]]; then
   # shellcheck disable=SC1091
