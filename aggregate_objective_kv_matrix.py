@@ -288,6 +288,7 @@ def main() -> None:
     for row in rows:
         paired[(int(row["budget"]), int(row["context"]), int(row["seed"]))][str(row["allocation_objective"])] = row
     effects: Dict[Tuple[int, int], List[Tuple[float, float]]] = defaultdict(list)
+    heuristic_effects: Dict[Tuple[int, int, str], List[Tuple[float, float, float]]] = defaultdict(list)
     for (budget, context, _), pair in paired.items():
         if not {"quality", "acceptance"}.issubset(pair):
             continue
@@ -297,6 +298,18 @@ def main() -> None:
                 float(pair["acceptance"]["quality_delta_nll"]) - float(pair["quality"]["quality_delta_nll"]),
             )
         )
+        for heuristic in ("k_priority", "v_priority"):
+            if heuristic not in pair:
+                continue
+            heuristic_effects[(budget, context, heuristic)].append(
+                (
+                    float(pair["acceptance"]["spec_accept_rate"])
+                    - float(pair[heuristic]["spec_accept_rate"]),
+                    float(pair[heuristic]["quality_kl"]) - float(pair["quality"]["quality_kl"]),
+                    float(pair[heuristic]["quality_delta_nll"])
+                    - float(pair["quality"]["quality_delta_nll"]),
+                )
+            )
     effect_rows = []
     for (budget, context), values in sorted(effects.items()):
         acceptance_advantage = [value[0] for value in values]
@@ -325,6 +338,26 @@ def main() -> None:
         row["paired_acceptance_excluded_non_tie_n"] = prompt_count["excluded_non_tie"]
         row["paired_acceptance_valid_n"] = prompt_count["used"]
         effect_rows.append(row)
+
+    heuristic_effect_rows = []
+    for (budget, context, heuristic), values in sorted(heuristic_effects.items()):
+        acceptance_advantage = [value[0] for value in values]
+        quality_kl_advantage = [value[1] for value in values]
+        quality_delta_nll_advantage = [value[2] for value in values]
+        heuristic_effect_rows.append(
+            {
+                "budget": budget,
+                "context": context,
+                "heuristic": heuristic,
+                "num_seeds": len(values),
+                "acceptance_allocation_acceptance_advantage_mean": mean(acceptance_advantage),
+                "acceptance_allocation_acceptance_advantage_ci95": ci95(acceptance_advantage),
+                "quality_allocation_kl_advantage_mean": mean(quality_kl_advantage),
+                "quality_allocation_kl_advantage_ci95": ci95(quality_kl_advantage),
+                "quality_allocation_delta_nll_advantage_mean": mean(quality_delta_nll_advantage),
+                "quality_allocation_delta_nll_advantage_ci95": ci95(quality_delta_nll_advantage),
+            }
+        )
 
     budget_prompt_effects: Dict[int, Dict[str, List[float]]] = defaultdict(
         lambda: {"acceptance": [], "quality_kl": [], "quality_delta_nll": []}
@@ -359,6 +392,7 @@ def main() -> None:
     write_csv(grouped_rows, out_dir / "matrix_grouped.csv")
     write_csv(effect_rows, out_dir / "cross_objective_effects.csv")
     write_csv(cross_context_rows, out_dir / "cross_context_effects.csv")
+    write_csv(heuristic_effect_rows, out_dir / "heuristic_effects.csv")
     write_csv(exactness_rows, out_dir / "exactness_audit.csv")
     payload = {
         "num_complete_rows": len(rows),
@@ -375,6 +409,7 @@ def main() -> None:
         "grouped": grouped_rows,
         "cross_objective_effects": effect_rows,
         "cross_context_effects": cross_context_rows,
+        "heuristic_effects": heuristic_effect_rows,
         "plots": make_plot(grouped_rows, out_dir),
     }
     with (out_dir / "summary.json").open("w", encoding="utf-8") as f:
