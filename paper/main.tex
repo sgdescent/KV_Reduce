@@ -138,38 +138,69 @@ $\ell$, component $c\in\{K,V\}$, and candidate bit width $b\in\{4,8\}$, we
 quantize only $(\ell,c)$ while leaving all other draft-cache entries in BF16. The
 measured risk is
 \begin{equation}
-  r_{\ell,c,b}=\max\left(0,\alpha_{\mathrm{BF16}}-\alpha_{\ell,c,b}\right),
+  \widehat r^{\mathrm{SD}}_{\ell,c,b}
+  =\overline{\alpha_{\mathrm{BF16}}-\alpha_{\ell,c,b}},
 \end{equation}
-where $\alpha$ is the end-to-end speculative acceptance rate. We additionally log
+where $\alpha$ is the end-to-end speculative acceptance rate and the bar denotes
+a paired mean over calibration prompts. Because a small profile can make harmful
+quantization appear beneficial by chance, we also evaluate the one-sided
+uncertainty-aware risk
+\begin{equation}
+  r^{\mathrm{SD,UCB}}_{\ell,c,b}
+  =\max\left(0,\widehat r^{\mathrm{SD}}_{\ell,c,b}
+  +1.96\,\mathrm{SE}(\alpha_{\mathrm{BF16}}-\alpha_{\ell,c,b})\right).
+\end{equation}
+We additionally log
 accepted tokens per verification round, top-1 match, acceptance mass,
 Jensen--Shannon divergence, greedy target agreement, and the target top-1 margin
 at the first disagreement.
 
-\subsection{Budgeted mixed-precision allocation}
+\subsection{Ordinary quality versus speculative acceptance}
 
-Given one-at-a-time risks, our transparent initial allocator solves an additive
-surrogate:
+The same frozen draft model is profiled under a second downstream objective:
+teacher-forced continuation quality without speculative decoding. For each
+candidate we measure
 \begin{equation}
-  \min_{\{b^c_\ell\}} \widehat M_d
+  r^{\mathrm{LM}}_{\ell,c,b}
+  =\mathbb{E}_t\!\left[
+  D_{\mathrm{KL}}\!\left(p_{\mathrm{BF16}}(\cdot\mid x_{\leq t})
+  \parallel p_{\ell,c,b}(\cdot\mid x_{\leq t})\right)\right].
+\end{equation}
+This paired design isolates the downstream objective: model, prompts, quantizer,
+candidate bit widths, and memory budget are held fixed, while the allocation is
+optimized either for ordinary LM quality or speculative acceptance. Each selected
+allocation is then cross-evaluated under both objectives.
+
+\subsection{Equal-memory mixed-precision allocation}
+
+Given one-at-a-time risks $r^o$ for objective $o$, our transparent allocator uses
+exact dynamic programming to solve the additive surrogate
+\begin{equation}
+  \min_{\{b^c_\ell\}} \sum_{\ell,c} r^o_{\ell,c,b^c_\ell}
   \quad \text{s.t.}\quad
-  \sum_{\ell,c} r_{\ell,c,b^c_\ell}\leq\epsilon,
+  \frac{1}{2|\mathcal L|}\sum_{\ell\in\mathcal L,c} b^c_\ell=B,
   \qquad b^c_\ell\in\{4,8,16\}.
   \label{eq:allocation}
 \end{equation}
-The additive approximation is deliberately conservative and is validated by
-running the selected allocation through the complete speculative loop. A stronger
-version will model cross-layer interactions rather than assuming independent
-risks.
+Thus quality- and acceptance-optimized allocations consume exactly the same
+profiled-layer bit budget $B$. We additionally compare against matched-memory
+K-priority and V-priority heuristics (e.g., K8V4 and K4V8 for $B=6$). The
+additive approximation is validated by running every allocation through the
+complete cached decoding loops; it is not treated as the final performance
+estimate.
 
 \section{Experimental Setup}
 
-We evaluate the six target--draft pairs in Table~\ref{tab:model-pairs} using
-contiguous WikiText-2 validation blocks, four draft proposals per verification
-round, greedy target verification, and 16 generated tokens per prompt. Main 1K
-and 4K experiments use 32 and 12 prompts per pair. We add two shuffled C4 seeds
-for Qwen2.5-3B/1.5B, OLMo-2, and Llama, and exploratory Qwen2.5 runs at 8K and
-16K. Sensitivity profiles use eight prompts per candidate; held-out allocation
-evaluation uses 32. All pairs were checked for tokenizer compatibility.
+We evaluate the target--draft pairs in Table~\ref{tab:model-pairs} using
+WikiText-2 validation blocks, four draft proposals per verification round,
+greedy target verification, and 16 generated tokens per prompt. The objective
+matrix uses 32 held-out sequences, three shuffle seeds, contexts 512, 1K, and
+4K, and profiled mean budgets $B\in\{6,8,10,12\}$. We separately repeat the
+Qwen matrix on streaming C4 and compare 16- versus 64-prompt acceptance
+calibration. Main profiles cover the top eight draft layers; an all-layer Qwen
+run measures the larger attainable memory reduction. Cross-family evaluation
+includes Qwen2.5, Llama 3, and OLMo 2 before optional broader-family validation.
+All pairs are checked for tokenizer compatibility.
 
 \begin{table}[t]
   \caption{Cross-family evaluation. Each pair is tested at 1K and 4K context,
@@ -190,10 +221,14 @@ evaluation uses 32. All pairs were checked for tokenizer compatibility.
   \end{tabular}
 \end{table}
 
-We report acceptance rate, accepted tokens per target verification, top-1 match,
-JS divergence, acceptance mass, draft-cache bytes, and total target-plus-draft KV
-bytes. Python fake quantization does not provide a valid kernel-level speed
-measurement, so we do not make throughput claims from this implementation.
+We report acceptance rate, accepted tokens per target verification, ordinary-LM
+KL, continuation NLL, top-1 match, JS divergence, acceptance mass, draft-cache
+bytes, and total target-plus-draft KV bytes. Confidence intervals use paired
+prompt bootstrap resampling. Exactness audits separate target disagreements with
+top-1 margin at most $10^{-3}$ from non-tie mismatches and exclude the latter
+from paired acceptance inference. Python fake quantization does not provide a
+valid kernel-level speed measurement, so we do not make throughput claims from
+this implementation.
 
 \section{Results}
 

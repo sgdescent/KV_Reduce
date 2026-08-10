@@ -25,7 +25,8 @@ python paper/aggregate_campaign.py \
   --out_dir paper/campaign_artifacts
 ```
 
-The aggregator accepts only `cached_dynamic_v3` summaries, computes prompt-level
+The current objective-matrix aggregator accepts only `cached_dynamic_v4` speculative
+summaries and `teacher_forced_cached_v1` ordinary-quality summaries, computes prompt-level
 bootstrap confidence intervals and paired equal-memory effects, audits numerical
 tie versus non-tie target mismatches, and writes paper-ready PDF/PNG figures plus
 a LaTeX table.
@@ -35,7 +36,9 @@ a LaTeX table.
 - Earlier Qwen2.5-3B/1.5B results are retained only as preliminary evidence;
   final tables use the cache-resident evaluator campaign.
 - Gaussian K/V perturbation is complete.
-- One Qwen top-eight-layer allocation is complete.
-- Cross-family results are running under `outputs/iclr_spec_kv/` on Catalyst.
+- A four-budget, three-context, three-seed Qwen objective matrix is running.
+- Llama and OLMo cross-family profiles, an all-layer Qwen run, streaming C4,
+  uncertainty-aware allocation, and a calibration-size ablation are dependency-chained.
+- Equal-memory K-priority and V-priority heuristics are included in new matrices.
 - Kernel-backed latency, downstream long-context quality, and multi-seed results
   are still required before submission.
