@@ -300,6 +300,9 @@ def main() -> None:
             "accept_rate": baseline_summary.get("overall_accept_rate", 0.0),
             "accept_rate_drop": 0.0,
             **zero_drop_statistics(),
+            "accept_mass": baseline_summary.get("round_accept_mass", 0.0),
+            "accept_mass_drop": 0.0,
+            **zero_drop_statistics("accept_mass_drop"),
             "round_js": baseline_summary.get("round_js", 0.0),
             "round_top1_match": baseline_summary.get("round_top1_match", 0.0),
             "total_cache_saved_fraction": 0.0,
@@ -356,6 +359,12 @@ def main() -> None:
                     baseline_result["rows"],
                     result["rows"],
                 )
+                paired_accept_mass_risk = paired_drop_statistics(
+                    baseline_result["rows"],
+                    result["rows"],
+                    metric="round_accept_mass",
+                    prefix="accept_mass_drop",
+                )
                 row = {
                     "candidate": name,
                     "layer": int(layer),
@@ -365,6 +374,10 @@ def main() -> None:
                     "accept_rate_drop": baseline_summary.get("overall_accept_rate", 0.0)
                     - candidate_summary.get("overall_accept_rate", 0.0),
                     **paired_risk,
+                    "accept_mass": candidate_summary.get("round_accept_mass", 0.0),
+                    "accept_mass_drop": baseline_summary.get("round_accept_mass", 0.0)
+                    - candidate_summary.get("round_accept_mass", 0.0),
+                    **paired_accept_mass_risk,
                     "accepted_per_round": candidate_summary.get("accepted_per_round", 0.0),
                     "accepted_per_round_drop": baseline_summary.get("accepted_per_round", 0.0)
                     - candidate_summary.get("accepted_per_round", 0.0),

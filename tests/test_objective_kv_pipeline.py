@@ -57,6 +57,21 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
         self.assertAlmostEqual(stats["accept_rate_drop_ucb95"], 0.248)
         self.assertAlmostEqual(stats["accept_rate_drop_ucb95_clipped"], 0.248)
 
+        mass_stats = paired_drop_statistics(
+            [
+                {"prompt_idx": 0, "round_accept_mass": 0.9},
+                {"prompt_idx": 1, "round_accept_mass": 0.8},
+            ],
+            [
+                {"prompt_idx": 0, "round_accept_mass": 0.8},
+                {"prompt_idx": 1, "round_accept_mass": 0.75},
+            ],
+            metric="round_accept_mass",
+            prefix="accept_mass_drop",
+        )
+        self.assertAlmostEqual(mass_stats["accept_mass_drop_prompt_mean"], 0.075)
+        self.assertGreater(mass_stats["accept_mass_drop_ucb95_clipped"], 0.075)
+
     def test_exactness_classification_distinguishes_numerical_ties(self) -> None:
         exact = {"matches_target_greedy": "1.0", "mismatch_min_top1_margin": "nan"}
         tie = {"matches_target_greedy": "0.0", "mismatch_min_top1_margin": "0.0005"}

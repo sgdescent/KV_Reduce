@@ -81,21 +81,27 @@ def augment_profile(
         raise ValueError(f"Baseline config {baseline_config!r} is missing from raw prompt rows.")
 
     augmented = []
+    metric_specs = (
+        ("accept_rate", "accept_rate_drop"),
+        ("round_accept_mass", "accept_mass_drop"),
+    )
     for source_row in profile_rows:
         row = dict(source_row)
         candidate = str(row["candidate"])
         if candidate == baseline_config:
-            row.update(zero_drop_statistics())
+            for _, prefix in metric_specs:
+                row.update(zero_drop_statistics(prefix))
         else:
             if candidate not in by_config:
                 raise ValueError(f"Candidate {candidate!r} is missing from raw prompt rows.")
-            row.update(
-                paired_drop_statistics(
+            for metric, prefix in metric_specs:
+                row.update(paired_drop_statistics(
                     by_config[baseline_config],
                     by_config[candidate],
+                    metric=metric,
+                    prefix=prefix,
                     z_score=z_score,
-                )
-            )
+                ))
         augmented.append(row)
     return augmented
 
@@ -132,7 +138,10 @@ def main() -> None:
                     "baseline_config": args.baseline_config,
                     "z_score": args.z_score,
                     "num_rows": len(augmented),
-                    "risk_field": "accept_rate_drop_ucb95_clipped",
+                    "risk_fields": [
+                        "accept_rate_drop_ucb95_clipped",
+                        "accept_mass_drop_ucb95_clipped",
+                    ],
                 },
                 indent=2,
             ),
