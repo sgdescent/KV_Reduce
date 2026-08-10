@@ -20,6 +20,7 @@ from benchmark_spec_kv_quantization import (
     cached_step,
     crop_cache_to_length,
     draft_next_logits_from_cache,
+    greedy_target_generate_with_margins,
     parse_csv_items,
     shared_token_logits,
     top1_logit_margin,
@@ -225,6 +226,13 @@ def audit_speculative_prompt(
     shared_vocab_size: int,
 ) -> Dict[str, Any]:
     """Compare the batched verifier to a tokenwise target on the same live prefix."""
+    independent_reference = greedy_target_generate_with_margins(
+        big_model=big_model,
+        prompt_ids=prompt_ids,
+        max_new_tokens=max_new_tokens,
+        big_device=big_device,
+        shared_vocab_size=shared_vocab_size,
+    )
     target_state = cached_prefill(big_model, prompt_ids, big_device)
     target_logits = shared_token_logits(target_state["logits"], shared_vocab_size)
     target_cache = target_state["cache"]
@@ -373,12 +381,31 @@ def audit_speculative_prompt(
         draft_cache_len = int(draft_commit["cache_len"])
         round_idx += 1
 
+    generated = generated[:max_new_tokens]
+    reference_tokens = independent_reference["tokens"]
+    first_reference_mismatch = next(
+        (
+            idx
+            for idx, (generated_token, reference_token) in enumerate(zip(generated, reference_tokens))
+            if generated_token != reference_token
+        ),
+        -1,
+    )
     first_top1_mismatch = next(
         (idx for idx, row in enumerate(decision_rows) if row["top1_match"] < 0.5),
         -1,
     )
     return {
         "generated": generated,
+        "independent_reference_tokens": reference_tokens,
+        "independent_reference_top1_margins": independent_reference["top1_margins"],
+        "matches_independent_target_greedy": generated == reference_tokens,
+        "first_independent_reference_mismatch": first_reference_mismatch,
+        "first_independent_reference_mismatch_margin": (
+            independent_reference["top1_margins"][first_reference_mismatch]
+            if first_reference_mismatch >= 0
+            else math.nan
+        ),
         "num_decisions": len(decision_rows),
         "top1_mismatches": sum(row["top1_match"] < 0.5 for row in decision_rows),
         "first_top1_mismatch": first_top1_mismatch,
@@ -494,6 +521,9 @@ def main() -> None:
         ),
         "speculative_top1_mismatches": sum(
             audit["top1_mismatches"] for audit in speculative_audits
+        ),
+        "speculative_independent_greedy_mismatches": sum(
+            not audit["matches_independent_target_greedy"] for audit in speculative_audits
         ),
         "audits": audits,
         "speculative_audits": speculative_audits,
