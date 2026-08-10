@@ -9,6 +9,7 @@ from pathlib import Path
 from acceptance_risk_statistics import paired_drop_statistics
 from aggregate_objective_kv_matrix import classify_exactness
 from kv_cache_quantization import parse_csv_ints, parse_quant_config_specs
+from prepare_objective_kv_matrix import heuristic_component_bits
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +35,12 @@ def write_profile(path: Path, risk_field: str, risks: dict[tuple[int, str, int],
 
 
 class ObjectiveKVPipelineTest(unittest.TestCase):
+    def test_matched_memory_heuristics_prioritize_k_or_v(self) -> None:
+        self.assertEqual(heuristic_component_bits(6, prioritize="k"), (8, 4))
+        self.assertEqual(heuristic_component_bits(6, prioritize="v"), (4, 8))
+        self.assertEqual(heuristic_component_bits(10, prioritize="k"), (16, 4))
+        self.assertEqual(heuristic_component_bits(12, prioritize="v"), (8, 16))
+
     def test_paired_acceptance_risk_reports_upper_confidence_bound(self) -> None:
         baseline = [
             {"prompt_idx": 0, "accept_rate": 0.5},

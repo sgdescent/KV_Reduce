@@ -3,11 +3,15 @@
 
 import argparse
 import csv
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import List
+
+
+FULL_PRECISION_BITS = 16
 
 
 def parse_csv_ints(value: str) -> List[int]:
@@ -27,6 +31,70 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--acceptance_risk_field", default="accept_rate_drop")
     parser.add_argument("--out_dir", required=True)
     return parser
+
+
+def heuristic_component_bits(budget: int, *, prioritize: str) -> tuple[int, int]:
+    """Return an exact-mean K/V heuristic using the supported 4/8/16-bit levels."""
+    if prioritize not in {"k", "v"}:
+        raise ValueError("prioritize must be 'k' or 'v'.")
+    supported = {
+        6: (8, 4),
+        8: (8, 8),
+        10: (16, 4),
+        12: (16, 8),
+        16: (16, 16),
+    }
+    if budget not in supported:
+        raise ValueError(f"No exact K/V heuristic is defined for a {budget}-bit mean budget.")
+    k_bits, v_bits = supported[budget]
+    return (k_bits, v_bits) if prioritize == "k" else (v_bits, k_bits)
+
+
+def read_profiled_layers(profile_csv: str) -> List[int]:
+    with open(profile_csv, "r", encoding="utf-8", newline="") as f:
+        rows = csv.DictReader(f)
+        layers = {
+            int(float(row["layer"]))
+            for row in rows
+            if row.get("component") in {"k", "v"} and int(float(row.get("layer", -1))) >= 0
+        }
+    if not layers:
+        raise ValueError(f"No profiled K/V layers were found in {profile_csv}.")
+    return sorted(layers)
+
+
+def write_heuristic_allocation(
+    *,
+    budget: int,
+    prioritize: str,
+    profiled_layers: List[int],
+    num_layers: int,
+    out_dir: Path,
+) -> Path:
+    profiled_k_bits, profiled_v_bits = heuristic_component_bits(budget, prioritize=prioritize)
+    k_bits = [FULL_PRECISION_BITS] * num_layers
+    v_bits = [FULL_PRECISION_BITS] * num_layers
+    for layer in profiled_layers:
+        k_bits[layer] = profiled_k_bits
+        v_bits[layer] = profiled_v_bits
+    name = f"{prioritize}_priority_b{budget}"
+    payload = {
+        "name": name,
+        "source": "matched_memory_hand_designed_baseline",
+        "priority": prioritize,
+        "target_profiled_mean_bits": budget,
+        "achieved_profiled_mean_bits": (profiled_k_bits + profiled_v_bits) / 2.0,
+        "k_bits": k_bits,
+        "v_bits": v_bits,
+        "layers": [
+            {"layer": layer, "k_bits": k_bits[layer], "v_bits": v_bits[layer]}
+            for layer in range(num_layers)
+        ],
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "allocation.json"
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
 
 
 def run_allocator(
@@ -68,6 +136,7 @@ def main() -> None:
     contexts = parse_csv_ints(args.contexts)
     seeds = parse_csv_ints(args.seeds)
     rows = []
+    profiled_layers = read_profiled_layers(args.acceptance_profile_csv)
 
     for budget in budgets:
         budget_root = root / f"budget_{budget}"
@@ -87,7 +156,24 @@ def main() -> None:
             out_dir=budget_root / "acceptance_allocation",
             num_layers=args.num_layers,
         )
-        configs = f"none;allocation:{quality_allocation};allocation:{acceptance_allocation}"
+        k_priority_allocation = write_heuristic_allocation(
+            budget=budget,
+            prioritize="k",
+            profiled_layers=profiled_layers,
+            num_layers=args.num_layers,
+            out_dir=budget_root / "k_priority_allocation",
+        )
+        v_priority_allocation = write_heuristic_allocation(
+            budget=budget,
+            prioritize="v",
+            profiled_layers=profiled_layers,
+            num_layers=args.num_layers,
+            out_dir=budget_root / "v_priority_allocation",
+        )
+        configs = (
+            f"none;allocation:{quality_allocation};allocation:{acceptance_allocation};"
+            f"allocation:{k_priority_allocation};allocation:{v_priority_allocation}"
+        )
         for context in contexts:
             for seed in seeds:
                 eval_root = budget_root / f"ctx_{context}" / f"seed_{seed}"
@@ -102,6 +188,8 @@ def main() -> None:
                             "quant_configs": configs,
                             "quality_allocation": str(quality_allocation),
                             "acceptance_allocation": str(acceptance_allocation),
+                            "k_priority_allocation": str(k_priority_allocation),
+                            "v_priority_allocation": str(v_priority_allocation),
                             "out_dir": str(eval_root / objective),
                         }
                     )

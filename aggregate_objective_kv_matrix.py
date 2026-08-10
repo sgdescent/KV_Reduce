@@ -87,9 +87,19 @@ def make_plot(grouped_rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
     contexts = sorted({int(row["context"]) for row in grouped_rows})
     budgets = sorted({int(row["budget"]) for row in grouped_rows})
     fig, axes = plt.subplots(1, len(contexts), figsize=(5.0 * len(contexts), 4.3), squeeze=False)
-    colors = {"quality": "#26456E", "acceptance": "#D1495B"}
+    colors = {
+        "quality": "#26456E",
+        "acceptance": "#D1495B",
+        "k_priority": "#2A9D8F",
+        "v_priority": "#E9C46A",
+    }
+    objective_order = [
+        objective
+        for objective in ("quality", "acceptance", "k_priority", "v_priority")
+        if any(row["allocation_objective"] == objective for row in grouped_rows)
+    ]
     for axis, context in zip(axes[0], contexts):
-        for objective in ("quality", "acceptance"):
+        for objective in objective_order:
             subset = sorted(
                 [row for row in grouped_rows if int(row["context"]) == context and row["allocation_objective"] == objective],
                 key=lambda row: int(row["budget"]),
@@ -142,7 +152,11 @@ def main() -> None:
         budget = int(budget_dir.name.split("_", 1)[1])
         quality_allocation = read_json(budget_dir / "quality_allocation" / "allocation.json")
         acceptance_allocation = read_json(budget_dir / "acceptance_allocation" / "allocation.json")
-        allocations = (("quality", quality_allocation), ("acceptance", acceptance_allocation))
+        allocations = [("quality", quality_allocation), ("acceptance", acceptance_allocation)]
+        for objective in ("k_priority", "v_priority"):
+            allocation_path = budget_dir / f"{objective}_allocation" / "allocation.json"
+            if allocation_path.exists():
+                allocations.append((objective, read_json(allocation_path)))
         for context_dir in sorted(budget_dir.glob("ctx_*")):
             context = int(context_dir.name.split("_", 1)[1])
             for seed_dir in sorted(context_dir.glob("seed_*")):
@@ -275,7 +289,7 @@ def main() -> None:
         paired[(int(row["budget"]), int(row["context"]), int(row["seed"]))][str(row["allocation_objective"])] = row
     effects: Dict[Tuple[int, int], List[Tuple[float, float]]] = defaultdict(list)
     for (budget, context, _), pair in paired.items():
-        if set(pair) != {"quality", "acceptance"}:
+        if not {"quality", "acceptance"}.issubset(pair):
             continue
         effects[(budget, context)].append(
             (
