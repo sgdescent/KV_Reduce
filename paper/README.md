@@ -32,6 +32,8 @@ be collected into common CSV, figure, and LaTeX artifacts with:
 python paper/aggregate_objective_campaign.py \
   --results_root outputs/objective_kv \
   --out_dir paper/objective_campaign_artifacts
+
+python paper/build_packed_artifacts.py
 ```
 
 By default, incomplete matrices, stale evaluator outputs, and smoke runs are not
@@ -52,5 +54,6 @@ a LaTeX table.
 - Llama and OLMo cross-family profiles, an all-layer Qwen run, streaming C4,
   uncertainty-aware allocation, and a calibration-size ablation are dependency-chained.
 - Equal-memory K-priority and V-priority heuristics are included in new matrices.
-- Kernel-backed latency, downstream long-context quality, and multi-seed results
-  are still required before submission.
+- Actual packed persistent storage is validated from 1K--32K; fused-kernel
+  latency, broader downstream long-context quality, and powered multi-seed
+  results remain required before submission.

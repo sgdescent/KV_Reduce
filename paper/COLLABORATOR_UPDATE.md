@@ -4,9 +4,10 @@ Status: provisional results as of August 10, 2026. The matched-objective grid,
 three-length speculation sweep, 16K/32K speculative long-context sweep,
 four-condition verifier audit, corrected Qwen HellaSwag/ARC task suite, and
 powered Qwen2.5-7B/3B FineWeb-Edu K4V3-versus-K3V4 replication are complete.
+The first real bit-packed memory/attention benchmark is also complete.
 Cross-family task checks, all-layer objective-specific allocation, strict
-quantizer-factorial cells, long-context replications, and a real bit-packed
-memory/attention benchmark are still running.
+quantizer-factorial cells, long-context replications, and free-running
+standalone-generation drift are still running.
 
 ## Bottom Line On Scope And Novelty
 
@@ -28,6 +29,47 @@ that converts those policies into measured long-context memory-capacity or
 throughput gains. We already have strong evidence for the first piece and broad
 evidence that K4V4/K3V4 preserve behavior. The allocator, cross-family power,
 and packed systems results remain the gates for a credible main-track claim.
+
+The prior-work bar is high. KIVI already establishes asymmetric quantization
+geometry for ordinary decoding, KV-AdaQuant explicitly assigns different
+precision to K and V, and QuantSpec studies quantized caches inside speculative
+decoding. Our differentiator therefore cannot be merely "use different K/V
+bits" or "quantize the draft cache." It must be the controlled geometry result,
+objective-aware byte allocation, and a measured packed implementation evaluated
+under both ordinary and speculative decoding.
+
+## Direct Answers For The Team
+
+**Is this sufficient novelty for a main-track paper?** Not yet as a method claim.
+The empirical observation is interesting, but the area already contains KIVI,
+KV-AdaQuant, QuantSpec, and other adaptive KV quantizers. It becomes a plausible
+main-track paper if we show that prior sensitivity conclusions are confounded by
+quantizer geometry, introduce a robust layer-wise allocator that beats uniform
+and published asymmetric policies at equal *actual bytes*, and demonstrate a
+real serving benefit with packed/fused attention. The current evidence supports
+the first part; the campaign is testing the second, and the packed benchmark has
+validated memory storage but not production speed.
+
+**Why restrict this to speculative decoding?** We should not. In ordinary
+autoregressive decoding, quantizing the model's K/V cache can reduce memory
+traffic, increase context length, and increase batch capacity. The tradeoff is
+that errors directly alter future tokens and can compound through generation.
+In draft-only speculative decoding, quantization errors only change proposal
+quality and acceptance: exact target verification still preserves the target
+distribution. This makes speculative decoding a safety envelope and a clean
+measurement setting, while ordinary generation is a first-class deployment
+target and an important control.
+
+**What evidence is available now?** The actual packed K4V4 cache for a
+Qwen2.5-1.5B-shaped GQA configuration reduces persistent storage from 896 MiB
+to 260.2 MiB at 32K tokens, a 70.96% reduction including metadata and a BF16
+residual tail. Savings are already 66.80% at 1K and approach 71% as metadata is
+amortized. The current materialize-then-attend CUDA diagnostic is 14.5x slower
+than native attention at 32K, so it validates the byte accounting but also shows
+that a fused packed attention kernel is mandatory before making a speed claim.
+Separately, a free-running target-cache campaign is queued across Qwen, Llama,
+OLMo, and SmolLM to measure exact sequence retention, token agreement, first
+divergence, and long-horizon error accumulation outside speculative decoding.
 
 ## Copy-Paste Message
 

@@ -45,6 +45,9 @@ $+0.10$ point acceptance change (95\% CI $[-0.04,+0.25]$), ordinary-quality
 KL 0.00730, and 95.99\% top-1 agreement. However, no equal-memory comparison
 shows a statistically resolved objective-preference reversal, rejecting a
 universal speculative-specific precision rule.
+An actual bit-packed implementation confirms that K4V4 reduces a
+Qwen2.5-1.5B-shaped 32K cache from 896.0 to 260.2 MiB (70.96\%); its deliberately
+unfused decode path is a storage validation rather than a throughput claim.
 The target verifier is never quantized; we separately audit finite-precision
 differences between batched verification and tokenwise BF16 decoding.
 \end{abstract}
@@ -274,7 +277,9 @@ unweighted mean of per-prompt rates. Exactness audits separate target disagreeme
 top-1 margin at most $10^{-3}$ from non-tie mismatches and exclude the latter
 from paired acceptance inference. Python fake quantization does not provide a
 valid kernel-level speed measurement, so we do not make throughput claims from
-this implementation.
+the quality evaluator. We separately validate persistent storage using actual
+bit-packed payloads and report its unfused materialize-then-attend latency only
+as a diagnostic.
 
 \section{Results}
 
@@ -448,6 +453,28 @@ K8V4 at both contexts: the K8V4--K4V8 KL contrasts are $+0.00307$
 (CI $[0.00216,0.00409]$) and $+0.00393$ (CI $[0.00268,0.00542]$).
 Thus, the ordinary-quality ranking agrees with the speculative preference at
 16K rather than yielding an objective reversal.
+
+\subsection{Actual packed storage realizes the estimated savings}
+
+Figure~\ref{fig:packed-memory} replaces the analytical payload with real
+bit-packed \texttt{uint8} tensors, BF16 quantizer metadata, and a BF16 residual
+key window for a Qwen2.5-1.5B-shaped cache. K4V4 saves 66.80\% at 1K, 70.02\%
+at 4K, 70.83\% at 16K, and 70.96\% at 32K. At 32K this reduces persistent KV
+storage from 896.0 to 260.2 MiB, closely matching the estimator used throughout
+the quality campaign. The benchmark currently unpacks K and V into BF16 before
+calling PyTorch SDPA; consequently, K4V4 is 14.5$\times$ slower than native at
+32K. This negative latency result isolates the remaining systems requirement:
+dequantization must be fused into attention before compression can yield a
+throughput improvement.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.9\linewidth]{packed_artifacts/packed_kv_memory.pdf}
+  \caption{Actual metadata-inclusive packed storage for a 28-layer,
+  two-KV-head, 128-head-dimension cache. Latency is intentionally excluded from
+  the figure because the current attention path materializes BF16 K/V.}
+  \label{fig:packed-memory}
+\end{figure}
 
 \subsection{A conservative learned allocation}
 
@@ -668,11 +695,13 @@ decoding and allocate draft-cache precision by measured acceptance sensitivity.
 
 \section{Limitations and Next Experiments}
 
-The present implementation uses KIVI-style grouped per-channel affine keys,
-per-token affine values, and an optional residual window, but still simulates
-dequantized tensors rather than implementing packed storage or fused attention
-kernels. Therefore analytical cache bytes, not wall-clock latency, are the
-reliable systems metric. Although the campaign spans six pairs and includes
+The quality evaluator uses KIVI-style grouped per-channel affine keys,
+per-token affine values, and an optional residual window through fake
+quantization. A separate implementation stores actual bit-packed payloads and
+validates persistent bytes, but its attention path materializes BF16 tensors
+rather than fusing dequantization with the attention kernel. Therefore packed
+bytes, not its wall-clock latency, are currently the reliable systems metric.
+Although the campaign spans six pairs and includes
 two C4 seeds for three pairs, prompt counts remain modest at 16K--32K and on
 task-conditioned code and mathematics prompts. Broader LongBench evaluation and
 larger PG19, HumanEval, and GSM8K samples are needed. Our BF16 audit also shows
@@ -684,8 +713,9 @@ The additive allocation in Equation~\ref{eq:allocation} ignores interactions
 between compressed components. We plan to fit a small risk predictor over joint
 allocations and compare it against uniform precision, KIVI-style quantization,
 KV-AdaQuant, KVTuner, RateQuant, Block-GTQ, QuantSpec, and random allocations at
-matched memory. A packed-cache kernel in vLLM or SGLang is required before making
-end-to-end throughput and serving-capacity claims.
+matched memory. A fused packed-cache kernel in vLLM, SGLang, or a standalone
+Triton harness is required before making end-to-end throughput and
+serving-capacity claims.
 
 \section{Conclusion}
 
