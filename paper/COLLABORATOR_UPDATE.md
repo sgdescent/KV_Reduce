@@ -130,16 +130,20 @@ agreement while removing 70.79% and 70.94% of standalone KV. K4V8 has
 significantly lower KL than equal-budget K8V4 at both contexts, agreeing with the
 speculative preference at 16K rather than producing an objective reversal.
 
-We see one raw equal-memory objective-preference reversal on Qwen2.5-7B/3B:
-speculative acceptance favors K4V3 over K3V4 by +0.43 points, while ordinary
-quality significantly favors K3V4. However, the speculative confidence interval
-is wide (-1.68 to +2.65 points), so this reversal is not statistically resolved.
-The first powered WikiText replication is diagnostic only: although it requested
-512 prompts per seed, the validation split supplies only about 255 usable 1K
-blocks, so seeds reshuffle a finite pool rather than form disjoint samples. We
-have replaced it with a streaming FineWeb-Edu replication using three explicit,
+One exploratory Qwen2.5-7B/3B seed initially suggested an equal-memory objective
+reversal: speculative acceptance favored K4V3 over K3V4 by +0.43 points while
+ordinary quality favored K3V4. The completed three-seed WikiText diagnostic does
+not replicate that sign. K4V3-minus-K3V4 acceptance is -0.64 points across 763
+paired prompt occurrences, with a nominal 95% interval of [-1.29, -0.001], so
+both objectives currently favor K3V4. The ordinary-quality KL contrast is
++0.01294 (95% CI: +0.01194 to +0.01396) across 750 sequence occurrences, also
+making K4V3 worse. These intervals are diagnostic only: every speculative run
+requested 512 prompts but the validation split supplied exactly 256 usable 1K
+blocks, and every quality run supplied 250 of 256 requested sequences. Seeds
+therefore reshuffle a finite pool rather than form independent samples. We have
+replaced this with a streaming FineWeb-Edu replication using three explicit,
 non-overlapping shards of 512 speculative prompts and 256 ordinary-quality
-sequences per shard. Aggregators now report any requested-versus-observed sample
+sequences per shard. Aggregators report every requested-versus-observed sample
 shortfall explicitly.
 
 The broader cross-family result suggests a practical two-stage policy even
