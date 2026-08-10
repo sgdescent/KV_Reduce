@@ -108,6 +108,16 @@ class ObjectiveCampaignAggregationTest(unittest.TestCase):
             "Qwen / PG19 / all-layer / 16K-32K",
         )
 
+    def test_powered_matrix_labels_report_held_out_scale(self) -> None:
+        self.assertEqual(
+            matrix_label("qwen25_accept_mass_powered_1k_v1"),
+            "Qwen / WikiText / top-8 / mass-UCB / 384 held-out",
+        )
+        self.assertEqual(
+            matrix_label("llama_all_layers_powered_b6_v1"),
+            "Llama / WikiText / all-layer / b6 / 384 held-out",
+        )
+
     def test_discovers_only_complete_non_smoke_matrices_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

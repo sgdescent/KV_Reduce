@@ -18,6 +18,7 @@ MATRIX_LABELS = {
     "qwen25_objective_c4_matrix_v1": "Qwen / C4 / top-8 / raw",
     "qwen25_objective_ucb_profile64_nested_matrix_v1": "Qwen / WikiText / top-8 / 64-cal",
     "qwen25_accept_mass_matrix_v1": "Qwen / WikiText / top-8 / mass-UCB",
+    "qwen25_accept_mass_powered_1k_v1": "Qwen / WikiText / top-8 / mass-UCB / 384 held-out",
     "qwen25_all_layers_mass_matrix_v1": "Qwen / WikiText / all-layer / mass-UCB",
     "qwen25_all_layers_eager_1k_v1": "Qwen / WikiText / all-layer / eager backend",
     "llama_mass_matrix_v1": "Llama / WikiText / top-8 / mass-UCB",
@@ -28,6 +29,8 @@ MATRIX_LABELS = {
     "qwen25_all_layers_gsm8k_v1": "Qwen / GSM8K answers / all-layer",
     "qwen25_all_layers_humaneval_v1": "Qwen / HumanEval prompts / all-layer",
     "qwen25_all_layers_profile64_mass_matrix_v1": "Qwen / WikiText / all-layer / 64-cal",
+    "llama_all_layers_powered_b6_v1": "Llama / WikiText / all-layer / b6 / 384 held-out",
+    "olmo2_all_layers_powered_b6_v1": "OLMo / WikiText / all-layer / b6 / 384 held-out",
 }
 
 FINAL_LABELS = {
