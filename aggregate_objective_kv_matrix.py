@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import math
+import random
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean, stdev
@@ -14,6 +15,11 @@ from typing import Any, Dict, List, Tuple
 def read_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def read_csv(path: Path) -> List[Dict[str, str]]:
+    with path.open("r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
 
 
 def write_csv(rows: List[Dict[str, Any]], path: Path) -> None:
@@ -32,6 +38,19 @@ def write_csv(rows: List[Dict[str, Any]], path: Path) -> None:
 
 def ci95(values: List[float]) -> float:
     return 1.96 * stdev(values) / math.sqrt(len(values)) if len(values) > 1 else 0.0
+
+
+def bootstrap_mean_ci(values: List[float], *, seed: int, samples: int = 2000) -> Tuple[float, float, float]:
+    if not values:
+        return float("nan"), float("nan"), float("nan")
+    if len(values) == 1:
+        return values[0], values[0], values[0]
+    rng = random.Random(seed)
+    estimates = []
+    for _ in range(samples):
+        estimates.append(mean(values[rng.randrange(len(values))] for _ in values))
+    estimates.sort()
+    return mean(values), estimates[int(0.025 * samples)], estimates[min(samples - 1, int(0.975 * samples))]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -88,6 +107,10 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     rows: List[Dict[str, Any]] = []
     missing = []
+    rejected = []
+    prompt_effects: Dict[Tuple[int, int], Dict[str, List[float]]] = defaultdict(
+        lambda: {"acceptance": [], "quality_kl": [], "quality_delta_nll": []}
+    )
 
     for budget_dir in sorted(matrix_dir.glob("budget_*")):
         budget = int(budget_dir.name.split("_", 1)[1])
@@ -105,6 +128,17 @@ def main() -> None:
                     continue
                 quality_eval = read_json(quality_path)
                 acceptance_eval = read_json(acceptance_path)
+                quality_version = quality_eval.get("runtime", {}).get("evaluator_version")
+                acceptance_version = acceptance_eval.get("runtime", {}).get("evaluator_version")
+                if quality_version != "teacher_forced_cached_v1" or acceptance_version != "cached_dynamic_v4":
+                    rejected.append(
+                        {
+                            "path": str(seed_dir),
+                            "quality_version": quality_version,
+                            "acceptance_version": acceptance_version,
+                        }
+                    )
+                    continue
                 for allocation_objective, allocation in allocations:
                     name = str(allocation["name"])
                     quality = quality_eval["summaries"][name]
@@ -128,6 +162,36 @@ def main() -> None:
                             "total_cache_saved_fraction": acceptance["total_cache_saved_fraction"],
                         }
                     )
+
+                quality_name = str(quality_allocation["name"])
+                acceptance_name = str(acceptance_allocation["name"])
+                acceptance_rows = read_csv(seed_dir / "acceptance" / "benchmark_rows.csv")
+                acceptance_by_prompt: Dict[str, Dict[str, float]] = defaultdict(dict)
+                for row in acceptance_rows:
+                    if row["config"] in {quality_name, acceptance_name}:
+                        acceptance_by_prompt[row["prompt_idx"]][row["config"]] = float(row["accept_rate"])
+                for pair in acceptance_by_prompt.values():
+                    if set(pair) == {quality_name, acceptance_name}:
+                        prompt_effects[(budget, context)]["acceptance"].append(
+                            pair[acceptance_name] - pair[quality_name]
+                        )
+
+                quality_rows = read_csv(seed_dir / "quality" / "raw_sequence_rows.csv")
+                quality_by_sequence: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(dict)
+                for row in quality_rows:
+                    if row["candidate"] in {quality_name, acceptance_name}:
+                        quality_by_sequence[row["sequence_idx"]][row["candidate"]] = {
+                            "kl": float(row["kl_p_to_q"]),
+                            "delta_nll": float(row["delta_nll"]),
+                        }
+                for pair in quality_by_sequence.values():
+                    if set(pair) == {quality_name, acceptance_name}:
+                        prompt_effects[(budget, context)]["quality_kl"].append(
+                            pair[acceptance_name]["kl"] - pair[quality_name]["kl"]
+                        )
+                        prompt_effects[(budget, context)]["quality_delta_nll"].append(
+                            pair[acceptance_name]["delta_nll"] - pair[quality_name]["delta_nll"]
+                        )
 
     if not rows:
         raise ValueError("No complete matrix result pairs were found.")
@@ -173,8 +237,7 @@ def main() -> None:
     for (budget, context), values in sorted(effects.items()):
         acceptance_advantage = [value[0] for value in values]
         quality_advantage = [value[1] for value in values]
-        effect_rows.append(
-            {
+        row = {
                 "budget": budget,
                 "context": context,
                 "num_seeds": len(values),
@@ -183,7 +246,17 @@ def main() -> None:
                 "quality_optimized_delta_nll_advantage_mean": mean(quality_advantage),
                 "quality_optimized_delta_nll_advantage_ci95": ci95(quality_advantage),
             }
-        )
+        paired = prompt_effects[(budget, context)]
+        for metric, metric_values in paired.items():
+            estimate, low, high = bootstrap_mean_ci(
+                metric_values,
+                seed=budget * 100000 + context * 10 + len(metric),
+            )
+            row[f"paired_{metric}_n"] = len(metric_values)
+            row[f"paired_{metric}_mean"] = estimate
+            row[f"paired_{metric}_ci_low"] = low
+            row[f"paired_{metric}_ci_high"] = high
+        effect_rows.append(row)
 
     write_csv(rows, out_dir / "matrix_rows.csv")
     write_csv(grouped_rows, out_dir / "matrix_grouped.csv")
@@ -191,7 +264,9 @@ def main() -> None:
     payload = {
         "num_complete_rows": len(rows),
         "num_missing_pairs": len(missing),
+        "num_rejected_pairs": len(rejected),
         "missing_pairs": missing,
+        "rejected_pairs": rejected,
         "grouped": grouped_rows,
         "cross_objective_effects": effect_rows,
         "plots": make_plot(grouped_rows, out_dir),
