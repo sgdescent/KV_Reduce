@@ -11,7 +11,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from aggregate_value_precision_sweep import bootstrap_mean_ci, parse_config_bits
+from aggregate_value_precision_sweep import parse_config_bits
+from spec_kv_statistics import bootstrap_mean_ci
 
 
 def read_json(path: Path) -> Dict[str, Any]:

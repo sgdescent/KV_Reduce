@@ -12,12 +12,12 @@ from typing import Any, Dict, List, Tuple
 
 from aggregate_value_precision_sweep import (
     aggregate_prompt_effects,
-    bootstrap_mean_ci,
     parse_config_bits,
     read_csv,
     read_json,
     write_csv,
 )
+from spec_kv_statistics import bootstrap_acceptance_contrast
 
 
 def make_plot(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
@@ -84,7 +84,9 @@ def main() -> None:
     args = build_parser().parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     run_rows: List[Dict[str, Any]] = []
-    prompt_effects: Dict[Tuple[int, str], List[float]] = defaultdict(list)
+    prompt_effects: Dict[
+        Tuple[int, str], List[Tuple[Dict[str, str], Dict[str, str]]]
+    ] = defaultdict(list)
     exactness: Counter[str] = Counter()
     invalid_prompts = 0
     missing = []
@@ -133,8 +135,9 @@ def main() -> None:
         grouped_values[(int(row["draft_steps"]), str(row["config"]))].append(row)
     grouped: List[Dict[str, Any]] = []
     for (draft_steps, name), values in sorted(grouped_values.items()):
-        effect = bootstrap_mean_ci(
+        effect = bootstrap_acceptance_contrast(
             prompt_effects[(draft_steps, name)],
+            (1.0, -1.0),
             seed=draft_steps * 1000 + sum(map(ord, name)),
         )
         grouped.append(

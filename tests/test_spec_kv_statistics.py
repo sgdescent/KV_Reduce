@@ -1,6 +1,6 @@
 import unittest
 
-from spec_kv_statistics import acceptance_contrast, acceptance_ratio
+from spec_kv_statistics import acceptance_contrast, acceptance_ratio, bootstrap_mean_ci
 
 
 def row(accepted: int, proposed: int):
@@ -8,6 +8,12 @@ def row(accepted: int, proposed: int):
 
 
 class SpecKvStatisticsTest(unittest.TestCase):
+    def test_bootstrap_mean_reports_point_estimate(self) -> None:
+        result = bootstrap_mean_ci([1.0, 2.0, 3.0], seed=7, samples=100)
+        self.assertEqual(result["mean"], 2.0)
+        self.assertLessEqual(result["ci_low"], result["mean"])
+        self.assertGreaterEqual(result["ci_high"], result["mean"])
+
     def test_acceptance_ratio_weights_by_proposals(self) -> None:
         self.assertAlmostEqual(acceptance_ratio([row(10, 10), row(0, 90)]), 0.1)
 
