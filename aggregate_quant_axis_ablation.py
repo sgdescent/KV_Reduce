@@ -13,6 +13,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+from spec_kv_statistics import bootstrap_acceptance_contrast
+
 
 def read_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -43,23 +45,6 @@ def exact_enough(row: Dict[str, str], tie_margin: float) -> bool:
     except (TypeError, ValueError):
         return False
     return math.isfinite(margin) and margin <= tie_margin
-
-
-def bootstrap_ci(values: List[float], seed: int, samples: int = 10_000) -> Dict[str, float]:
-    if not values:
-        return {"mean": float("nan"), "ci_low": float("nan"), "ci_high": float("nan")}
-    if len(values) == 1:
-        return {"mean": values[0], "ci_low": values[0], "ci_high": values[0]}
-    rng = random.Random(seed)
-    estimates = sorted(
-        statistics.mean(values[rng.randrange(len(values))] for _ in values)
-        for _ in range(samples)
-    )
-    return {
-        "mean": statistics.mean(values),
-        "ci_low": estimates[int(0.025 * samples)],
-        "ci_high": estimates[min(samples - 1, int(0.975 * samples))],
-    }
 
 
 def load_runs(root: Path) -> Tuple[Dict[Tuple[int, int, str], Dict[str, Dict[str, str]]], Dict[Tuple[int, str], List[Dict[str, float]]]]:
@@ -144,9 +129,16 @@ def main() -> None:
     grouped_rows: List[Dict[str, Any]] = []
     for variant_label, variant_dir in args.variant:
         variant_prompts, variant_memory = load_runs(variant_dir)
-        effects: Dict[Tuple[int, str], List[float]] = defaultdict(list)
-        baseline_effects: Dict[Tuple[int, str], List[float]] = defaultdict(list)
-        axis_gains: Dict[Tuple[int, str], List[float]] = defaultdict(list)
+        effects: Dict[
+            Tuple[int, str], List[Tuple[Dict[str, str], Dict[str, str]]]
+        ] = defaultdict(list)
+        baseline_effects: Dict[
+            Tuple[int, str], List[Tuple[Dict[str, str], Dict[str, str]]]
+        ] = defaultdict(list)
+        axis_gains: Dict[
+            Tuple[int, str],
+            List[Tuple[Dict[str, str], Dict[str, str], Dict[str, str], Dict[str, str]]],
+        ] = defaultdict(list)
         for prompt_key in sorted(set(baseline_prompts) & set(variant_prompts)):
             context = prompt_key[0]
             baseline = baseline_prompts[prompt_key]
@@ -155,16 +147,30 @@ def main() -> None:
                 required = [baseline["none"], baseline[config], variant["none"], variant[config]]
                 if not all(exact_enough(row, args.tie_margin) for row in required):
                     continue
-                baseline_effect = float(baseline[config]["accept_rate"]) - float(baseline["none"]["accept_rate"])
-                variant_effect = float(variant[config]["accept_rate"]) - float(variant["none"]["accept_rate"])
-                baseline_effects[(context, config)].append(baseline_effect)
-                effects[(context, config)].append(variant_effect)
-                axis_gains[(context, config)].append(variant_effect - baseline_effect)
+                baseline_pair = (baseline[config], baseline["none"])
+                variant_pair = (variant[config], variant["none"])
+                baseline_effects[(context, config)].append(baseline_pair)
+                effects[(context, config)].append(variant_pair)
+                axis_gains[(context, config)].append(
+                    (variant[config], variant["none"], baseline[config], baseline["none"])
+                )
 
         for context, config in sorted(effects):
-            variant_ci = bootstrap_ci(effects[(context, config)], seed=context + sum(map(ord, config + variant_label)))
-            baseline_ci = bootstrap_ci(baseline_effects[(context, config)], seed=context + sum(map(ord, config)))
-            gain_ci = bootstrap_ci(axis_gains[(context, config)], seed=context + sum(map(ord, variant_label)))
+            variant_ci = bootstrap_acceptance_contrast(
+                effects[(context, config)],
+                (1.0, -1.0),
+                seed=context + sum(map(ord, config + variant_label)),
+            )
+            baseline_ci = bootstrap_acceptance_contrast(
+                baseline_effects[(context, config)],
+                (1.0, -1.0),
+                seed=context + sum(map(ord, config)),
+            )
+            gain_ci = bootstrap_acceptance_contrast(
+                axis_gains[(context, config)],
+                (1.0, -1.0, -1.0, 1.0),
+                seed=context + sum(map(ord, variant_label)),
+            )
             memory_rows = variant_memory[(context, config)]
             grouped_rows.append(
                 {

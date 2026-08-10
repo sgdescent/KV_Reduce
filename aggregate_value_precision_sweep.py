@@ -14,6 +14,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+from spec_kv_statistics import bootstrap_acceptance_contrast
+
 
 def read_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
@@ -60,31 +62,14 @@ def exactness_status(row: Dict[str, str], *, tie_margin: float) -> str:
     return "non_tie_or_unknown"
 
 
-def bootstrap_mean_ci(values: List[float], *, seed: int, samples: int = 10_000) -> Dict[str, float]:
-    if not values:
-        return {"mean": float("nan"), "ci_low": float("nan"), "ci_high": float("nan")}
-    if len(values) == 1:
-        return {"mean": values[0], "ci_low": values[0], "ci_high": values[0]}
-    rng = random.Random(seed)
-    estimates = sorted(
-        statistics.mean(values[rng.randrange(len(values))] for _ in values)
-        for _ in range(samples)
-    )
-    return {
-        "mean": statistics.mean(values),
-        "ci_low": estimates[int(0.025 * samples)],
-        "ci_high": estimates[min(samples - 1, int(0.975 * samples))],
-    }
-
-
 def aggregate_prompt_effects(
     rows: Iterable[Dict[str, str]],
     *,
     configs: Iterable[str],
     tie_margin: float,
-) -> Tuple[Dict[str, List[float]], Counter[str], int]:
+) -> Tuple[Dict[str, List[Tuple[Dict[str, str], Dict[str, str]]]], Counter[str], int]:
     expected = set(configs) | {"none"}
-    by_prompt: Dict[str, Dict[str, float]] = defaultdict(dict)
+    by_prompt: Dict[str, Dict[str, Dict[str, str]]] = defaultdict(dict)
     invalid_prompts = set()
     counts: Counter[str] = Counter()
     for row in rows:
@@ -92,19 +77,19 @@ def aggregate_prompt_effects(
         if config not in expected:
             continue
         prompt = row["prompt_idx"]
-        by_prompt[prompt][config] = float(row["accept_rate"])
+        by_prompt[prompt][config] = row
         status = exactness_status(row, tie_margin=tie_margin)
         counts[status] += 1
         if status == "non_tie_or_unknown":
             invalid_prompts.add(prompt)
 
-    effects: Dict[str, List[float]] = defaultdict(list)
+    effects: Dict[str, List[Tuple[Dict[str, str], Dict[str, str]]]] = defaultdict(list)
     for prompt, values in by_prompt.items():
         if prompt in invalid_prompts or "none" not in values:
             continue
         for config in expected - {"none"}:
             if config in values:
-                effects[config].append(values[config] - values["none"])
+                effects[config].append((values[config], values["none"]))
     return effects, counts, len(invalid_prompts)
 
 
@@ -158,7 +143,9 @@ def main() -> None:
     args = build_parser().parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     run_rows: List[Dict[str, Any]] = []
-    prompt_effects: Dict[Tuple[int, str], List[float]] = defaultdict(list)
+    prompt_effects: Dict[
+        Tuple[int, str], List[Tuple[Dict[str, str], Dict[str, str]]]
+    ] = defaultdict(list)
     exactness: Counter[str] = Counter()
     invalid_prompts = 0
     missing = []
@@ -211,8 +198,9 @@ def main() -> None:
     for row in run_rows:
         by_config[(int(row["context"]), str(row["config"]))].append(row)
     for (context, name), values in sorted(by_config.items()):
-        effect = bootstrap_mean_ci(
+        effect = bootstrap_acceptance_contrast(
             prompt_effects[(context, name)],
+            (1.0, -1.0),
             seed=context * 100 + sum(ord(char) for char in name),
         )
         grouped.append(

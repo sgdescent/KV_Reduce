@@ -13,6 +13,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+from spec_kv_statistics import bootstrap_acceptance_contrast
+
 
 def read_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -47,41 +49,6 @@ def bootstrap_mean_ci(values: List[float], *, seed: int, samples: int = 10_000) 
     )
     return {
         "mean": statistics.mean(values),
-        "ci_low": estimates[int(0.025 * samples)],
-        "ci_high": estimates[min(samples - 1, int(0.975 * samples))],
-    }
-
-
-def acceptance_ratio(rows: List[Dict[str, str]]) -> float:
-    proposed = sum(float(row["proposed_tokens"]) for row in rows)
-    accepted = sum(float(row["accepted_tokens"]) for row in rows)
-    return accepted / proposed if proposed > 0 else 0.0
-
-
-def paired_bootstrap_acceptance_delta(
-    pairs: List[Tuple[Dict[str, str], Dict[str, str]]],
-    *,
-    seed: int,
-    samples: int = 10_000,
-) -> Dict[str, float]:
-    if not pairs:
-        return {"mean": float("nan"), "ci_low": float("nan"), "ci_high": float("nan")}
-    left = [pair[0] for pair in pairs]
-    right = [pair[1] for pair in pairs]
-    point = acceptance_ratio(left) - acceptance_ratio(right)
-    if len(pairs) == 1 or samples <= 0:
-        return {"mean": point, "ci_low": point, "ci_high": point}
-    rng = random.Random(seed)
-    estimates = []
-    for _ in range(samples):
-        indices = [rng.randrange(len(pairs)) for _ in pairs]
-        estimates.append(
-            acceptance_ratio([left[index] for index in indices])
-            - acceptance_ratio([right[index] for index in indices])
-        )
-    estimates.sort()
-    return {
-        "mean": point,
         "ci_low": estimates[int(0.025 * samples)],
         "ci_high": estimates[min(samples - 1, int(0.975 * samples))],
     }
@@ -192,7 +159,7 @@ def aggregate_preferences(
             if not spec_pairs or not quality_kl_differences:
                 continue
             seed = context + sum(map(ord, config_a + config_b))
-            spec_ci = paired_bootstrap_acceptance_delta(spec_pairs, seed=seed)
+            spec_ci = bootstrap_acceptance_contrast(spec_pairs, (1.0, -1.0), seed=seed)
             quality_kl_ci = bootstrap_mean_ci(quality_kl_differences, seed=seed + 1)
             quality_nll_ci = bootstrap_mean_ci(quality_nll_differences, seed=seed + 2)
             config_a_saved = statistics.mean(memory[(context, config_a)])
