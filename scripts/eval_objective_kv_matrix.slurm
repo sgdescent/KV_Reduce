@@ -89,6 +89,7 @@ elif [[ "$objective" == "acceptance" ]]; then
     --small_model "${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}" \
     --big_device "${BIG_DEVICE:-cuda:0}" \
     --small_device "${SMALL_DEVICE:-cuda:0}" \
+    --attn_implementation "${ATTN_IMPLEMENTATION:-sdpa}" \
     --dataset_name "${DATASET_NAME:-wikitext}" \
     --dataset_config "${DATASET_CONFIG:-wikitext-2-raw-v1}" \
     --eval_split "${EVAL_SPLIT:-validation}" \
