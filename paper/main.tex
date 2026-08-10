@@ -440,7 +440,14 @@ K4V4 saves 70.79\% of draft-cache bytes and 30.97\% of combined target--draft
 KV, with a $+0.30$-point acceptance change across 24 paired prompts
 (CI $[-2.25,3.04]$). At 32K, it saves 70.94\% of draft KV and 31.04\% combined
 KV; the estimated acceptance change is $-2.22$ points (CI $[-5.81,0.00]$), but
-only 11 prompts are available, so we treat the 32K estimate as preliminary.
+only 11 prompts are available, so we treat the 32K speculative estimate as
+preliminary. The matched ordinary-quality sweep is complete across three seeds:
+K4V4 has KL $0.00624$ at 16K and $0.00724$ at 32K, with 96.35\% and 96.88\%
+top-1 agreement, respectively. K4V8 has significantly lower KL than equal-budget
+K8V4 at both contexts: the K8V4--K4V8 KL contrasts are $+0.00307$
+(CI $[0.00216,0.00409]$) and $+0.00393$ (CI $[0.00268,0.00542]$).
+Thus, the ordinary-quality ranking agrees with the speculative preference at
+16K rather than yielding an objective reversal.
 
 \subsection{A conservative learned allocation}
 

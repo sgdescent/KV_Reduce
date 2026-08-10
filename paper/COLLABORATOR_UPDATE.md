@@ -123,7 +123,12 @@ The speculative PG19 sweep is also complete. At 16K, K4V4 saves 70.79% of the
 draft cache and 30.97% of combined KV with a +0.30-point acceptance change
 (CI: -2.25 to +3.04) across 24 paired prompts. At 32K it saves 70.94% of the
 draft cache and 31.04% combined KV; the -2.22-point estimate has a wide interval
-(-5.81 to 0.00) over only 11 prompts, so we treat 32K as preliminary.
+(-5.81 to 0.00) over only 11 prompts, so we treat 32K speculative acceptance as
+preliminary. The matched ordinary-quality sweep is complete across three seeds:
+K4V4 has KL 0.00624 at 16K and 0.00724 at 32K, with 96.35% and 96.88% top-1
+agreement while removing 70.79% and 70.94% of standalone KV. K4V8 has
+significantly lower KL than equal-budget K8V4 at both contexts, agreeing with the
+speculative preference at 16K rather than producing an objective reversal.
 
 We see one raw equal-memory objective-preference reversal on Qwen2.5-7B/3B:
 speculative acceptance favors K4V3 over K3V4 by +0.43 points, while ordinary
@@ -248,7 +253,6 @@ objective-specific differences instead of assuming they exist.
 - Powered Qwen2.5-7B/3B equal-memory K4V3 versus K3V4 test.
 - Eight-shot HellaSwag and ARC-Challenge task accuracy across disjoint seeds.
 - Controlled 4K quantizer-geometry factorial replication.
-- Additional 16K/32K ordinary-quality sequences once GPU capacity permits.
 - C4, GSM8K, and HumanEval robustness aggregation and paper integration.
 
 ## Closest Work
