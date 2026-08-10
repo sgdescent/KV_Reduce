@@ -1,10 +1,10 @@
 # KV-Cache Quantization: Collaborator Update
 
 Status: provisional results as of August 10, 2026. The matched-objective grid,
-three-length speculation sweep, 16K/32K speculative long-context sweep, and
-four-condition verifier audit are complete. The powered 7B/3B replication,
-task-accuracy checks, and controlled 4K quantizer-factorial cells are still
-running.
+three-length speculation sweep, 16K/32K speculative long-context sweep,
+four-condition verifier audit, and corrected Qwen HellaSwag/ARC task suite are
+complete. The powered 7B/3B replication, cross-family task checks, and
+controlled 4K quantizer-factorial cells are still running.
 
 ## Copy-Paste Message
 
@@ -197,8 +197,18 @@ is 63.67%, while K4V4 reaches 63.15%, a paired change of -0.52 points (95% CI:
 +0.78), and K4V3-minus-K3V4 is -0.52 points (CI: -1.82 to +0.78). These
 intervals do not resolve a policy ranking; the result supports ordinary-task
 quality preservation at substantial cache compression rather than an
-objective-specific allocation claim. ARC-Challenge and cross-family task runs
-remain in flight.
+objective-specific allocation claim.
+
+The corrected ARC-Challenge suite is also complete: three explicitly disjoint
+99-example shards provide 297 paired examples per policy. BF16 raw accuracy is
+45.12%, while K4V4 reaches 45.79%, a paired change of +0.67 points (95% CI:
+-1.01 to +2.36). Equal-memory K8V4-minus-K4V8 is +0.34 points (CI: -0.67 to
++1.68), and K4V3-minus-K3V4 is -0.34 points (CI: -2.02 to +1.35). As with
+HellaSwag, every interval includes zero. We therefore interpret the task suite
+as evidence that K4V4 preserves ordinary downstream behavior at substantial
+standalone-cache compression, not as evidence that quantization improves task
+accuracy or that ARC resolves the K/V allocation question. Cross-family task
+runs remain in flight.
 
 The full joint target/draft grid is now complete: 25 precision combinations at
 1K and 4K, with three disjoint seeds per context. Under target KL <= 0.01,
@@ -283,15 +293,17 @@ objective-specific differences instead of assuming they exist.
 
 - Diagnostic WikiText Qwen2.5-7B/3B replication, followed by a corrected,
   disjoint-shard FineWeb-Edu K4V3-versus-K3V4 test.
-- Eight-shot ARC-Challenge task accuracy across three disjoint seeds; the
-  corresponding HellaSwag run is complete.
+- Qwen HellaSwag and eight-shot ARC-Challenge are complete; dependency-gated
+  cross-family task replication is now running.
 - Dependency-gated cross-family HellaSwag and ARC-Challenge validation on
   Llama-3.2-3B, OLMo-2-1B, and SmolLM2-360M using two disjoint 128-example
   shards per task and the same matched-memory K/V policies.
 - Controlled 4K quantizer-geometry factorial replication.
 - All-layer FineWeb-Edu calibration of separate ordinary-quality and
   speculative-acceptance allocations, followed by equal-budget cross-objective
-  evaluation on disjoint held-out blocks.
+  evaluation on disjoint held-out blocks. The Qwen campaign is dependency-gated
+  behind the powered 7B/3B replication; an OLMo-2 7B/1B replication is queued
+  behind the completed robustness chain.
 - C4, GSM8K, and HumanEval robustness aggregation and paper integration.
 
 ## Closest Work
