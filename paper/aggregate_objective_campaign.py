@@ -27,6 +27,15 @@ MATRIX_LABELS = {
     "qwen25_all_layers_profile64_mass_matrix_v1": "Qwen / WikiText / all-layer / 64-cal",
 }
 
+FINAL_LABELS = {
+    "qwen25_objective_all_layers_1k_v1": "Qwen / WikiText / all-layer / 8 prompts",
+    "llama_objective_1k_v1": "Llama / WikiText / top-8",
+    "olmo2_objective_1k_v1": "OLMo / WikiText / top-8",
+    "llama_all_layers_objective_b6_v1": "Llama / WikiText / all-layer / b6",
+    "olmo2_all_layers_objective_b6_v1": "OLMo / WikiText / all-layer / b6",
+    "qwen25_all_layers_objective_b3_v1": "Qwen / WikiText / all-layer / b3",
+}
+
 
 def read_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
@@ -90,6 +99,29 @@ def discover_aggregates(
         else:
             rejected.append({key: value for key, value in record.items() if key != "summary"})
     return accepted, rejected
+
+
+def discover_final_results(results_root: Path, *, include_smoke: bool) -> List[Dict[str, Any]]:
+    records = []
+    for path in sorted(results_root.glob("*/final_results/summary.json")):
+        campaign = path.parent.parent.name
+        if not include_smoke and "smoke" in campaign:
+            continue
+        summary = read_json(path)
+        if not summary.get("rows") or not summary.get("baseline"):
+            continue
+        versions = summary.get("evaluator_versions", {})
+        records.append(
+            {
+                "campaign": campaign,
+                "label": FINAL_LABELS.get(campaign, matrix_label(campaign)),
+                "path": str(path),
+                "valid_evaluators": versions.get("quality") == "teacher_forced_cached_v1"
+                and versions.get("acceptance") == "cached_dynamic_v4",
+                "summary": summary,
+            }
+        )
+    return records
 
 
 def mean_saving_by_budget(grouped: Iterable[Dict[str, Any]]) -> Dict[int, float]:
@@ -157,6 +189,25 @@ def collect_rows(records: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]
         "kv": kv_rows,
         "exactness": exactness_rows,
     }
+
+
+def collect_final_rows(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    rows = []
+    for record in records:
+        summary = record["summary"]
+        baseline = summary["baseline"]
+        for row in summary["rows"]:
+            rows.append(
+                {
+                    "campaign": record["campaign"],
+                    "campaign_label": record["label"],
+                    "valid_evaluators": record["valid_evaluators"],
+                    "baseline_quality_nll": baseline.get("quality_nll"),
+                    "baseline_spec_accept_rate": baseline.get("spec_accept_rate"),
+                    **row,
+                }
+            )
+    return rows
 
 
 def configure_plot_style() -> None:
@@ -247,6 +298,56 @@ def plot_kv_effects(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
     return paths
 
 
+def plot_final_results(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
+    usable = [
+        row
+        for row in rows
+        if row.get("valid_evaluators")
+        and finite(row.get("total_cache_saved_fraction"))
+        and finite(row.get("spec_accept_rate_delta"))
+    ]
+    if not usable:
+        return []
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return []
+    colors = {"quality_optimized": "#274466", "acceptance_optimized": "#D1495B"}
+    markers = {"quality_optimized": "o", "acceptance_optimized": "s"}
+    fig, axis = plt.subplots(figsize=(9.5, 5.4))
+    for allocation in ("quality_optimized", "acceptance_optimized"):
+        selected = [row for row in usable if row.get("allocation") == allocation]
+        axis.scatter(
+            [100.0 * float(row["total_cache_saved_fraction"]) for row in selected],
+            [100.0 * float(row["spec_accept_rate_delta"]) for row in selected],
+            s=65,
+            marker=markers[allocation],
+            color=colors[allocation],
+            label=allocation.replace("_", " "),
+            zorder=3,
+        )
+        for row in selected:
+            axis.annotate(
+                str(row["campaign_label"]),
+                (
+                    100.0 * float(row["total_cache_saved_fraction"]),
+                    100.0 * float(row["spec_accept_rate_delta"]),
+                ),
+                xytext=(5, 4),
+                textcoords="offset points",
+                fontsize=7,
+            )
+    axis.axhline(0.0, color="#222222", linewidth=1)
+    axis.set_xlabel("Total speculative KV cache saved (%)")
+    axis.set_ylabel("Acceptance change from native draft (percentage points)")
+    axis.set_title("All-Layer Memory-Acceptance Tradeoff", fontweight="bold")
+    axis.legend(frameon=False)
+    fig.tight_layout()
+    paths = save_figure(fig, out_dir, "all_layer_memory_acceptance")
+    plt.close(fig)
+    return paths
+
+
 def latex_escape(value: Any) -> str:
     return str(value).replace("_", r"\_").replace("%", r"\%")
 
@@ -260,7 +361,9 @@ def fmt_ci(row: Dict[str, Any], metric: str, *, scale: float = 1.0, digits: int 
     return f"{estimate:+.{digits}f} [{low:+.{digits}f}, {high:+.{digits}f}]"
 
 
-def write_latex_tables(rows: Dict[str, List[Dict[str, Any]]], out_dir: Path) -> List[str]:
+def write_latex_tables(
+    rows: Dict[str, List[Dict[str, Any]]], final_rows: List[Dict[str, Any]], out_dir: Path
+) -> List[str]:
     objective_lines = [
         r"\begin{tabular}{llrr}",
         r"\toprule",
@@ -292,7 +395,25 @@ def write_latex_tables(rows: Dict[str, List[Dict[str, Any]]], out_dir: Path) -> 
     kv_lines.extend([r"\bottomrule", r"\end{tabular}"])
     kv_path = out_dir / "kv_priority_table.tex"
     kv_path.write_text("\n".join(kv_lines) + "\n", encoding="utf-8")
-    return [str(objective_path), str(kv_path)]
+    final_lines = [
+        r"\begin{tabular}{llrrr}",
+        r"\toprule",
+        r"Campaign & Allocation & Mean bits & Total KV saved & $\Delta$ acceptance (pp) \\",
+        r"\midrule",
+    ]
+    for row in final_rows:
+        if not row.get("valid_evaluators"):
+            continue
+        final_lines.append(
+            f"{latex_escape(row['campaign_label'])} & {latex_escape(row['allocation'])} & "
+            f"{float(row['all_component_mean_bits']):.1f} & "
+            f"{100.0 * float(row['total_cache_saved_fraction']):.1f}\\% & "
+            f"{100.0 * float(row['spec_accept_rate_delta']):+.2f} \\\\"
+        )
+    final_lines.extend([r"\bottomrule", r"\end{tabular}"])
+    final_path = out_dir / "objective_final_results_table.tex"
+    final_path.write_text("\n".join(final_lines) + "\n", encoding="utf-8")
+    return [str(objective_path), str(kv_path), str(final_path)]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -312,9 +433,12 @@ def main() -> None:
         include_incomplete=args.include_incomplete,
         include_smoke=args.include_smoke,
     )
+    final_records = discover_final_results(args.results_root, include_smoke=args.include_smoke)
     rows = collect_rows(records)
+    final_rows = collect_final_rows(final_records)
     for name, values in rows.items():
         write_csv(args.out_dir / f"objective_campaign_{name}.csv", values)
+    write_csv(args.out_dir / "objective_campaign_final_results.csv", final_rows)
     write_csv(args.out_dir / "objective_campaign_rejected.csv", rejected)
 
     plots = []
@@ -322,9 +446,10 @@ def main() -> None:
         configure_plot_style()
         plots.extend(plot_objective_effects(rows["objective"], args.out_dir))
         plots.extend(plot_kv_effects(rows["kv"], args.out_dir))
+        plots.extend(plot_final_results(final_rows, args.out_dir))
     except ImportError:
         pass
-    tables = write_latex_tables(rows, args.out_dir)
+    tables = write_latex_tables(rows, final_rows, args.out_dir)
     payload = {
         "results_root": str(args.results_root),
         "num_complete_matrices": sum(bool(record["complete"]) for record in records),
@@ -333,7 +458,12 @@ def main() -> None:
             {key: value for key, value in record.items() if key != "summary"} for record in records
         ],
         "rejected_matrices": rejected,
+        "included_final_results": [
+            {key: value for key, value in record.items() if key != "summary"}
+            for record in final_records
+        ],
         "row_counts": {name: len(values) for name, values in rows.items()},
+        "num_final_result_rows": len(final_rows),
         "plots": plots,
         "tables": tables,
     }
