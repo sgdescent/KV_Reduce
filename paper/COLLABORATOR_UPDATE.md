@@ -3,8 +3,9 @@
 Status: provisional results as of August 10, 2026. The matched-objective grid,
 three-length speculation sweep, 16K/32K speculative long-context sweep,
 four-condition verifier audit, and corrected Qwen HellaSwag/ARC task suite are
-complete. The powered 7B/3B replication, cross-family task checks, and
-controlled 4K quantizer-factorial cells are still running.
+complete. The powered 7B/3B ordinary-quality arm is complete, while its final
+speculative shard, cross-family task checks, and controlled 4K
+quantizer-factorial cells are still running.
 
 ## Copy-Paste Message
 
@@ -118,6 +119,17 @@ saving 29.02% of combined target-plus-draft KV at 1K and 30.58% at 4K. This is a
 useful negative result: ordinary quality is a strong screening objective, while
 direct acceptance remains the final systems metric rather than a proven source
 of a different bit policy.
+
+A CPU-only calibration-size rehearsal on an older all-layer WikiText profile
+shows why the new FineWeb held-out campaign is necessary. Relative to a
+16-prompt profile, the 8-prompt acceptance-risk ranking has Spearman 0.852 and
+identical top-8 sensitive cells, but its final acceptance allocation still
+changes 25% of K/V layer decisions. The ordinary-quality allocation is much
+more stable, changing only 3.6% of decisions. This is a pipeline diagnostic,
+not paper evidence: the old profile predates the current FineWeb data protocol,
+and its aggressive 3-bit allocations collapse held-out speculative acceptance.
+The fresh campaign therefore uses 16 calibration examples, an 8-bit mean
+budget, a uniform matched-budget baseline, and disjoint held-out evaluation.
 
 The speculative PG19 sweep is also complete. At 16K, K4V4 saves 70.79% of the
 draft cache and 30.97% of combined KV with a +0.30-point acceptance change
@@ -307,6 +319,10 @@ objective-specific differences instead of assuming they exist.
   evaluation on disjoint held-out blocks. The Qwen campaign is dependency-gated
   behind the powered 7B/3B replication; an OLMo-2 7B/1B replication is queued
   behind the completed robustness chain.
+- A dependency-chained 4/8/16-sample calibration ablation will reconstruct
+  sensitivity maps from the same per-example FineWeb rows and compare both
+  risk rankings and the actual selected K/V bit maps without additional GPU
+  inference.
 - C4, GSM8K, and HumanEval robustness aggregation and paper integration.
 
 ## Closest Work
