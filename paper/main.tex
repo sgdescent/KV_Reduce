@@ -262,7 +262,9 @@ are checked for tokenizer compatibility.
 We report acceptance rate, accepted tokens per target verification, ordinary-LM
 KL, continuation NLL, top-1 match, JS divergence, acceptance mass, draft-cache
 bytes, and total target-plus-draft KV bytes. Confidence intervals use paired
-prompt bootstrap resampling. Exactness audits separate target disagreements with
+prompt bootstrap resampling. Acceptance is estimated as the ratio of total
+accepted to total proposed tokens within each bootstrap sample, rather than an
+unweighted mean of per-prompt rates. Exactness audits separate target disagreements with
 top-1 margin at most $10^{-3}$ from non-tie mismatches and exclude the latter
 from paired acceptance inference. Python fake quantization does not provide a
 valid kernel-level speed measurement, so we do not make throughput claims from
@@ -353,31 +355,31 @@ We next change only the key quantizer geometry: keys use affine scales and offse
 per channel over 32-token groups, while values retain the same per-token symmetric
 quantizer as the diagnostic baseline.
 Across three 1K Qwen seeds (190 valid paired prompts), K4V8 with a 128-token
-floating-point residual window changes acceptance by $+0.21$ points (95\% paired
-bootstrap CI $[-0.53,0.98]$) while saving 23.7\% of total target-plus-draft KV.
+floating-point residual window changes acceptance by $+0.14$ points (95\% paired
+bootstrap CI $[-0.59,0.86]$) while saving 23.7\% of total target-plus-draft KV.
 Relative to the original per-token K4V8 experiment, changing the key axis recovers
-29.46 acceptance points (CI $[26.87,32.04]$). K4V4 changes acceptance by only
-$-0.13$ points (CI $[-1.07,0.82]$) while saving 29.2\% total KV. Removing the
+28.70 acceptance points (CI $[26.12,31.31]$). K4V4 changes acceptance by only
+$-0.28$ points (CI $[-1.30,0.73]$) while saving 29.2\% total KV. Removing the
 residual window increases savings to 25.6\% for K4V8 and 31.0\% for K4V4, with
-acceptance changes of $-0.32$ (CI $[-1.13,0.53]$) and $-0.81$ points
-(CI $[-1.80,0.15]$), respectively. These results invalidate an interpretation
+acceptance changes of $-0.41$ (CI $[-1.24,0.40]$) and $-1.05$ points
+(CI $[-2.01,-0.10]$), respectively. These results invalidate an interpretation
 based on bit-width alone. The three-seed 4K replication agrees: residual-window
-K4V8 changes acceptance by $+0.63$ points (CI $[-0.54,1.87]$) while saving
-25.3\% total KV, and its axis gain over per-token K4V8 is 29.97 points
-(CI $[25.99,33.88]$). K4V4 changes acceptance by $-0.61$ points
-(CI $[-2.26,1.10]$) while saving 30.7\% total KV. With no residual window,
+K4V8 changes acceptance by $+0.77$ points (CI $[-0.57,2.18]$) while saving
+25.3\% total KV, and its axis gain over per-token K4V8 is 30.01 points
+(CI $[26.46,33.60]$). K4V4 changes acceptance by $-0.61$ points
+(CI $[-2.43,1.24]$) while saving 30.7\% total KV. With no residual window,
 K4V8 and K4V4 save 25.7\% and 31.2\% total KV, respectively, with confidence
 intervals that still include no acceptance change.
 
 A fixed-key value-precision sweep identifies a sharp knee below four bits. Across
 three 1K-context seeds, K8V4 saves $27.00\%$ of total target-plus-draft KV memory
-with an acceptance change of $-0.96$ points (CI $[-2.22,0.26]$). K8V3 increases
-savings to $28.37\%$ but incurs a small significant drop of $1.74$ points
-(CI $[-3.30,-0.20]$), while K8V2 collapses by $24.67$ points. We therefore use
+with an acceptance change of $-1.06$ points (CI $[-2.33,0.19]$). K8V3 increases
+savings to $28.37\%$ but incurs a small significant drop of $1.45$ points
+(CI $[-2.89,-0.01]$), while K8V2 collapses by $23.74$ points. We therefore use
 K8V4 as the conservative operating point and treat K8V3 as an aggressive option.
 The same knee holds across three 4K-context seeds: K8V4 changes acceptance by
-$-0.16$ points (CI $[-1.53,1.17]$), K8V3 drops $2.14$ points
-(CI $[-3.95,-0.35]$), and K8V2 drops $24.88$ points.
+$-0.34$ points (CI $[-1.95,1.21]$), K8V3 drops $2.28$ points
+(CI $[-4.25,-0.35]$), and K8V2 drops $24.09$ points.
 
 \subsection{A conservative learned allocation}
 
