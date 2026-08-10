@@ -122,7 +122,9 @@ def main() -> None:
     missing = []
     rejected = []
     prompt_effects: Dict[Tuple[int, int, int, str], List[float]] = defaultdict(list)
+    native_prompt_effects: Dict[Tuple[int, int, int, str], List[float]] = defaultdict(list)
     exactness = {"exact": 0, "numerical_tie": 0, "non_tie_or_unknown": 0, "invalid_prompts": 0}
+    exactness_examples = []
 
     for summary_path in sorted(root.glob("budget_*/ctx_*/gamma_*/seed_*/summary.json")):
         budget = int(summary_path.parents[3].name.split("_")[1])
@@ -173,18 +175,38 @@ def main() -> None:
             exactness[status] += 1
             if status == "non_tie_or_unknown":
                 invalid_prompts.add(row["prompt_idx"])
+                if len(exactness_examples) < 100:
+                    exactness_examples.append(
+                        {
+                            "budget": budget,
+                            "context": context,
+                            "draft_steps": draft_steps,
+                            "seed": seed,
+                            "prompt_idx": int(row["prompt_idx"]),
+                            "config": row["config"],
+                            "mismatch_source": row.get("mismatch_source", ""),
+                            "mismatch_min_top1_margin": row.get("mismatch_min_top1_margin", "nan"),
+                        }
+                    )
             for role, name in role_names.items():
                 if row["config"] == name:
                     by_prompt[row["prompt_idx"]][role] = float(row["accept_rate"])
         exactness["invalid_prompts"] += len(invalid_prompts)
         for prompt_idx, values in by_prompt.items():
-            if prompt_idx in invalid_prompts or "acceptance" not in values:
+            if prompt_idx in invalid_prompts:
                 continue
-            for baseline in ("quality", "k_priority", "v_priority"):
-                if baseline in values:
-                    prompt_effects[(budget, context, draft_steps, baseline)].append(
-                        values["acceptance"] - values[baseline]
-                    )
+            if "acceptance" in values:
+                for baseline in ("quality", "k_priority", "v_priority"):
+                    if baseline in values:
+                        prompt_effects[(budget, context, draft_steps, baseline)].append(
+                            values["acceptance"] - values[baseline]
+                        )
+            if "none" in values:
+                for role in ("quality", "acceptance", "k_priority", "v_priority"):
+                    if role in values:
+                        native_prompt_effects[(budget, context, draft_steps, role)].append(
+                            values[role] - values["none"]
+                        )
 
     expected_dirs = list(root.glob("budget_*/ctx_*/gamma_*/seed_*"))
     for result_dir in expected_dirs:
@@ -219,6 +241,25 @@ def main() -> None:
             values,
             seed=budget * 100000 + context * 10 + draft_steps + len(baseline),
         )
+
+    native_effects = []
+    for (budget, context, draft_steps, role), values in sorted(native_prompt_effects.items()):
+        estimate, low, high = bootstrap_mean_ci(
+            values,
+            seed=budget * 200000 + context * 20 + draft_steps + len(role),
+        )
+        native_effects.append(
+            {
+                "budget": budget,
+                "context": context,
+                "draft_steps": draft_steps,
+                "config_role": role,
+                "paired_n": len(values),
+                "acceptance_delta_vs_native_mean": estimate,
+                "acceptance_delta_vs_native_ci_low": low,
+                "acceptance_delta_vs_native_ci_high": high,
+            }
+        )
         effects.append(
             {
                 "budget": budget,
@@ -235,6 +276,7 @@ def main() -> None:
     write_csv(result_rows, out_dir / "gamma_rows.csv")
     write_csv(grouped, out_dir / "gamma_grouped.csv")
     write_csv(effects, out_dir / "gamma_effects.csv")
+    write_csv(native_effects, out_dir / "gamma_native_effects.csv")
     output = {
         "num_valid_rows": len(result_rows),
         "num_missing": len(missing),
@@ -242,8 +284,10 @@ def main() -> None:
         "missing": missing,
         "rejected": rejected,
         "exactness": exactness,
+        "exactness_examples": exactness_examples,
         "grouped": grouped,
         "effects": effects,
+        "native_effects": native_effects,
         "plots": make_plot(grouped, out_dir),
     }
     (out_dir / "summary.json").write_text(json.dumps(output, indent=2), encoding="utf-8")
