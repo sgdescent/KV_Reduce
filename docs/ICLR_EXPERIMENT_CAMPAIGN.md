@@ -60,6 +60,10 @@ gated 9B checkpoint.
     downstream objectives.
 12. `group_residual_sweep`: test key groups `16/32/64/128` with BF16 key-tail
     lengths `0/128` at 1K across three seeds, under both downstream objectives.
+13. `cross_family_target_quality`: run the matched affine grid on all six target
+    models as ordinary autoregressive LMs. This provides the target-fidelity
+    constraints needed for role-aware target/draft precision allocation rather
+    than inferring target behavior from the smaller draft checkpoints.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -123,6 +127,14 @@ after the main campaign:
 
 ```bash
 AFTER_JOB=<dependency-job> bash scripts/submit_kivi_standalone_target_quality.sh
+```
+
+The two-seed cross-family target-quality grid is serialized to one GPU and may
+be dependency-gated behind the cross-family speculative campaign:
+
+```bash
+AFTER_JOB=<dependency-job> CAMPAIGN_CONCURRENCY=1 \
+  bash scripts/submit_kivi_cross_family_target_quality.sh
 ```
 
 The missing quantizer-factorial cell is launched with:
