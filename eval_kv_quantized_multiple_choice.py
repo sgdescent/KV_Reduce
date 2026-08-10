@@ -43,7 +43,7 @@ from kv_utils import (
 )
 
 
-EVALUATOR_VERSION = "kv_multiple_choice_cached_v1"
+EVALUATOR_VERSION = "kv_multiple_choice_cached_v2"
 TASK_SPECS = {
     "hellaswag": {
         "dataset_name": "Rowan/hellaswag",
@@ -330,6 +330,7 @@ def main() -> None:
     rows: List[Dict[str, Any]] = []
     prompt_lengths: List[int] = []
     choice_lengths: List[int] = []
+    evaluation_lengths: List[int] = []
     running_correct: Dict[str, List[float]] = defaultdict(list)
     bar = tqdm(examples, desc=f"{args.task} examples", unit="example")
     for local_idx, (source_idx, example) in enumerate(bar):
@@ -345,6 +346,7 @@ def main() -> None:
         prompt_len = int(prompt_ids.shape[1])
         prompt_lengths.append(prompt_len)
         choice_lengths.extend(int(ids.shape[1]) for ids in choice_ids)
+        evaluation_lengths.extend(prompt_len + int(ids.shape[1]) for ids in choice_ids)
         prefill = cached_prefill(model, prompt_ids, args.device)
 
         example_results: Dict[str, Dict[str, Any]] = {}
@@ -424,13 +426,33 @@ def main() -> None:
         baseline_key = "normalized_correct" if args.task == "hellaswag" else "raw_correct"
         bar.set_postfix(bf16=f"{mean(r[baseline_key] for r in rows if r['config'] == 'none'):.3f}")
 
-    memory_seq_len = max(prompt_lengths) + max(choice_lengths)
+    memory_seq_len = int(round(mean(evaluation_lengths)))
+    peak_memory_seq_len = max(evaluation_lengths)
     summaries: Dict[str, Dict[str, Any]] = {}
     for name, k_bits, v_bits, metadata in configs:
         config_rows = [row for row in rows if row["config"] == name]
-        memory = estimate_model_kv_cache_bytes(
+        memory_rows = [
+            estimate_model_kv_cache_bytes(
+                config=model.config,
+                seq_len=seq_len,
+                dtype_name=args.dtype,
+                k_bits_by_layer=k_bits,
+                v_bits_by_layer=v_bits,
+                scale_bits=args.scale_bits,
+                key_quant_axis=args.key_quant_axis,
+                key_group_size=args.key_group_size,
+                key_residual_length=args.key_residual_length,
+                value_quant_scheme=args.value_quant_scheme,
+            )
+            for seq_len in evaluation_lengths
+        ]
+        memory = {
+            key: mean(row[key] for row in memory_rows)
+            for key in memory_rows[0]
+        }
+        peak_memory = estimate_model_kv_cache_bytes(
             config=model.config,
-            seq_len=memory_seq_len,
+            seq_len=peak_memory_seq_len,
             dtype_name=args.dtype,
             k_bits_by_layer=k_bits,
             v_bits_by_layer=v_bits,
@@ -450,6 +472,7 @@ def main() -> None:
             "mean_gold_raw_score": mean(row["gold_raw_score"] for row in config_rows),
             "mean_gold_normalized_score": mean(row["gold_normalized_score"] for row in config_rows),
             **memory,
+            **{f"peak_{key}": value for key, value in peak_memory.items()},
             **{f"allocation/{key}": value for key, value in bit_allocation_stats(k_bits, v_bits).items()},
             **{f"metadata/{key}": value for key, value in metadata.items() if isinstance(value, (str, int, float, bool))},
         }
@@ -482,6 +505,7 @@ def main() -> None:
         "mean_prompt_tokens": mean(prompt_lengths),
         "mean_choice_tokens": mean(choice_lengths),
         "memory_seq_len": memory_seq_len,
+        "peak_memory_seq_len": peak_memory_seq_len,
         "summaries": summaries,
     }
     write_csv(rows, os.path.join(args.out_dir, "example_rows.csv"))

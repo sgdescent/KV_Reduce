@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable, List, Sequence
 from spec_kv_statistics import bootstrap_mean_ci
 
 
-EVALUATOR_VERSION = "kv_multiple_choice_cached_v1"
+EVALUATOR_VERSION = "kv_multiple_choice_cached_v2"
 
 
 def read_csv(path: Path) -> List[Dict[str, str]]:
