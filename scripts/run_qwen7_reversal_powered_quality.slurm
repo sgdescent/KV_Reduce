@@ -19,8 +19,11 @@ if [[ -f .venv/bin/activate ]]; then
 fi
 
 seeds=(30 31 32)
-seed="${seeds[${SLURM_ARRAY_TASK_ID:-0}]}"
-root="${SWEEP_ROOT:-outputs/kivi_reversal_powered/qwen25_7b_3b}"
+task_id="${SLURM_ARRAY_TASK_ID:-0}"
+seed="${seeds[$task_id]}"
+num_sequences="${NUM_SEQUENCES:-256}"
+skip_sequences=$((task_id * num_sequences))
+root="${SWEEP_ROOT:-outputs/kivi_reversal_powered_fineweb/qwen25_7b_3b}"
 out_dir="$root/quality/ctx_1024/seed_${seed}"
 
 export TOKENIZERS_PARALLELISM=false
@@ -31,14 +34,15 @@ python3 -u profile_kv_quality_sensitivity.py \
   --model Qwen/Qwen2.5-3B \
   --device cuda:0 \
   --attn_implementation sdpa \
-  --dataset_name wikitext \
-  --dataset_config wikitext-2-raw-v1 \
-  --eval_split validation \
+  --dataset_name "${DATASET_NAME:-HuggingFaceFW/fineweb-edu}" \
+  --dataset_config "${DATASET_CONFIG:-sample-10BT}" \
+  --eval_split "${EVAL_SPLIT:-train}" \
+  --stream_eval \
   --prompt_len 1024 \
   --continuation_len 32 \
-  --num_sequences "${NUM_SEQUENCES:-256}" \
+  --num_sequences "$num_sequences" \
+  --skip_sequences "$skip_sequences" \
   --seed "$seed" \
-  --shuffle_eval \
   --quant_configs "none;k4v3;k3v4" \
   --key_quant_axis per_channel \
   --key_group_size 32 \
@@ -47,5 +51,5 @@ python3 -u profile_kv_quality_sensitivity.py \
   --out_dir "$out_dir" \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
-  --wandb_group "${WANDB_GROUP:-kivi-qwen7-reversal-powered-quality}" \
-  --wandb_run_name "qwen25_7b_3b_reversal_quality_s${seed}"
+  --wandb_group "${WANDB_GROUP:-kivi-qwen7-reversal-powered-fineweb-quality}" \
+  --wandb_run_name "qwen25_7b_3b_reversal_fineweb_quality_s${seed}"

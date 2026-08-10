@@ -217,6 +217,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt_len", type=int, default=1024)
     parser.add_argument("--continuation_len", type=int, default=32)
     parser.add_argument("--num_sequences", type=int, default=32)
+    parser.add_argument(
+        "--skip_sequences",
+        type=int,
+        default=0,
+        help="Skip this many token blocks before collecting evaluation sequences.",
+    )
     parser.add_argument("--layers", type=str, default="top:8")
     parser.add_argument("--components", type=str, default="k,v")
     parser.add_argument("--bits", type=str, default="8,4")
@@ -347,6 +353,7 @@ def main() -> None:
         seed=args.seed,
         streaming=args.stream_eval,
         split_fallbacks=parse_csv_items(args.eval_split_fallbacks),
+        skip_blocks=args.skip_sequences,
     )
     sequences = [block.unsqueeze(0) for block in seq_iter]
     if not sequences:

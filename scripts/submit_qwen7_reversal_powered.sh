@@ -6,7 +6,7 @@ if [[ -n "${AFTER_JOB:-}" ]]; then
   dependency_args+=(--dependency="afterok:${AFTER_JOB}")
 fi
 exclude="${EXCLUDE_NODES:-catalyst-0-9,catalyst-0-15}"
-root="${SWEEP_ROOT:-outputs/kivi_reversal_powered/qwen25_7b_3b}"
+root="${SWEEP_ROOT:-outputs/kivi_reversal_powered_fineweb/qwen25_7b_3b}"
 
 spec=$(sbatch --parsable \
   "${dependency_args[@]}" \

@@ -16,7 +16,7 @@ if [[ -f .venv/bin/activate ]]; then
   source .venv/bin/activate
 fi
 
-root="${SWEEP_ROOT:-outputs/kivi_reversal_powered/qwen25_7b_3b}"
+root="${SWEEP_ROOT:-outputs/kivi_reversal_powered_fineweb/qwen25_7b_3b}"
 .venv/bin/python aggregate_value_precision_sweep.py \
   --sweep_dir "$root/spec" \
   --out_dir "$root/spec_aggregate"
