@@ -69,11 +69,13 @@ gated 9B checkpoint.
     at speculative proposal lengths `2/4/8`, with three seeds each. This tests
     whether a precision policy remains stable as quantization errors affect a
     longer unverified draft trajectory.
-15. `qwen7_reversal_powered`: replicate the seed-20 Qwen2.5-7B/3B K4V3-versus-
-    K3V4 objective reversal with 512 speculative prompts and 256 ordinary-
-    quality sequences per seed across three new seeds. This is a predeclared
-    confirmation experiment for a small acceptance effect, not an exploratory
-    source of additional allocation comparisons.
+15. `qwen7_reversal_powered`: first run a diagnostic WikiText replication of the
+    seed-20 Qwen2.5-7B/3B K4V3-versus-K3V4 objective reversal. WikiText provides
+    only 256 unique 1K blocks despite the 512-prompt request, so those three
+    shuffled seeds are not treated as powered confirmation. The corrected
+    predeclared experiment uses three explicit, non-overlapping FineWeb-Edu
+    shards with 512 speculative prompts and 256 ordinary-quality sequences per
+    shard. Aggregation reports every requested-versus-observed shortfall.
 16. `verifier_exactness_powered`: quantify finite-precision verifier drift on
     32 held-out prompts for each BF16/FP32 and SDPA/eager combination. This
     separates implementation correctness from backend-dependent numerical paths.
@@ -88,6 +90,12 @@ gated 9B checkpoint.
     BF16, K8V4, K4V8, K4V4, K3V4, and K4V3 using four-way retrieval accuracy.
     This tests whether low teacher-forced KL translates into preserved
     long-context retrieval rather than only local next-token fidelity.
+19. `cross_family_multiple_choice`: after the powered Qwen task suite, run
+    HellaSwag and ARC-Challenge on Llama-3.2-3B, OLMo-2-1B, and SmolLM2-360M.
+    Two disjoint 128-example shards per task provide a breadth screen under the
+    same BF16, K8V4, K4V8, K4V4, K3V4, and K4V3 policies. The three model arrays
+    are dependency-chained and serialized to one GPU; any notable effect must be
+    powered separately before becoming a headline claim.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -196,6 +204,14 @@ select disjoint examples from a common shuffled task stream:
 
 ```bash
 DEPENDENCY=<dependency-job> bash scripts/submit_kivi_multiple_choice.sh
+```
+
+The cross-family task breadth screen is dependency-gated behind the powered
+Qwen task aggregate and serialized across model families:
+
+```bash
+DEPENDENCY=<qwen-task-aggregate-job> NUM_SEEDS=2 NUM_EXAMPLES=128 \
+  bash scripts/submit_kivi_multiple_choice_cross_family.sh
 ```
 
 The missing quantizer-factorial cell is launched with:
