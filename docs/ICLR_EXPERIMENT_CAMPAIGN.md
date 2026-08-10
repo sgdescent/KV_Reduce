@@ -53,6 +53,9 @@ gated 9B checkpoint.
     pairing per-token symmetric keys with per-token affine values. Combined with
     the other campaigns, this separates key-axis, value-scheme, and interaction
     effects.
+11. `factorial_quality_completion`: profile per-channel affine keys with symmetric
+    values under ordinary LM quality, completing all four geometry cells for both
+    downstream objectives.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -117,6 +120,12 @@ The missing quantizer-factorial cell is launched with:
 
 ```bash
 AFTER_JOB=<dependency-job> bash scripts/submit_per_token_affine_value_grid.sh
+```
+
+Complete the ordinary-quality side of the factorial with:
+
+```bash
+AFTER_JOB=<dependency-job> bash scripts/submit_per_channel_symmetric_value_quality.sh
 ```
 
 To run only a subset of pairs:
