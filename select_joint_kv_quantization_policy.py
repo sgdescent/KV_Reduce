@@ -64,8 +64,15 @@ def evaluate_candidates(
     target_delta_nll_max: float,
     target_top1_min: float,
     acceptance_drop_max: float,
+    target_token_match_drop_max: float | None = None,
+    target_sequence_match_drop_max: float | None = None,
 ) -> List[Dict[str, Any]]:
     quality = quality_index(target_quality_summary)
+    baselines = {
+        int(row["context"]): row
+        for row in joint_summary.get("grouped", [])
+        if str(row.get("config")) == "target_none__draft_none"
+    }
     evaluated: List[Dict[str, Any]] = []
     for raw in joint_summary.get("grouped", []):
         row = dict(raw)
@@ -81,6 +88,21 @@ def evaluate_candidates(
         nll_high = target_quality.get("delta_nll_ci_high")
         top1 = target_quality.get("top1_match_mean")
         acceptance_low = row.get("paired_acceptance_delta_ci_low")
+        baseline = baselines.get(context, {})
+        token_match = row.get("bf16_reference_token_match_mean")
+        baseline_token_match = baseline.get("bf16_reference_token_match_mean")
+        sequence_match = row.get("bf16_reference_sequence_match_mean")
+        baseline_sequence_match = baseline.get("bf16_reference_sequence_match_mean")
+        token_match_drop = (
+            float(baseline_token_match) - float(token_match)
+            if finite(baseline_token_match) and finite(token_match)
+            else None
+        )
+        sequence_match_drop = (
+            float(baseline_sequence_match) - float(sequence_match)
+            if finite(baseline_sequence_match) and finite(sequence_match)
+            else None
+        )
         if not finite(kl_high) or float(kl_high) > target_kl_max:
             reasons.append("target_kl")
         if not finite(nll_high) or float(nll_high) > target_delta_nll_max:
@@ -89,6 +111,16 @@ def evaluate_candidates(
             reasons.append("target_top1")
         if not finite(acceptance_low) or float(acceptance_low) < -acceptance_drop_max:
             reasons.append("acceptance")
+        if target_token_match_drop_max is not None and (
+            token_match_drop is None
+            or token_match_drop > target_token_match_drop_max
+        ):
+            reasons.append("target_token_match_drop")
+        if target_sequence_match_drop_max is not None and (
+            sequence_match_drop is None
+            or sequence_match_drop > target_sequence_match_drop_max
+        ):
+            reasons.append("target_sequence_match_drop")
 
         row.update(
             {
@@ -102,6 +134,10 @@ def evaluate_candidates(
                 "target_quality_accept_mass_mean": target_quality.get(
                     "accept_mass_mean"
                 ),
+                "bf16_baseline_token_match_mean": baseline_token_match,
+                "bf16_baseline_sequence_match_mean": baseline_sequence_match,
+                "target_token_match_drop": token_match_drop,
+                "target_sequence_match_drop": sequence_match_drop,
                 "feasible": not reasons,
                 "constraint_failures": ";".join(reasons),
             }
@@ -186,6 +222,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target_delta_nll_max", type=float, default=0.02)
     parser.add_argument("--target_top1_min", type=float, default=0.95)
     parser.add_argument("--acceptance_drop_max", type=float, default=0.02)
+    parser.add_argument("--target_token_match_drop_max", type=float, default=0.03)
+    parser.add_argument("--target_sequence_match_drop_max", type=float, default=0.10)
     return parser
 
 
@@ -201,6 +239,8 @@ def main() -> None:
         target_delta_nll_max=args.target_delta_nll_max,
         target_top1_min=args.target_top1_min,
         acceptance_drop_max=args.acceptance_drop_max,
+        target_token_match_drop_max=args.target_token_match_drop_max,
+        target_sequence_match_drop_max=args.target_sequence_match_drop_max,
     )
     if not rows:
         raise ValueError("No joint target/draft candidates were found.")
@@ -214,6 +254,8 @@ def main() -> None:
             "target_delta_nll_ci_high_max": args.target_delta_nll_max,
             "target_top1_match_min": args.target_top1_min,
             "acceptance_delta_ci_low_min": -args.acceptance_drop_max,
+            "target_token_match_drop_max": args.target_token_match_drop_max,
+            "target_sequence_match_drop_max": args.target_sequence_match_drop_max,
         },
         "num_candidates": len(rows),
         "num_feasible": sum(bool(row["feasible"]) for row in rows),

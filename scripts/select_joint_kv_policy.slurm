@@ -25,4 +25,6 @@ python3 -u select_joint_kv_quantization_policy.py \
   --target_kl_max "${TARGET_KL_MAX:-0.01}" \
   --target_delta_nll_max "${TARGET_DELTA_NLL_MAX:-0.02}" \
   --target_top1_min "${TARGET_TOP1_MIN:-0.95}" \
-  --acceptance_drop_max "${ACCEPTANCE_DROP_MAX:-0.02}"
+  --acceptance_drop_max "${ACCEPTANCE_DROP_MAX:-0.02}" \
+  --target_token_match_drop_max "${TARGET_TOKEN_MATCH_DROP_MAX:-0.03}" \
+  --target_sequence_match_drop_max "${TARGET_SEQUENCE_MATCH_DROP_MAX:-0.10}"
