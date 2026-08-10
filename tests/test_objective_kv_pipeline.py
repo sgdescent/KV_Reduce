@@ -11,7 +11,11 @@ from aggregate_objective_kv_matrix import classify_exactness
 from benchmark_spec_kv_quantization import build_joint_quant_configs, last_token_logits_kwargs
 from kv_cache_quantization import parse_csv_ints, parse_quant_config_specs
 from prepare_objective_kv_matrix import evaluation_skip_blocks, heuristic_component_bits
-from profile_spec_kv_sensitivity import build_parser as build_spec_sensitivity_parser
+from profile_spec_kv_sensitivity import (
+    build_parser as build_spec_sensitivity_parser,
+    wandb_candidate_prompt_offset,
+    wandb_candidate_summary_step,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +114,19 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
         self.assertEqual(args.key_group_size, 16)
         self.assertEqual(args.key_residual_length, 32)
         self.assertEqual(args.value_quant_scheme, "affine")
+
+    def test_spec_sensitivity_wandb_steps_are_strictly_monotonic(self) -> None:
+        num_prompts = 16
+        previous_summary = num_prompts
+        for candidate_idx in range(1, 6):
+            offset = wandb_candidate_prompt_offset(candidate_idx, num_prompts)
+            first_prompt_step = offset + 1
+            last_prompt_step = offset + num_prompts
+            summary_step = wandb_candidate_summary_step(candidate_idx, num_prompts)
+
+            self.assertGreater(first_prompt_step, previous_summary)
+            self.assertGreater(summary_step, last_prompt_step)
+            previous_summary = summary_step
 
     def test_paired_acceptance_risk_reports_upper_confidence_bound(self) -> None:
         baseline = [

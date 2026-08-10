@@ -104,6 +104,19 @@ def parse_components(spec: str) -> List[str]:
     return sorted(set(out))
 
 
+def wandb_candidate_prompt_offset(candidate_idx: int, num_prompts: int) -> int:
+    """Reserve one W&B step after each candidate's prompt-level rows."""
+    if candidate_idx < 1:
+        raise ValueError("candidate_idx must be at least 1; step zero is the baseline.")
+    if num_prompts < 1:
+        raise ValueError("num_prompts must be positive.")
+    return candidate_idx * (num_prompts + 1)
+
+
+def wandb_candidate_summary_step(candidate_idx: int, num_prompts: int) -> int:
+    return wandb_candidate_prompt_offset(candidate_idx, num_prompts) + num_prompts + 1
+
+
 def cuda_devices(*devices: str) -> List[int]:
     if not torch.cuda.is_available():
         return []
@@ -367,6 +380,10 @@ def main() -> None:
                     bits=bits,
                 )
                 print(f"Profiling candidate: {name}")
+                candidate_step_offset = wandb_candidate_prompt_offset(
+                    candidate_idx,
+                    len(profile_prompts),
+                )
                 result = run_one_config(
                     config_name=name,
                     prompts=profile_prompts,
@@ -384,7 +401,7 @@ def main() -> None:
                     cuda_device_ids=cuda_device_ids,
                     wandb_run=wandb_run,
                     wandb_prefix="sensitivity",
-                    wandb_step_offset=candidate_idx * len(profile_prompts),
+                    wandb_step_offset=candidate_step_offset,
                     shared_vocab_size=shared_vocab_size,
                     key_quant_axis=args.key_quant_axis,
                     key_group_size=args.key_group_size,
@@ -393,7 +410,6 @@ def main() -> None:
                     target_token_references=profile_target_references,
                     target_margin_references=profile_target_margins,
                 )
-                candidate_idx += 1
                 raw_rows.extend(result["rows"])
                 memory = estimate_total_kv_memory(
                     big_model=big_model,
@@ -445,11 +461,11 @@ def main() -> None:
                 }
                 summary_rows.append(row)
                 if wandb_run is not None:
-                    summary_step = candidate_idx * len(profile_prompts) + len(profile_prompts) + 1
                     wandb_run.log(
                         {f"sensitivity_summary/{name}/{key}": value for key, value in row.items() if key != "candidate"},
-                        step=summary_step,
+                        step=wandb_candidate_summary_step(candidate_idx, len(profile_prompts)),
                     )
+                candidate_idx += 1
 
     payload = {
         "config": vars(args),
