@@ -47,6 +47,8 @@ gated 9B checkpoint.
 8. `zero_residual`: repeat the equal-memory objective comparisons with no BF16
    key tail. This removes the small byte mismatch introduced by the standard
    128-token KIVI residual window.
+9. `standalone_target_quality`: run the same affine grid on Qwen2.5-3B without
+   speculative decoding, measuring next-token KL, NLL, and top-1 preservation.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -98,6 +100,13 @@ The strict zero-residual objective replication can be queued independently:
 
 ```bash
 AFTER_JOB=<dependency-job> bash scripts/submit_kivi_no_residual_grid.sh
+```
+
+The standalone target-model quality replication is intentionally serialized
+after the main campaign:
+
+```bash
+AFTER_JOB=<dependency-job> bash scripts/submit_kivi_standalone_target_quality.sh
 ```
 
 To run only a subset of pairs:
