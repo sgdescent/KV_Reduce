@@ -377,11 +377,13 @@ multi-token verification and tokenwise greedy decoding invoke different GPU kern
 shapes. Across 2,010 prompt--configuration outputs, 308 sequence disagreements
 occur where either target path has top-1 margin at most $10^{-3}$, and 33 (1.64\%)
 remain above that threshold. Focused diagnostics found no causal-mask leakage and
-no cache-crop top-1 error. On a traced non-tie prompt, the flip occurs only with
-BF16 SDPA; BF16 eager and both FP32 backends produce zero speculative mismatches,
-while all four settings produce zero suffix or rollback errors. The remaining
-flips therefore arise from finite-precision kernel-path drift rather than cache
-corruption. We consequently do not claim bitwise
+no causal-suffix violation. BF16 SDPA reproduces one speculative mismatch on each
+of four independent non-tie prompts, whereas FP32 SDPA produces zero on all four.
+Two BF16 traces also show rollback-path top-1 flips, but these disappear in FP32;
+on an additional traced prompt, switching BF16 from SDPA to eager attention also
+eliminates the mismatch. This backend and precision dependence supports
+finite-precision kernel-path drift rather than stale-cache corruption. We
+consequently do not claim bitwise
 equality to tokenwise BF16 greedy decoding, while the target verification rule
 itself remains unquantized.
 
