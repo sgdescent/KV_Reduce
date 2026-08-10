@@ -5,7 +5,29 @@ three-length speculation sweep, 16K/32K speculative long-context sweep,
 four-condition verifier audit, corrected Qwen HellaSwag/ARC task suite, and
 powered Qwen2.5-7B/3B FineWeb-Edu K4V3-versus-K3V4 replication are complete.
 Cross-family task checks, all-layer objective-specific allocation, strict
-quantizer-factorial cells, and long-context replications are still running.
+quantizer-factorial cells, long-context replications, and a real bit-packed
+memory/attention benchmark are still running.
+
+## Bottom Line On Scope And Novelty
+
+KV-cache quantization is useful for ordinary autoregressive LLMs as well as
+speculative decoding. In ordinary decoding, compressed K/V reduces the cache
+that every decode step reads, which can increase maximum context length and
+batch capacity; because the compressed cache directly drives token generation,
+we must measure KL/NLL, task accuracy, and long-generation drift. In draft-only
+speculative decoding, the same compression reduces draft-cache memory and
+bandwidth, but an exact BF16 target verifier corrects the proposals, so cache
+error changes acceptance and speed rather than the final target distribution.
+
+Quantization by itself is not sufficient novelty for a main-track paper. Our
+main-track case depends on delivering all three pieces together: (1) the
+controlled finding that quantizer geometry, not only bit-width, determines the
+apparent K/V sensitivity; (2) a byte-constrained, layer-wise allocator calibrated
+for ordinary quality and speculative acceptance; and (3) a packed implementation
+that converts those policies into measured long-context memory-capacity or
+throughput gains. We already have strong evidence for the first piece and broad
+evidence that K4V4/K3V4 preserve behavior. The allocator, cross-family power,
+and packed systems results remain the gates for a credible main-track claim.
 
 ## Copy-Paste Message
 
