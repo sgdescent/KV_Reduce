@@ -52,6 +52,41 @@ def bootstrap_mean_ci(values: List[float], *, seed: int, samples: int = 10_000) 
     }
 
 
+def acceptance_ratio(rows: List[Dict[str, str]]) -> float:
+    proposed = sum(float(row["proposed_tokens"]) for row in rows)
+    accepted = sum(float(row["accepted_tokens"]) for row in rows)
+    return accepted / proposed if proposed > 0 else 0.0
+
+
+def paired_bootstrap_acceptance_delta(
+    pairs: List[Tuple[Dict[str, str], Dict[str, str]]],
+    *,
+    seed: int,
+    samples: int = 10_000,
+) -> Dict[str, float]:
+    if not pairs:
+        return {"mean": float("nan"), "ci_low": float("nan"), "ci_high": float("nan")}
+    left = [pair[0] for pair in pairs]
+    right = [pair[1] for pair in pairs]
+    point = acceptance_ratio(left) - acceptance_ratio(right)
+    if len(pairs) == 1 or samples <= 0:
+        return {"mean": point, "ci_low": point, "ci_high": point}
+    rng = random.Random(seed)
+    estimates = []
+    for _ in range(samples):
+        indices = [rng.randrange(len(pairs)) for _ in pairs]
+        estimates.append(
+            acceptance_ratio([left[index] for index in indices])
+            - acceptance_ratio([right[index] for index in indices])
+        )
+    estimates.sort()
+    return {
+        "mean": point,
+        "ci_low": estimates[int(0.025 * samples)],
+        "ci_high": estimates[min(samples - 1, int(0.975 * samples))],
+    }
+
+
 def exact_enough(row: Dict[str, str], tie_margin: float) -> bool:
     if float(row.get("matches_target_greedy", 0.0)) >= 0.5:
         return True
@@ -136,15 +171,13 @@ def aggregate_preferences(
     output = []
     for context in contexts:
         for config_a, config_b in pairs:
-            spec_differences = []
+            spec_pairs = []
             for key, configs in spec_rows.items():
                 if key[0] != context or config_a not in configs or config_b not in configs:
                     continue
                 if not exact_enough(configs[config_a], tie_margin) or not exact_enough(configs[config_b], tie_margin):
                     continue
-                spec_differences.append(
-                    float(configs[config_a]["accept_rate"]) - float(configs[config_b]["accept_rate"])
-                )
+                spec_pairs.append((configs[config_a], configs[config_b]))
             quality_kl_differences = []
             quality_nll_differences = []
             for key, configs in quality_rows.items():
@@ -156,10 +189,10 @@ def aggregate_preferences(
                 quality_nll_differences.append(
                     float(configs[config_a]["delta_nll"]) - float(configs[config_b]["delta_nll"])
                 )
-            if not spec_differences or not quality_kl_differences:
+            if not spec_pairs or not quality_kl_differences:
                 continue
             seed = context + sum(map(ord, config_a + config_b))
-            spec_ci = bootstrap_mean_ci(spec_differences, seed=seed)
+            spec_ci = paired_bootstrap_acceptance_delta(spec_pairs, seed=seed)
             quality_kl_ci = bootstrap_mean_ci(quality_kl_differences, seed=seed + 1)
             quality_nll_ci = bootstrap_mean_ci(quality_nll_differences, seed=seed + 2)
             config_a_saved = statistics.mean(memory[(context, config_a)])
@@ -170,7 +203,7 @@ def aggregate_preferences(
                     "context": context,
                     "config_a": config_a,
                     "config_b": config_b,
-                    "spec_paired_count": len(spec_differences),
+                    "spec_paired_count": len(spec_pairs),
                     "spec_acceptance_a_minus_b_mean": spec_ci["mean"],
                     "spec_acceptance_a_minus_b_ci_low": spec_ci["ci_low"],
                     "spec_acceptance_a_minus_b_ci_high": spec_ci["ci_high"],

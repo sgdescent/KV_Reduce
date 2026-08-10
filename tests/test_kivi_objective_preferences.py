@@ -3,9 +3,11 @@ import unittest
 from aggregate_kivi_objective_preferences import aggregate_preferences
 
 
-def spec_row(accept_rate: float):
+def spec_row(accept_rate: float, proposed_tokens: int = 100):
     return {
         "accept_rate": str(accept_rate),
+        "accepted_tokens": str(accept_rate * proposed_tokens),
+        "proposed_tokens": str(proposed_tokens),
         "matches_target_greedy": "1",
         "mismatch_min_top1_margin": "nan",
     }
@@ -62,6 +64,33 @@ class KiviObjectivePreferenceTest(unittest.TestCase):
         )
 
         self.assertTrue(rows[0]["memory_matched"])
+
+    def test_acceptance_delta_weights_by_proposed_tokens(self) -> None:
+        spec = {
+            (1024, 0, "0"): {
+                "k8v4": spec_row(1.0, proposed_tokens=10),
+                "k4v8": spec_row(0.0, proposed_tokens=10),
+            },
+            (1024, 0, "1"): {
+                "k8v4": spec_row(0.0, proposed_tokens=90),
+                "k4v8": spec_row(0.5, proposed_tokens=90),
+            },
+        }
+        quality = {
+            (1024, 0, "0"): {"k8v4": quality_row(0.02, 0.03), "k4v8": quality_row(0.01, 0.02)},
+            (1024, 0, "1"): {"k8v4": quality_row(0.02, 0.03), "k4v8": quality_row(0.01, 0.02)},
+        }
+        memory = {(1024, "k8v4"): [0.25], (1024, "k4v8"): [0.25]}
+
+        rows = aggregate_preferences(
+            spec_rows=spec,
+            quality_rows=quality,
+            memory=memory,
+            pairs=[("k8v4", "k4v8")],
+            tie_margin=1e-3,
+        )
+
+        self.assertAlmostEqual(rows[0]["spec_acceptance_a_minus_b_mean"], -0.35)
 
 
 if __name__ == "__main__":
