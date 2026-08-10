@@ -83,6 +83,11 @@ gated 9B checkpoint.
     extends beyond the 128-token BF16 residual window. The evaluator reports raw
     and length-normalized accuracy, paired BF16 agreement, and equal-memory
     K8V4-versus-K4V8 confidence intervals.
+18. `passkey_retrieval`: place a synthetic six-digit passkey at 10%, 50%, or
+    90% depth in exact 4K, 8K, and 16K prefixes. Three disjoint seeds compare
+    BF16, K8V4, K4V8, K4V4, K3V4, and K4V3 using four-way retrieval accuracy.
+    This tests whether low teacher-forced KL translates into preserved
+    long-context retrieval rather than only local next-token fidelity.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -99,6 +104,7 @@ two-GPU chain is capped at one concurrent job, so it consumes at most two GPUs.
 - speculative token acceptance rate and accepted tokens per verification round;
 - target/draft top-1 match, Jensen-Shannon divergence, and acceptance mass;
 - HellaSwag and ARC-Challenge multiple-choice accuracy under ordinary decoding;
+- passkey retrieval accuracy by prefix length and key depth;
 - draft and total KV-cache bytes saved;
 - exact-match against greedy target decoding;
 - measured runtime only as a diagnostic, because the current fake-quantization
@@ -147,6 +153,13 @@ after the main campaign:
 
 ```bash
 AFTER_JOB=<dependency-job> bash scripts/submit_kivi_standalone_target_quality.sh
+```
+
+The long-context passkey study can be dependency-chained after the ordinary-LM
+task suite:
+
+```bash
+DEPENDENCY=<dependency-job> bash scripts/submit_kivi_passkey.sh
 ```
 
 The two-seed cross-family target-quality grid is serialized to one GPU and may

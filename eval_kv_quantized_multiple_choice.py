@@ -8,6 +8,7 @@ import csv
 import itertools
 import json
 import os
+import random
 import re
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
@@ -59,6 +60,13 @@ TASK_SPECS = {
         "fewshot_split": "train",
         "primary_metric": "raw_accuracy",
     },
+    "passkey": {
+        "dataset_name": None,
+        "dataset_config": None,
+        "split": "synthetic",
+        "fewshot_split": "synthetic",
+        "primary_metric": "raw_accuracy",
+    },
 }
 
 
@@ -101,11 +109,47 @@ def format_task_example(task: str, example: Dict[str, Any]) -> Tuple[str, List[s
         if answer not in labels:
             raise ValueError(f"ARC answer {answer!r} is absent from labels {labels!r}.")
         gold = labels.index(answer)
+    elif task == "passkey":
+        prompt = "Retrieve the pass key hidden in the archive."
+        choices = [" " + str(choice) for choice in example["choices"]]
+        gold = int(example["gold"])
     else:
         raise ValueError(f"Unsupported task: {task!r}")
     if not prompt or len(choices) < 2 or not 0 <= gold < len(choices):
         raise ValueError(f"Malformed {task} example.")
     return prompt, choices, gold
+
+
+def generate_passkey_examples(
+    *,
+    num_examples: int,
+    skip_examples: int,
+    dataset_seed: int,
+) -> List[Tuple[int, Dict[str, Any]]]:
+    """Create deterministic four-way passkey retrieval examples."""
+
+    depths = (0.1, 0.5, 0.9)
+    examples: List[Tuple[int, Dict[str, Any]]] = []
+    for source_idx in range(skip_examples, skip_examples + num_examples):
+        rng = random.Random(dataset_seed + source_idx * 104_729)
+        passkey = f"{rng.randrange(100_000, 1_000_000):06d}"
+        choices = {passkey}
+        while len(choices) < 4:
+            choices.add(f"{rng.randrange(100_000, 1_000_000):06d}")
+        shuffled = sorted(choices)
+        rng.shuffle(shuffled)
+        examples.append(
+            (
+                source_idx,
+                {
+                    "passkey": passkey,
+                    "choices": shuffled,
+                    "gold": shuffled.index(passkey),
+                    "depth": depths[source_idx % len(depths)],
+                },
+            )
+        )
+    return examples
 
 
 def load_examples(
@@ -117,6 +161,13 @@ def load_examples(
     dataset_seed: int,
     streaming: bool,
 ) -> List[Tuple[int, Dict[str, Any]]]:
+    if task == "passkey":
+        return generate_passkey_examples(
+            num_examples=num_examples,
+            skip_examples=skip_examples,
+            dataset_seed=dataset_seed,
+        )
+
     try:
         from datasets import load_dataset
     except ImportError as exc:
@@ -182,8 +233,107 @@ def tokenize_example(
     return prompt_ids, choice_ids
 
 
+def assemble_passkey_prompt_ids(
+    *,
+    prefix_ids: torch.Tensor,
+    filler_ids: torch.Tensor,
+    key_ids: torch.Tensor,
+    query_ids: torch.Tensor,
+    target_tokens: int,
+    depth: float,
+) -> torch.Tensor:
+    """Assemble an exact-length prompt with the key at a controlled depth."""
+
+    fixed_tokens = int(prefix_ids.numel() + key_ids.numel() + query_ids.numel())
+    filler_tokens = int(target_tokens) - fixed_tokens
+    if filler_tokens < 1:
+        raise ValueError(
+            f"Passkey context {target_tokens} is too short for {fixed_tokens} fixed tokens."
+        )
+    if not 0.0 <= float(depth) <= 1.0:
+        raise ValueError("Passkey depth must be between zero and one.")
+    if filler_ids.numel() == 0:
+        raise ValueError("Passkey filler tokenization is empty.")
+    repeats = (filler_tokens + int(filler_ids.numel()) - 1) // int(filler_ids.numel())
+    filler = filler_ids.repeat(repeats)[:filler_tokens]
+    before = int(round(float(depth) * filler_tokens))
+    prompt = torch.cat(
+        [prefix_ids, filler[:before], key_ids, filler[before:], query_ids], dim=0
+    )
+    if int(prompt.numel()) != int(target_tokens):
+        raise AssertionError("Passkey prompt assembly produced the wrong length.")
+    return prompt.unsqueeze(0)
+
+
+def tokenize_passkey_example(
+    tokenizer,
+    example: Dict[str, Any],
+    *,
+    max_prompt_tokens: int,
+    max_choice_tokens: int,
+) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    def encode(text: str, *, special_tokens: bool = False) -> torch.Tensor:
+        return tokenizer(
+            text,
+            add_special_tokens=special_tokens,
+            return_tensors="pt",
+        ).input_ids[0]
+
+    prefix_ids = encode(
+        "Read the following archive carefully and remember the pass key when it appears.\n\n",
+        special_tokens=True,
+    )
+    filler_ids = encode(
+        "The archive records routine observations about weather, books, cities, and daily work. "
+    )
+    key_ids = encode(f"\nImportant record: the pass key is {example['passkey']}.\n")
+    query_ids = encode("\nEnd of archive. Question: What is the pass key? Answer:")
+    prompt_ids = assemble_passkey_prompt_ids(
+        prefix_ids=prefix_ids,
+        filler_ids=filler_ids,
+        key_ids=key_ids,
+        query_ids=query_ids,
+        target_tokens=max_prompt_tokens,
+        depth=float(example["depth"]),
+    )
+    choice_ids = [
+        tokenizer(
+            " " + str(choice),
+            add_special_tokens=False,
+            truncation=True,
+            max_length=max_choice_tokens,
+            return_tensors="pt",
+        ).input_ids
+        for choice in example["choices"]
+    ]
+    if any(ids.shape[1] == 0 for ids in choice_ids):
+        raise ValueError("Passkey tokenization produced an empty answer choice.")
+    return prompt_ids, choice_ids
+
+
 def clone_cache(cache):
     return legacy_to_cache(clone_legacy_cache(as_legacy_cache(cache)))
+
+
+def prepare_prefill_cache(
+    cache,
+    *,
+    k_bits: Sequence[int],
+    v_bits: Sequence[int],
+    key_quant_axis: str,
+    key_group_size: int,
+    key_residual_length: int,
+    value_quant_scheme: str,
+):
+    return quantize_cache_for_next_step(
+        clone_cache(cache),
+        k_bits,
+        v_bits,
+        key_quant_axis=key_quant_axis,
+        key_group_size=key_group_size,
+        key_residual_length=key_residual_length,
+        value_quant_scheme=value_quant_scheme,
+    )
 
 
 @torch.no_grad()
@@ -191,7 +341,7 @@ def score_choice_from_prefill(
     *,
     model,
     prefill_logits: torch.Tensor,
-    prefill_cache,
+    prepared_cache,
     prompt_len: int,
     choice_ids: torch.Tensor,
     device: str,
@@ -203,16 +353,7 @@ def score_choice_from_prefill(
     key_residual_length: int,
     value_quant_scheme: str,
 ) -> Tuple[float, int]:
-    cache = clone_cache(prefill_cache)
-    cache = quantize_cache_for_next_step(
-        cache,
-        k_bits,
-        v_bits,
-        key_quant_axis=key_quant_axis,
-        key_group_size=key_group_size,
-        key_residual_length=key_residual_length,
-        value_quant_scheme=value_quant_scheme,
-    )
+    cache = clone_cache(prepared_cache)
     logits = shared_token_logits(prefill_logits, vocab_size)
     cache_len = int(prompt_len)
     score = 0.0
@@ -314,13 +455,17 @@ def main() -> None:
     )
     if not examples:
         raise ValueError("No task examples were loaded.")
-    fewshot_examples = load_examples(
-        task=args.task,
-        split=str(TASK_SPECS[args.task]["fewshot_split"]),
-        num_examples=args.num_fewshot,
-        skip_examples=0,
-        dataset_seed=args.fewshot_seed,
-        streaming=args.streaming,
+    fewshot_examples = (
+        []
+        if args.task == "passkey"
+        else load_examples(
+            task=args.task,
+            split=str(TASK_SPECS[args.task]["fewshot_split"]),
+            num_examples=args.num_fewshot,
+            skip_examples=0,
+            dataset_seed=args.fewshot_seed,
+            streaming=args.streaming,
+        )
     )
     fewshot_prefix = build_fewshot_prefix(
         args.task,
@@ -336,13 +481,21 @@ def main() -> None:
     for local_idx, (source_idx, example) in enumerate(bar):
         prompt, choices, gold = format_task_example(args.task, example)
         prompt = fewshot_prefix + prompt
-        prompt_ids, choice_ids = tokenize_example(
-            tokenizer,
-            prompt,
-            choices,
-            max_prompt_tokens=args.max_prompt_tokens,
-            max_choice_tokens=args.max_choice_tokens,
-        )
+        if args.task == "passkey":
+            prompt_ids, choice_ids = tokenize_passkey_example(
+                tokenizer,
+                example,
+                max_prompt_tokens=args.max_prompt_tokens,
+                max_choice_tokens=args.max_choice_tokens,
+            )
+        else:
+            prompt_ids, choice_ids = tokenize_example(
+                tokenizer,
+                prompt,
+                choices,
+                max_prompt_tokens=args.max_prompt_tokens,
+                max_choice_tokens=args.max_choice_tokens,
+            )
         prompt_len = int(prompt_ids.shape[1])
         prompt_lengths.append(prompt_len)
         choice_lengths.extend(int(ids.shape[1]) for ids in choice_ids)
@@ -351,13 +504,22 @@ def main() -> None:
 
         example_results: Dict[str, Dict[str, Any]] = {}
         for name, k_bits, v_bits, _metadata in configs:
+            prepared_cache = prepare_prefill_cache(
+                prefill["cache"],
+                k_bits=k_bits,
+                v_bits=v_bits,
+                key_quant_axis=args.key_quant_axis,
+                key_group_size=args.key_group_size,
+                key_residual_length=args.key_residual_length,
+                value_quant_scheme=args.value_quant_scheme,
+            )
             raw_scores: List[float] = []
             normalized_scores: List[float] = []
             for ids in choice_ids:
                 raw_score, token_count = score_choice_from_prefill(
                     model=model,
                     prefill_logits=prefill["logits"],
-                    prefill_cache=prefill["cache"],
+                    prepared_cache=prepared_cache,
                     prompt_len=prompt_len,
                     choice_ids=ids,
                     device=args.device,
@@ -412,6 +574,13 @@ def main() -> None:
                 "raw_scores": json.dumps(result["raw_scores"]),
                 "normalized_scores": json.dumps(result["normalized_scores"]),
             }
+            if args.task == "passkey":
+                row.update(
+                    {
+                        "passkey_depth": float(example["depth"]),
+                        "passkey": str(example["passkey"]),
+                    }
+                )
             rows.append(row)
             primary_key = "normalized_correct" if args.task == "hellaswag" else "raw_correct"
             running_correct[name].append(float(row[primary_key]))
@@ -476,6 +645,14 @@ def main() -> None:
             **{f"allocation/{key}": value for key, value in bit_allocation_stats(k_bits, v_bits).items()},
             **{f"metadata/{key}": value for key, value in metadata.items() if isinstance(value, (str, int, float, bool))},
         }
+        if args.task == "passkey":
+            for depth in sorted({float(row["passkey_depth"]) for row in config_rows}):
+                depth_rows = [
+                    row for row in config_rows if float(row["passkey_depth"]) == depth
+                ]
+                summary[f"depth_{int(round(100 * depth))}/accuracy"] = mean(
+                    row["raw_correct"] for row in depth_rows
+                )
         summary["primary_accuracy"] = summary[str(TASK_SPECS[args.task]["primary_metric"])]
         summaries[name] = summary
         if run is not None:
@@ -495,6 +672,9 @@ def main() -> None:
             "key_group_size": args.key_group_size,
             "key_residual_length": args.key_residual_length,
             "value_quant_scheme": args.value_quant_scheme,
+            "task_generator_version": (
+                "synthetic_passkey_v1" if args.task == "passkey" else None
+            ),
         },
         "task": args.task,
         "split": split,

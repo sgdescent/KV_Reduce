@@ -1,10 +1,14 @@
 import unittest
 
+import torch
+
 from eval_kv_quantized_multiple_choice import (
+    assemble_passkey_prompt_ids,
     build_fewshot_prefix,
     choose_answer,
     clean_hellaswag_text,
     format_task_example,
+    generate_passkey_examples,
 )
 
 
@@ -37,6 +41,46 @@ class MultipleChoiceFormattingTest(unittest.TestCase):
 
     def test_choose_answer(self):
         self.assertEqual(choose_answer([-3.0, -1.0, -2.0]), 1)
+
+    def test_generates_deterministic_passkeys_at_multiple_depths(self):
+        first = generate_passkey_examples(
+            num_examples=4,
+            skip_examples=0,
+            dataset_seed=17,
+        )
+        second = generate_passkey_examples(
+            num_examples=4,
+            skip_examples=0,
+            dataset_seed=17,
+        )
+        self.assertEqual(first, second)
+        self.assertEqual([row[1]["depth"] for row in first], [0.1, 0.5, 0.9, 0.1])
+        for _source_idx, row in first:
+            self.assertEqual(len(row["choices"]), 4)
+            self.assertEqual(row["choices"][row["gold"]], row["passkey"])
+
+    def test_assembles_exact_length_passkey_prompt(self):
+        prompt = assemble_passkey_prompt_ids(
+            prefix_ids=torch.tensor([1, 1]),
+            filler_ids=torch.tensor([2, 3]),
+            key_ids=torch.tensor([9, 9]),
+            query_ids=torch.tensor([8]),
+            target_tokens=11,
+            depth=0.5,
+        )
+        self.assertEqual(tuple(prompt.shape), (1, 11))
+        self.assertEqual(prompt[0, -1].item(), 8)
+        key_positions = (prompt[0] == 9).nonzero(as_tuple=False).flatten().tolist()
+        self.assertEqual(key_positions, [5, 6])
+
+    def test_formats_passkey_choices(self):
+        prompt, choices, gold = format_task_example(
+            "passkey",
+            {"choices": ["123456", "654321"], "gold": 1},
+        )
+        self.assertIn("pass key", prompt)
+        self.assertEqual(choices, [" 123456", " 654321"])
+        self.assertEqual(gold, 1)
 
     def test_builds_fewshot_prefix_with_gold_answers(self):
         prefix = build_fewshot_prefix(
