@@ -21,6 +21,7 @@ from benchmark_spec_kv_quantization import (
     cached_prefill,
     cached_step,
     finish_wandb,
+    hard_exit_after_success,
     init_wandb,
     quantize_cache_for_next_step,
     shared_token_logits,
@@ -700,3 +701,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    hard_exit_after_success()

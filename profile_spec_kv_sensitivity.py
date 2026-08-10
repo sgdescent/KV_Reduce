@@ -20,6 +20,7 @@ from benchmark_spec_kv_quantization import (
     estimate_total_kv_memory,
     finish_wandb,
     generate_target_reference_records,
+    hard_exit_after_success,
     init_wandb,
     run_one_config,
 )
@@ -479,3 +480,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    hard_exit_after_success()

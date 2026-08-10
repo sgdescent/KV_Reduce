@@ -19,6 +19,7 @@ import inspect
 import json
 import math
 import os
+import sys
 import time
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -152,6 +153,27 @@ def finish_wandb(run: Optional[Any]) -> None:
     import wandb
 
     wandb.teardown()
+
+
+def hard_exit_after_success() -> None:
+    """Bypass a known PyArrow shutdown deadlock after Slurm work is complete.
+
+    Streaming ``datasets`` jobs can finish all Python work and then block in
+    Arrow's C++ thread-pool destructor on the cluster's Python 3.13 runtime.
+    This runs only after ``main`` has returned successfully. It defaults on for
+    Slurm jobs and can be disabled with ``KV_REDUCE_HARD_EXIT_AFTER_SUCCESS=0``.
+    """
+    setting = os.environ.get("KV_REDUCE_HARD_EXIT_AFTER_SUCCESS")
+    enabled = (
+        bool(os.environ.get("SLURM_JOB_ID"))
+        if setting is None
+        else setting.lower() in {"1", "true", "yes"}
+    )
+    if not enabled:
+        return
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
 
 
 def cuda_devices(*devices: str) -> List[int]:
@@ -1376,3 +1398,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    hard_exit_after_success()
