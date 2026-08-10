@@ -426,6 +426,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-3B")
     parser.add_argument("--small_model", type=str, default="Qwen/Qwen2.5-1.5B")
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu")
+    parser.add_argument(
+        "--small_device",
+        type=str,
+        default=None,
+        help="Optional draft-model device; useful for memory-heavy target-cache diagnostics.",
+    )
     parser.add_argument("--dtype", type=str, default="bf16")
     parser.add_argument("--attn_implementation", choices=["eager", "sdpa", "flash_attention_2"], default="sdpa")
     parser.add_argument("--dataset_name", type=str, default="wikitext")
@@ -448,6 +454,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    small_device = args.small_device or args.device
     set_seed(args.seed)
     tokenizer = load_tokenizer(args.model)
     model = load_causal_lm(
@@ -490,7 +497,7 @@ def main() -> None:
     if args.run_speculative_audit:
         small_model = load_causal_lm(
             args.small_model,
-            device=args.device,
+            device=small_device,
             dtype_name=args.dtype,
             attn_implementation=args.attn_implementation,
         )
@@ -502,7 +509,7 @@ def main() -> None:
                 draft_steps=args.draft_steps,
                 max_new_tokens=args.max_new_tokens,
                 big_device=args.device,
-                small_device=args.device,
+                small_device=small_device,
                 shared_vocab_size=min(int(tokenizer.vocab_size), int(small_model.config.vocab_size)),
                 reset_target_from_sequential_shadow=args.reset_target_from_sequential_shadow,
             )

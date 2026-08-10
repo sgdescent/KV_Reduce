@@ -44,6 +44,7 @@ DRAFT_STEPS="${DRAFT_STEPS:-4}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16}"
 SEED="${SEED:-0}"
 ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
+SMALL_DEVICE="${SMALL_DEVICE:-}"
 
 if [[ -n "$BENCHMARK_PROMPT_IDX" ]]; then
   SKIP_PROMPTS=$((WARMUP_PROMPTS + BENCHMARK_PROMPT_IDX))
@@ -69,6 +70,10 @@ cmd=(
   --run_speculative_audit
   --out "$OUT"
 )
+
+if [[ -n "$SMALL_DEVICE" ]]; then
+  cmd+=(--small_device "$SMALL_DEVICE")
+fi
 
 if [[ "${SHUFFLE_EVAL:-1}" == "1" ]]; then
   cmd+=(--shuffle_eval)
