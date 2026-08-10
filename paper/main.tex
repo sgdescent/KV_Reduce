@@ -107,7 +107,8 @@ $b^K_\ell,b^V_\ell$, the compressed draft cost is approximately
   H^{KV}_\ell d_{h,\ell}\left(b^K_\ell+b^V_\ell\right),
 \end{equation}
 plus quantizer metadata and any full-precision residual window. Our simulator
-counts the packed payload and two 16-bit affine parameters per quantization group.
+counts the packed payload and either one 16-bit scale for a symmetric group or a
+16-bit scale and offset for an affine group.
 Total saving is
 $(M_d-\widehat M_d)/(M_t+M_d)$; it is necessarily smaller than the percentage
 saved from the draft cache alone.
@@ -125,8 +126,11 @@ vector $x$,
   \widehat x=s\,\operatorname{clip}\!\left(\operatorname{round}(x/s),
   -2^{b-1}+1,2^{b-1}-1\right).
 \end{equation}
-The main quantizer follows the KIVI geometry: keys are grouped per channel over
-32 consecutive tokens, while values are grouped over each token--KV-head vector.
+The key-axis ablation changes only keys to grouped per-channel affine
+quantization over 32 consecutive tokens and retains symmetric per-token values.
+The main matched-objective quantizer follows the full KIVI geometry: keys use the
+same per-channel groups, while values use affine groups over each token--KV-head
+vector.
 For every affine group $G$, we compute
 \begin{equation}
   s_G=\frac{\max G-\min G}{2^b-1},\qquad
@@ -345,8 +349,9 @@ key-channel outliers.
 
 \subsection{Outlier-aware key quantization removes the apparent fragility}
 
-We next change the quantizer geometry: keys use affine scales and offsets per
-channel over 32-token groups, while values use per-token affine quantization.
+We next change only the key quantizer geometry: keys use affine scales and offsets
+per channel over 32-token groups, while values retain the same per-token symmetric
+quantizer as the diagnostic baseline.
 Across three 1K Qwen seeds (190 valid paired prompts), K4V8 with a 128-token
 floating-point residual window changes acceptance by $+0.21$ points (95\% paired
 bootstrap CI $[-0.53,0.98]$) while saving 23.7\% of total target-plus-draft KV.

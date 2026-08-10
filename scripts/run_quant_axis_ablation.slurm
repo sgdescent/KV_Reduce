@@ -32,6 +32,7 @@ fi
 axis="${KEY_QUANT_AXIS:-per_channel}"
 group_size="${KEY_GROUP_SIZE:-32}"
 residual_length="${KEY_RESIDUAL_LENGTH:-128}"
+value_quant_scheme="${VALUE_QUANT_SCHEME:-symmetric}"
 variant="${AXIS_VARIANT:-${axis}_r${residual_length}}"
 root="${SWEEP_ROOT:-outputs/quant_axis_ablation/qwen25_3b_15b/$variant}"
 out_dir="$root/ctx_${context}/seed_${seed}"
@@ -51,7 +52,8 @@ python3 -u benchmark_spec_kv_quantization.py \
   --eval_split validation \
   --prompt_len "$context" \
   --num_prompts "$num_prompts" \
-  --warmup_prompts 2 \
+  --warmup_prompts "${WARMUP_PROMPTS:-2}" \
+  --skip_prompts "${SKIP_PROMPTS:-0}" \
   --draft_steps 4 \
   --max_new_tokens 16 \
   --seed "$seed" \
@@ -60,6 +62,7 @@ python3 -u benchmark_spec_kv_quantization.py \
   --key_quant_axis "$axis" \
   --key_group_size "$group_size" \
   --key_residual_length "$residual_length" \
+  --value_quant_scheme "$value_quant_scheme" \
   --out_dir "$out_dir" \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
