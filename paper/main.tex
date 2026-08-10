@@ -356,7 +356,13 @@ $-0.13$ points (CI $[-1.07,0.82]$) while saving 29.2\% total KV. Removing the
 residual window increases savings to 25.6\% for K4V8 and 31.0\% for K4V4, with
 acceptance changes of $-0.32$ (CI $[-1.13,0.53]$) and $-0.81$ points
 (CI $[-1.80,0.15]$), respectively. These results invalidate an interpretation
-based on bit-width alone. \todo{Add the 4K aggregate when it completes.}
+based on bit-width alone. The three-seed 4K replication agrees: residual-window
+K4V8 changes acceptance by $+0.63$ points (CI $[-0.54,1.87]$) while saving
+25.3\% total KV, and its axis gain over per-token K4V8 is 29.97 points
+(CI $[25.99,33.88]$). K4V4 changes acceptance by $-0.61$ points
+(CI $[-2.26,1.10]$) while saving 30.7\% total KV. With no residual window,
+K4V8 and K4V4 save 25.7\% and 31.2\% total KV, respectively, with confidence
+intervals that still include no acceptance change.
 
 A fixed-key value-precision sweep identifies a sharp knee below four bits. Across
 three 1K-context seeds, K8V4 saves $27.00\%$ of total target-plus-draft KV memory

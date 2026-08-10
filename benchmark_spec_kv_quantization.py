@@ -905,6 +905,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt_len", type=int, default=1024)
     parser.add_argument("--num_prompts", type=int, default=100)
     parser.add_argument("--warmup_prompts", type=int, default=5)
+    parser.add_argument(
+        "--skip_prompts",
+        type=int,
+        default=0,
+        help="Skip this many token blocks before selecting warmup and benchmark prompts.",
+    )
     parser.add_argument("--draft_steps", type=int, default=4)
     parser.add_argument("--max_new_tokens", type=int, default=16)
     parser.add_argument("--topk", type=int, default=5)
@@ -992,6 +998,7 @@ def main() -> None:
         seed=args.seed,
         streaming=args.stream_eval,
         split_fallbacks=parse_csv_items(args.eval_split_fallbacks),
+        skip_blocks=args.skip_prompts,
     )
     all_prompts = [block.unsqueeze(0) for block in prompt_iter]
     warmup_prompts = all_prompts[: args.warmup_prompts]
