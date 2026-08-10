@@ -1,6 +1,12 @@
 import unittest
 
-from aggregate_value_precision_sweep import aggregate_prompt_effects, parse_config_bits
+from pathlib import Path
+
+from aggregate_value_precision_sweep import (
+    aggregate_prompt_effects,
+    parse_config_bits,
+    underfilled_run_record,
+)
 
 
 class ValuePrecisionSweepTest(unittest.TestCase):
@@ -25,6 +31,28 @@ class ValuePrecisionSweepTest(unittest.TestCase):
         self.assertEqual(counts["numerical_tie"], 2)
         self.assertEqual(counts["non_tie_or_unknown"], 2)
         self.assertEqual(invalid, 1)
+
+    def test_underfilled_run_record_only_reports_shortfalls(self):
+        record = underfilled_run_record(
+            run_dir=Path("ctx_1024/seed_0"),
+            requested=512,
+            actual=255,
+            unit="prompts",
+            context=1024,
+            seed=0,
+        )
+        self.assertEqual(record["shortfall"], 257)
+        self.assertEqual(record["actual"], 255)
+        self.assertIsNone(
+            underfilled_run_record(
+                run_dir=Path("ctx_1024/seed_1"),
+                requested=512,
+                actual=512,
+                unit="prompts",
+                context=1024,
+                seed=1,
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from aggregate_value_precision_sweep import (
     MATCHED_BIT_PAIRS,
     parse_config_bits,
     parse_seed_filter,
+    underfilled_run_record,
 )
 from spec_kv_statistics import bootstrap_mean_ci
 
@@ -132,6 +133,7 @@ def main() -> None:
         lambda: defaultdict(list)
     )
     missing = []
+    underfilled_runs: List[Dict[str, Any]] = []
 
     for seed_dir in sorted(args.sweep_dir.glob("ctx_*/seed_*")):
         seed_hint = int(seed_dir.name.removeprefix("seed_"))
@@ -151,6 +153,17 @@ def main() -> None:
         if selected_seeds is not None and seed not in selected_seeds:
             continue
         raw_rows = read_csv(raw_path)
+        actual_sequences = len({row["sequence_idx"] for row in raw_rows})
+        underfilled = underfilled_run_record(
+            run_dir=seed_dir,
+            requested=int(summary["config"]["num_sequences"]),
+            actual=actual_sequences,
+            unit="sequences",
+            context=context,
+            seed=seed,
+        )
+        if underfilled is not None:
+            underfilled_runs.append(underfilled)
         for raw in raw_rows:
             name = raw["candidate"]
             if name == "none":
@@ -262,13 +275,17 @@ def main() -> None:
     payload = {
         "num_complete_runs": len({(row["context"], row["seed"]) for row in run_rows}),
         "missing_runs": missing,
+        "underfilled_runs": underfilled_runs,
         "selected_seeds": sorted(selected_seeds) if selected_seeds is not None else None,
         "grouped": grouped,
         "paired_precision_contrasts": paired_comparisons,
         "plots": make_plot(grouped, args.out_dir),
     }
     (args.out_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"Aggregated {payload['num_complete_runs']} runs; missing {len(missing)}")
+    print(
+        f"Aggregated {payload['num_complete_runs']} runs; missing {len(missing)}; "
+        f"underfilled {len(underfilled_runs)}"
+    )
     print(args.out_dir / "summary.json")
 
 

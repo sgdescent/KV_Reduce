@@ -208,6 +208,29 @@ def parse_seed_filter(value: str) -> set[int] | None:
     return seeds or None
 
 
+def underfilled_run_record(
+    *,
+    run_dir: Path,
+    requested: int,
+    actual: int,
+    unit: str,
+    context: int,
+    seed: int,
+) -> Dict[str, Any] | None:
+    """Describe a completed run that exhausted its dataset before its request."""
+    if actual >= requested:
+        return None
+    return {
+        "run_dir": str(run_dir),
+        "context": int(context),
+        "seed": int(seed),
+        "unit": unit,
+        "requested": int(requested),
+        "actual": int(actual),
+        "shortfall": int(requested - actual),
+    }
+
+
 def main() -> None:
     args = build_parser().parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -222,6 +245,7 @@ def main() -> None:
     exactness: Counter[str] = Counter()
     invalid_prompts = 0
     missing = []
+    underfilled_runs: List[Dict[str, Any]] = []
 
     for seed_dir in sorted(args.sweep_dir.glob("ctx_*/seed_*")):
         seed_hint = int(seed_dir.name.removeprefix("seed_"))
@@ -242,8 +266,20 @@ def main() -> None:
         if selected_seeds is not None and seed not in selected_seeds:
             continue
         names = [name for name in summary["quant_configs"] if name != "none"]
+        benchmark_rows = read_csv(benchmark_path)
+        actual_prompts = len({row["prompt_idx"] for row in benchmark_rows})
+        underfilled = underfilled_run_record(
+            run_dir=seed_dir,
+            requested=int(config["num_prompts"]),
+            actual=actual_prompts,
+            unit="prompts",
+            context=context,
+            seed=seed,
+        )
+        if underfilled is not None:
+            underfilled_runs.append(underfilled)
         effects, counts, invalid = aggregate_prompt_effects(
-            read_csv(benchmark_path),
+            benchmark_rows,
             configs=names,
             tie_margin=args.exactness_tie_margin,
         )
@@ -334,6 +370,7 @@ def main() -> None:
     payload = {
         "num_complete_runs": len({(row["context"], row["seed"]) for row in run_rows}),
         "missing_runs": missing,
+        "underfilled_runs": underfilled_runs,
         "selected_seeds": sorted(selected_seeds) if selected_seeds is not None else None,
         "exactness_tie_margin": args.exactness_tie_margin,
         "exactness": dict(exactness),
@@ -344,7 +381,10 @@ def main() -> None:
         "contrast_plots": make_contrast_plot(paired_comparisons, args.out_dir),
     }
     (args.out_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"Aggregated {payload['num_complete_runs']} runs; missing {len(missing)}")
+    print(
+        f"Aggregated {payload['num_complete_runs']} runs; missing {len(missing)}; "
+        f"underfilled {len(underfilled_runs)}"
+    )
     print(args.out_dir / "summary.json")
 
 

@@ -134,8 +134,13 @@ We see one raw equal-memory objective-preference reversal on Qwen2.5-7B/3B:
 speculative acceptance favors K4V3 over K3V4 by +0.43 points, while ordinary
 quality significantly favors K3V4. However, the speculative confidence interval
 is wide (-1.68 to +2.65 points), so this reversal is not statistically resolved.
-A predeclared powered replication uses three new seeds, 512 speculative prompts
-per seed, and 256 ordinary-quality sequences per seed.
+The first powered WikiText replication is diagnostic only: although it requested
+512 prompts per seed, the validation split supplies only about 255 usable 1K
+blocks, so seeds reshuffle a finite pool rather than form disjoint samples. We
+have replaced it with a streaming FineWeb-Edu replication using three explicit,
+non-overlapping shards of 512 speculative prompts and 256 ordinary-quality
+sequences per shard. Aggregators now report any requested-versus-observed sample
+shortfall explicitly.
 
 The broader cross-family result suggests a practical two-stage policy even
 without a resolved preference reversal. Across 48 model-pair/configuration cells,
@@ -250,7 +255,8 @@ objective-specific differences instead of assuming they exist.
 
 ## Experiments In Flight
 
-- Powered Qwen2.5-7B/3B equal-memory K4V3 versus K3V4 test.
+- Diagnostic WikiText Qwen2.5-7B/3B replication, followed by a corrected,
+  disjoint-shard FineWeb-Edu K4V3-versus-K3V4 test.
 - Eight-shot HellaSwag and ARC-Challenge task accuracy across disjoint seeds.
 - Controlled 4K quantizer-geometry factorial replication.
 - C4, GSM8K, and HumanEval robustness aggregation and paper integration.
@@ -258,6 +264,8 @@ objective-specific differences instead of assuming they exist.
 ## Closest Work
 
 - [KIVI](https://arxiv.org/abs/2402.02750)
+- [AsymKV](https://arxiv.org/abs/2410.13212)
+- [Quantize What Counts / KV-AdaQuant](https://arxiv.org/abs/2502.15075)
 - [QuantSpec](https://arxiv.org/abs/2502.10424)
 - [KVmix](https://arxiv.org/abs/2506.08018)
 - [RateQuant](https://arxiv.org/abs/2605.06675)
