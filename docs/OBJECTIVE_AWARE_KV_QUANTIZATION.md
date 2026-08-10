@@ -21,7 +21,11 @@ and substantially less noisy than a small calibration sample's delta NLL.
 
 The quality profile uses teacher-forced continuations with a cache-resident
 decode loop. The speculative profile uses the audited cached target/draft loop
-in `benchmark_spec_kv_quantization.py`.
+in `benchmark_spec_kv_quantization.py`. Current paper campaigns pass the same
+KIVI-style geometry to both paths: grouped per-channel affine keys, per-token
+affine values, group size 32, and a 128-token BF16 key residual window. Older
+profiles that omit these fields are geometry diagnostics, not allocator
+baselines for the current method.
 
 ## Decisive experiment
 

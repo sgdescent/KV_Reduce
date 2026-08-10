@@ -11,6 +11,7 @@ from aggregate_objective_kv_matrix import classify_exactness
 from benchmark_spec_kv_quantization import build_joint_quant_configs, last_token_logits_kwargs
 from kv_cache_quantization import parse_csv_ints, parse_quant_config_specs
 from prepare_objective_kv_matrix import evaluation_skip_blocks, heuristic_component_bits
+from profile_spec_kv_sensitivity import build_parser as build_spec_sensitivity_parser
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -87,6 +88,28 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
 
         self.assertEqual(quality, [128, 160, 192])
         self.assertEqual(acceptance, [256, 290, 324])
+
+    def test_spec_sensitivity_exposes_geometry_and_skip_controls(self) -> None:
+        args = build_spec_sensitivity_parser().parse_args(
+            [
+                "--skip_prompts",
+                "64",
+                "--key_quant_axis",
+                "per_channel",
+                "--key_group_size",
+                "16",
+                "--key_residual_length",
+                "32",
+                "--value_quant_scheme",
+                "affine",
+            ]
+        )
+
+        self.assertEqual(args.skip_prompts, 64)
+        self.assertEqual(args.key_quant_axis, "per_channel")
+        self.assertEqual(args.key_group_size, 16)
+        self.assertEqual(args.key_residual_length, 32)
+        self.assertEqual(args.value_quant_scheme, "affine")
 
     def test_paired_acceptance_risk_reports_upper_confidence_bound(self) -> None:
         baseline = [

@@ -87,6 +87,10 @@ text_column_args=()
 if [[ -n "${TEXT_COLUMN:-}" ]]; then
   text_column_args+=(--text_column "$TEXT_COLUMN")
 fi
+key_quant_axis="${KEY_QUANT_AXIS:-per_token}"
+key_group_size="${KEY_GROUP_SIZE:-32}"
+key_residual_length="${KEY_RESIDUAL_LENGTH:-128}"
+value_quant_scheme="${VALUE_QUANT_SCHEME:-symmetric}"
 if [[ "$objective" == "quality" ]]; then
   python3 -u profile_kv_quality_sensitivity.py \
     --model "${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}" \
@@ -100,6 +104,10 @@ if [[ "$objective" == "quality" ]]; then
     --skip_sequences "$skip_blocks" \
     --seed "$seed" \
     "${shuffle_args[@]}" \
+    --key_quant_axis "$key_quant_axis" \
+    --key_group_size "$key_group_size" \
+    --key_residual_length "$key_residual_length" \
+    --value_quant_scheme "$value_quant_scheme" \
     --quant_configs "$quant_configs" \
     --out_dir "$out_dir" \
     --wandb_run_name "quality_b${budget}_c${context}_s${seed}" \
@@ -124,6 +132,10 @@ elif [[ "$objective" == "acceptance" ]]; then
     --max_new_tokens "${MAX_NEW_TOKENS:-16}" \
     --seed "$seed" \
     "${shuffle_args[@]}" \
+    --key_quant_axis "$key_quant_axis" \
+    --key_group_size "$key_group_size" \
+    --key_residual_length "$key_residual_length" \
+    --value_quant_scheme "$value_quant_scheme" \
     --quant_configs "$quant_configs" \
     --out_dir "$out_dir" \
     --wandb_run_name "acceptance_b${budget}_c${context}_s${seed}" \

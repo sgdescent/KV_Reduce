@@ -22,7 +22,15 @@ from benchmark_spec_kv_quantization import (
     init_wandb,
     run_one_config,
 )
-from kv_cache_quantization import FULL_PRECISION_BITS, parse_csv_ints, uniform_bit_lists
+from kv_cache_quantization import (
+    AFFINE_QUANT,
+    FULL_PRECISION_BITS,
+    PER_CHANNEL_AXIS,
+    PER_TOKEN_AXIS,
+    SYMMETRIC_QUANT,
+    parse_csv_ints,
+    uniform_bit_lists,
+)
 from kv_utils import (
     iter_token_blocks,
     load_causal_lm,
@@ -148,6 +156,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt_len", type=int, default=1024)
     parser.add_argument("--num_prompts", type=int, default=32)
     parser.add_argument("--warmup_prompts", type=int, default=2)
+    parser.add_argument(
+        "--skip_prompts",
+        type=int,
+        default=0,
+        help="Skip this many token blocks before selecting warmup and profile prompts.",
+    )
     parser.add_argument("--draft_steps", type=int, default=4)
     parser.add_argument("--max_new_tokens", type=int, default=16)
     parser.add_argument("--topk", type=int, default=5)
@@ -155,6 +169,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--components", type=str, default="k,v")
     parser.add_argument("--bits", type=str, default="8,4")
     parser.add_argument("--scale_bits", type=int, default=16)
+    parser.add_argument(
+        "--key_quant_axis",
+        type=str,
+        default=PER_TOKEN_AXIS,
+        choices=[PER_TOKEN_AXIS, PER_CHANNEL_AXIS],
+    )
+    parser.add_argument("--key_group_size", type=int, default=32)
+    parser.add_argument("--key_residual_length", type=int, default=128)
+    parser.add_argument(
+        "--value_quant_scheme",
+        type=str,
+        default=SYMMETRIC_QUANT,
+        choices=[SYMMETRIC_QUANT, AFFINE_QUANT],
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--allow_incompatible_tokenizers", action="store_true")
     parser.add_argument("--out_dir", type=str, default="outputs/spec_kv_sensitivity")
@@ -216,6 +244,7 @@ def main() -> None:
         seed=args.seed,
         streaming=args.stream_eval,
         split_fallbacks=parse_csv_items(args.eval_split_fallbacks),
+        skip_blocks=args.skip_prompts,
     )
     all_prompts = [block.unsqueeze(0) for block in prompt_iter]
     warmup_prompts = all_prompts[: args.warmup_prompts]
@@ -259,11 +288,17 @@ def main() -> None:
             topk=args.topk,
             k_bits=full_k_bits,
             v_bits=full_v_bits,
+            target_k_bits=None,
+            target_v_bits=None,
             cuda_device_ids=cuda_device_ids,
             wandb_run=None,
             wandb_prefix="warmup",
             wandb_step_offset=0,
             shared_vocab_size=shared_vocab_size,
+            key_quant_axis=args.key_quant_axis,
+            key_group_size=args.key_group_size,
+            key_residual_length=args.key_residual_length,
+            value_quant_scheme=args.value_quant_scheme,
             target_token_references=warmup_target_references,
             target_margin_references=warmup_target_margins,
         )
@@ -281,11 +316,17 @@ def main() -> None:
         topk=args.topk,
         k_bits=full_k_bits,
         v_bits=full_v_bits,
+        target_k_bits=None,
+        target_v_bits=None,
         cuda_device_ids=cuda_device_ids,
         wandb_run=wandb_run,
         wandb_prefix="sensitivity",
         wandb_step_offset=0,
         shared_vocab_size=shared_vocab_size,
+        key_quant_axis=args.key_quant_axis,
+        key_group_size=args.key_group_size,
+        key_residual_length=args.key_residual_length,
+        value_quant_scheme=args.value_quant_scheme,
         target_token_references=profile_target_references,
         target_margin_references=profile_target_margins,
     )
@@ -336,11 +377,17 @@ def main() -> None:
                     topk=args.topk,
                     k_bits=k_bits,
                     v_bits=v_bits,
+                    target_k_bits=None,
+                    target_v_bits=None,
                     cuda_device_ids=cuda_device_ids,
                     wandb_run=wandb_run,
                     wandb_prefix="sensitivity",
                     wandb_step_offset=candidate_idx * len(profile_prompts),
                     shared_vocab_size=shared_vocab_size,
+                    key_quant_axis=args.key_quant_axis,
+                    key_group_size=args.key_group_size,
+                    key_residual_length=args.key_residual_length,
+                    value_quant_scheme=args.value_quant_scheme,
                     target_token_references=profile_target_references,
                     target_margin_references=profile_target_margins,
                 )
@@ -355,6 +402,10 @@ def main() -> None:
                     k_bits=k_bits,
                     v_bits=v_bits,
                     scale_bits=args.scale_bits,
+                    key_quant_axis=args.key_quant_axis,
+                    key_group_size=args.key_group_size,
+                    key_residual_length=args.key_residual_length,
+                    value_quant_scheme=args.value_quant_scheme,
                 )
                 candidate_summary = result["summary"]
                 paired_risk = paired_drop_statistics(
@@ -400,6 +451,14 @@ def main() -> None:
 
     payload = {
         "config": vars(args),
+        "runtime": {
+            "evaluator_version": "cached_dynamic_v4",
+            "objective": "speculative_acceptance_sensitivity",
+            "key_quant_axis": args.key_quant_axis,
+            "key_group_size": args.key_group_size,
+            "key_residual_length": args.key_residual_length,
+            "value_quant_scheme": args.value_quant_scheme,
+        },
         "layers": layers,
         "components": components,
         "bits": bit_values,

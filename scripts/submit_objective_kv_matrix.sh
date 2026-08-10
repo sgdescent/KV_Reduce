@@ -12,6 +12,10 @@ NUM_EVAL="${NUM_EVAL:-32}"
 QUALITY_SKIP_BASE="${QUALITY_SKIP_BASE:-0}"
 ACCEPTANCE_SKIP_BASE="${ACCEPTANCE_SKIP_BASE:-0}"
 ACCEPTANCE_WARMUP_PROMPTS="${ACCEPTANCE_WARMUP_PROMPTS:-2}"
+KEY_QUANT_AXIS="${KEY_QUANT_AXIS:-per_channel}"
+KEY_GROUP_SIZE="${KEY_GROUP_SIZE:-32}"
+KEY_RESIDUAL_LENGTH="${KEY_RESIDUAL_LENGTH:-128}"
+VALUE_QUANT_SCHEME="${VALUE_QUANT_SCHEME:-affine}"
 NUM_LAYERS="${NUM_LAYERS:-28}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-2}"
 ENABLE_WANDB="${ENABLE_WANDB:-1}"
@@ -38,7 +42,7 @@ prep=$(sbatch --parsable --exclude="$EXCLUDE_NODES" "${dependency_args[@]}" \
   scripts/prepare_objective_kv_matrix.slurm)
 array=$(sbatch --parsable --exclude="$EXCLUDE_NODES" --dependency="afterok:$prep" \
   --array="0-$((num_tasks - 1))%$MAX_CONCURRENT" \
-  --export=ALL,MANIFEST="$MATRIX_ROOT/manifest.tsv",ENABLE_WANDB="$ENABLE_WANDB",WANDB_PROJECT=kv-reduce,WANDB_GROUP="$WANDB_GROUP" \
+  --export=ALL,MANIFEST="$MATRIX_ROOT/manifest.tsv",ENABLE_WANDB="$ENABLE_WANDB",WANDB_PROJECT=kv-reduce,WANDB_GROUP="$WANDB_GROUP",KEY_QUANT_AXIS="$KEY_QUANT_AXIS",KEY_GROUP_SIZE="$KEY_GROUP_SIZE",KEY_RESIDUAL_LENGTH="$KEY_RESIDUAL_LENGTH",VALUE_QUANT_SCHEME="$VALUE_QUANT_SCHEME" \
   scripts/eval_objective_kv_matrix.slurm)
 aggregate=$(sbatch --parsable --exclude="$EXCLUDE_NODES" --dependency="afterok:$array" \
   --export=ALL,MATRIX_DIR="$MATRIX_ROOT",OUT_DIR="$MATRIX_ROOT/aggregate" \
