@@ -1,7 +1,8 @@
 # KV-Cache Quantization: Collaborator Update
 
-Status: provisional results as of August 10, 2026. Powered replications,
-long-context tests, and verifier exactness audits are still running.
+Status: provisional results as of August 10, 2026. Powered allocation,
+long-context, task, and speculation-length experiments are still running. The
+four-condition verifier exactness audit is complete.
 
 ## Copy-Paste Message
 
@@ -124,6 +125,16 @@ at 1K and 30.58% at 4K with acceptance CIs of -0.90 to +1.25 and -1.13 to +1.89
 points. No target-quantized candidate passes the acceptance-confidence constraint
 at 4K, so the constrained selector also chooses the exact-target K4V4 policy.
 
+The powered verifier audit is complete on the same 32 prompts under BF16/FP32
+and SDPA/eager attention, with 512 speculative decisions per condition. BF16
+SDPA has six top-1 disagreements: one satisfies the predeclared `1e-3` target-
+margin tie rule and five are non-tie/unknown. BF16 eager has seven disagreements:
+four ties and three non-tie/unknown. Both FP32 SDPA and FP32 eager have zero.
+Earlier focused tests found no causal-mask, causal-suffix, or cache-rollback
+failure. We therefore attribute the remaining BF16 differences to finite-
+precision kernel-path drift, but do not claim bitwise identity to tokenwise BF16
+greedy decoding.
+
 ## Is This Sufficiently Novel For A Main Track?
 
 KV-cache quantization alone is not novel. KIVI established asymmetric K/V
@@ -186,7 +197,6 @@ quantization, then measure which objective selects which precision allocation.
 - Eight-shot HellaSwag and ARC-Challenge task accuracy across disjoint seeds.
 - 16K and 32K PG19 long-context evaluation.
 - Speculation-length (`gamma`) sensitivity.
-- BF16/FP32 and SDPA/eager verifier exactness audit.
 
 ## Closest Work
 

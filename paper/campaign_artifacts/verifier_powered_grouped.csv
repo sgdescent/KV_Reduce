@@ -1,0 +1,5 @@
+dtype,attn_implementation,num_runs,num_prompts,prompts_with_speculative_mismatch,prompts_with_independent_greedy_mismatch,total_batch_vs_sequential_top1_mismatches,total_full_vs_sequential_top1_mismatches,total_causal_suffix_violations,total_rollback_top1_mismatches,total_speculative_top1_mismatches,total_speculative_independent_greedy_mismatches,max_batch_vs_sequential_logit_delta,max_causal_suffix_logit_delta,max_rollback_logit_delta,total_speculative_tie_decisions,total_speculative_non_tie_or_unknown_decisions,total_speculative_prompts_with_only_tie_mismatches,total_speculative_prompts_with_non_tie_or_unknown_mismatches,total_independent_greedy_tie_prompts,total_independent_greedy_non_tie_or_unknown_prompts
+bf16,eager,1,32,7,7,0,0,0,0,7,7,nan,nan,nan,4,3,4,3,4,3
+bf16,sdpa,1,32,5,5,0,0,0,0,6,5,nan,nan,nan,1,5,1,4,1,4
+float32,eager,1,32,0,0,0,0,0,0,0,0,nan,nan,nan,0,0,0,0,0,0
+float32,sdpa,1,32,0,0,0,0,0,0,0,0,nan,nan,nan,0,0,0,0,0,0

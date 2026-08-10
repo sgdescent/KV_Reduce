@@ -554,11 +554,14 @@ no causal-suffix violation. BF16 SDPA reproduces one speculative mismatch on eac
 of four independent non-tie prompts, whereas FP32 SDPA produces zero on all four.
 Two BF16 traces also show rollback-path top-1 flips, but these disappear in FP32;
 on an additional traced prompt, switching BF16 from SDPA to eager attention also
-eliminates the mismatch. This backend and precision dependence supports
-finite-precision kernel-path drift rather than stale-cache corruption. We
-consequently do not claim bitwise
-equality to tokenwise BF16 greedy decoding, while the target verification rule
-itself remains unquantized.
+eliminates the mismatch. We then run a powered backend--dtype audit on the same
+32 prompts, with 512 speculative decisions per condition. BF16 SDPA has six
+top-1 disagreements (one numerical tie and five above the $10^{-3}$ target-margin
+threshold), while BF16 eager has seven (four ties and three above threshold).
+Both FP32 SDPA and FP32 eager have zero disagreements. This precision dependence
+supports finite-precision kernel-path drift rather than stale-cache corruption.
+We consequently do not claim bitwise equality to tokenwise BF16 greedy decoding,
+while the target verification rule itself remains unquantized.
 
 \subsection{Motivating negative result: direct cross-model cache maps}
 
