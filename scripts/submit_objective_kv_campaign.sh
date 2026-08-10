@@ -16,7 +16,9 @@ NUM_LAYERS="${NUM_LAYERS:-28}"
 LAYERS="${LAYERS:-top:8}"
 BITS="${BITS:-8,4}"
 EXPORT_BITS="${BITS//,/;}"
-ALLOWED_BITS="${ALLOWED_BITS:-$BITS,16}"
+# Semicolons survive Slurm's comma-delimited --export syntax and are accepted
+# by the shared bit-list parser.
+ALLOWED_BITS="${ALLOWED_BITS:-$EXPORT_BITS;16}"
 TARGET_PROFILED_MEAN_BITS="${TARGET_PROFILED_MEAN_BITS:-8}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-catalyst-0-9,catalyst-0-15}"
 WANDB_PROJECT="${WANDB_PROJECT:-kv-reduce}"
