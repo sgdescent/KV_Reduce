@@ -81,7 +81,10 @@ policies have the same nominal mean bit-width and near-equal estimated total-KV
 savings (31.76% versus 31.38%); the small byte difference comes from asymmetric
 key metadata. This is evidence that, with grouped per-channel KIVI keys,
 aggressive value quantization can be more harmful than aggressive key
-quantization. The `gamma=4` and `gamma=8` replications are still running.
+quantization. This replicates at `gamma=4` across 189 paired prompts: K4V2
+loses 6.48 points (CI: -8.39 to -4.61), K2V4 loses 2.41 points
+(CI: -3.83 to -0.98), and the direct contrast is -4.07 points
+(CI: -5.95 to -2.26). The `gamma=8` replication is still running.
 
 We see one raw equal-memory objective-preference reversal on Qwen2.5-7B/3B:
 speculative acceptance favors K4V3 over K3V4 by +0.43 points, while ordinary

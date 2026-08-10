@@ -414,7 +414,11 @@ points (CI $[-5.82,-2.15]$). Both policies use the same nominal mean bit-width;
 because key metadata is asymmetric, their total-cache savings are near rather
 than exactly equal (31.76% versus 31.38%). Under the deployed KIVI geometry,
 aggressive value quantization is therefore significantly more harmful than
-aggressive key quantization in this setting.
+aggressive key quantization in this setting. The result replicates at
+$\gamma=4$ across 189 paired prompts: K4V2 loses $6.48$ points
+(CI $[-8.39,-4.61]$), K2V4 loses $2.41$ points
+(CI $[-3.83,-0.98]$), and their direct contrast is $-4.07$ points
+(CI $[-5.95,-2.26]$).
 
 \subsection{A conservative learned allocation}
 
