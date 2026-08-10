@@ -15,7 +15,7 @@
 \newcommand{\method}{\textsc{SpecKV}}
 \newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
 
-\title{Keys Decide, Values Describe: Sensitivity-Aware KV Cache Compression for Speculative Decoding}
+\title{Quantizer Geometry Matters: Objective-Aware KV Cache Compression for Speculative Decoding}
 
 \author{Anonymous authors}
 
@@ -28,23 +28,19 @@ Speculative decoding accelerates language-model inference by asking a small draf
 model to propose tokens for verification by a larger target model, but standard
 implementations retain a separate key--value (KV) cache for each model. We study
 how the draft cache can be compressed while preserving the quantity that directly
-controls speculative speed: token acceptance. Our central observation is that
-acceptance is strongly asymmetric in key and value precision. Across six
-target--draft pairs, held-out text, mathematics, and code prompts, and contexts
-up to 32K, 8-bit
-keys with 4-bit values (K8V4) outperform the equal-memory K4V8 assignment in
-19 of 20 matched comparisons. On Qwen2.5-3B/1.5B, K8V4 improves acceptance by
-0.312 at 1K and 0.336 at 4K while reducing total target-plus-draft KV memory by
-27.0\%. Controlled Gaussian perturbations expose the same mechanism: key noise
-changes attention routing and rapidly destroys top-1 stability, whereas value
-noise is tolerated at much larger magnitudes. Based on this observation, \method
-profiles each draft layer and cache component under both ordinary language-model
-quality and the actual speculative loop, then cross-evaluates equal-memory mixed-
-precision allocations. The two objectives produce different sensitivity maps,
-but acceptance-optimized allocation does not consistently outperform the simpler
-quality-trained K-first policy on held-out prompts. The target verifier is never
-quantized; we separately audit finite-precision differences between batched
-verification and tokenwise BF16 decoding.
+controls speculative speed: token acceptance. We show that conclusions about key
+versus value precision depend critically on quantizer geometry. A naive per-token
+symmetric quantizer makes 8-bit keys with 4-bit values (K8V4) appear dramatically
+better than equal-memory K4V8 across models and contexts. However, replacing only
+the key quantizer with grouped per-channel affine quantization recovers the lost
+acceptance, revealing that persistent key-channel outliers---not an intrinsic need
+for more key bits---drive the apparent asymmetry. This motivates a matched study
+of mixed-precision allocations using KIVI-style per-channel affine keys and
+per-token affine values under two downstream objectives: ordinary language-model
+quality and speculative acceptance. \todo{Insert the final multi-seed objective
+grid, cross-family result, and selected Pareto point after jobs 12639--12658.}
+The target verifier is never quantized; we separately audit finite-precision
+differences between batched verification and tokenwise BF16 decoding.
 \end{abstract}
 
 \section{Introduction}
@@ -79,16 +75,14 @@ prior KV quantization analyses~\citep{liu2024kivi,hariri2025more}, but we ask a
 different operational question: \emph{which errors can a draft model tolerate
 without losing speculative acceptance?}
 
-Our findings support four claims. First, Gaussian key perturbations
-are dramatically more destructive to next-token stability than value
-perturbations. Second, K8V4 dominates K4V8 in 19 of 20 equal-memory comparisons
-across six model pairs; the only reversal is an OLMo difference of $-0.002$ whose
-confidence interval includes zero. Third, a conservative layer-wise allocator
-retains 94.9--102.8\% of native acceptance while saving 2.9--9.9\% of total KV
-memory. Fourth, directly fitting the allocator to speculative acceptance changes
-its selected precision map but does not consistently improve held-out acceptance;
-the stable result is the K/V asymmetry itself, not superiority of one profiling
-objective.
+Our investigation separates three questions that prior drafts conflated. First,
+Gaussian perturbation establishes local sensitivity but does not specify a good
+quantizer. Second, quantization axis, grouping, and zero-points determine whether
+key outliers consume the available code range. Third, after controlling the
+quantizer, speculative acceptance and ordinary language-model quality may rank
+equal-memory allocations differently. We evaluate each question independently
+instead of interpreting reconstruction or perturbation error as a precision
+allocation rule.
 
 \section{Background and Problem Formulation}
 
@@ -252,7 +246,7 @@ this implementation.
 
 \section{Results}
 
-\subsection{Keys are the fragile routing state}
+\subsection{Additive noise makes keys appear fragile}
 
 Figure~\ref{fig:gaussian} perturbs all draft-cache keys or values with Gaussian
 noise scaled to the clean activation standard deviation. At $\alpha=0.03$, key
@@ -266,13 +260,15 @@ errors in $K$ changing $A$ in Equation~\ref{eq:attention} before values are read
   \centering
   \includegraphics[width=\linewidth]{figures/gaussian_kv_sensitivity.pdf}
   \caption{Controlled perturbations of the Qwen2.5-1.5B draft cache. Keys are far
-  more sensitive than values under both top-1 stability and distribution drift.}
+  more sensitive to isotropic Gaussian noise, but this experiment does not model
+  an outlier-aware quantizer.}
   \label{fig:gaussian}
 \end{figure}
 
-\subsection{Equal memory does not imply equal acceptance}
+\subsection{Naive per-token quantization creates an apparent asymmetry}
 
-Figure~\ref{fig:equal-memory} isolates the core comparison at 1K context. K8V4
+Figure~\ref{fig:equal-memory} isolates the core comparison at 1K context under
+per-token symmetric fake quantization. K8V4
 and K4V8 have identical average precision and save the same bytes, yet K8V4 wins
 in five of six families and ties OLMo within 0.002. Across all contexts and held-out
 distributions it wins 19 of 20 matched comparisons. The effect is largest for
@@ -284,8 +280,9 @@ savings range from 10.5\% (SmolLM2) to 28.8\% (Llama).
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{campaign_artifacts/cross_family_equal_memory.pdf}
-  \caption{Acceptance at 1K WikiText context. Preserving key precision dominates
-  preserving value precision at equal memory for five families and ties on OLMo.}
+  \caption{Acceptance at 1K WikiText context under the naive per-token symmetric
+  quantizer. This comparison is a diagnostic of quantizer geometry, not evidence
+  that keys intrinsically require more bits.}
   \label{fig:equal-memory}
 \end{figure}
 
@@ -322,8 +319,23 @@ $43.73$ points (CI $[37.07,51.28]$). At 32K, K-priority is $3.37$ points below
 native (CI $[-6.89,-0.17]$), while V-priority drops by $55.51$ points; their
 paired difference is $52.13$ points (CI $[43.22,61.73]$). Both contexts use two
 seeds and contain no non-tie target disagreements.
-These results indicate that routing precision becomes more, rather than less,
-important as each query chooses among a longer cached prefix.
+These results show that the naive key quantizer degrades with longer prefixes; they
+do not distinguish intrinsic routing sensitivity from poor handling of persistent
+key-channel outliers.
+
+\subsection{Outlier-aware key quantization removes the apparent fragility}
+
+We next change only the key quantizer: keys use affine scales and offsets per
+channel over 32-token groups, while values retain the original per-token symmetric
+quantizer. A 128-token floating-point residual window protects recent cache entries.
+In the first completed 1K Qwen seed (63 valid paired prompts), K4V8 changes
+acceptance by only $+0.27$ points while saving 23.7\% of total target-plus-draft
+KV. Relative to the original per-token K4V8 experiment, the quantizer change
+recovers 32.18 acceptance points (95\% paired bootstrap CI $[27.80,36.57]$).
+K4V4 is within $-0.81$ points of native while saving 29.2\% total KV. These
+preliminary results invalidate an interpretation based on bit-width alone.
+\todo{Replace this paragraph and add the residual-window ablation after the
+three-seed 1K/4K aggregate completes.}
 
 A fixed-key value-precision sweep identifies a sharp knee below four bits. Across
 three 1K-context seeds, K8V4 saves $27.00\%$ of total target-plus-draft KV memory
@@ -441,15 +453,14 @@ serving-capacity claims.
 \section{Conclusion}
 
 Draft KV compression should be evaluated by the speculative work it preserves,
-not reconstruction error alone. Across six model pairs, K8V4 wins 19 of 20
-equal-memory comparisons, showing that keys are acceptance-critical routing state
-while values usually tolerate more aggressive compression. Conservative K-first
-allocations preserve near-native draft behavior, and the Qwen results show that
-substantially larger savings are possible. Direct acceptance-trained allocation
-does not yet improve reliably over quality profiling, exposing calibration noise
-and component interactions as important open problems. These findings motivate
-packed asymmetric kernels and better interaction-aware allocation evaluated by
-speculative acceptance rather than reconstruction error alone.
+not reconstruction error alone. Equally importantly, precision allocation cannot
+be interpreted independently of quantization axis, grouping, and zero-points: a
+naive quantizer can manufacture an apparent K/V asymmetry that an outlier-aware
+quantizer removes. Our final analysis therefore compares speculative acceptance
+and ordinary language-model quality using the same KIVI-style quantizer at matched
+memory. \todo{Insert final objective-specific and cross-family conclusions.}
+These findings motivate packed asymmetric kernels and allocation policies trained
+against the downstream decoding objective rather than reconstruction error alone.
 
 \bibliography{references}
 \bibliographystyle{template/iclr2026_conference}
