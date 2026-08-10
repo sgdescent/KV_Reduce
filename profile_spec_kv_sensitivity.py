@@ -18,6 +18,7 @@ import torch
 from acceptance_risk_statistics import paired_drop_statistics, zero_drop_statistics
 from benchmark_spec_kv_quantization import (
     estimate_total_kv_memory,
+    finish_wandb,
     generate_target_reference_records,
     init_wandb,
     run_one_config,
@@ -473,6 +474,7 @@ def main() -> None:
     print(f"  {os.path.join(args.out_dir, 'raw_prompt_rows.csv')}")
     print(f"  {os.path.join(args.out_dir, 'profile_summary.csv')}")
     print(f"  {os.path.join(args.out_dir, 'summary.json')}")
+    finish_wandb(wandb_run)
 
 
 if __name__ == "__main__":

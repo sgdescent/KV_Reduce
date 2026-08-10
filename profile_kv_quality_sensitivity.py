@@ -20,6 +20,7 @@ from tqdm import tqdm
 from benchmark_spec_kv_quantization import (
     cached_prefill,
     cached_step,
+    finish_wandb,
     init_wandb,
     parse_csv_items,
     quantize_cache_for_next_step,
@@ -496,7 +497,7 @@ def main() -> None:
     if wandb_run is not None:
         wandb_run.summary["runtime/evaluator_version"] = "teacher_forced_cached_v1"
         wandb_run.summary["num_sequences"] = len(sequences)
-        wandb_run.finish()
+    finish_wandb(wandb_run)
 
     print("Done!")
     print(f"  {os.path.join(args.out_dir, 'profile_summary.csv')}")

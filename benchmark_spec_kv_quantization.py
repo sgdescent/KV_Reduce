@@ -25,6 +25,9 @@ from typing import Any, Dict, List, Optional, Sequence
 import torch
 import transformers
 
+
+_WANDB_FINISH_HANDLERS: Dict[int, Any] = {}
+
 from kv_cache_quantization import (
     AFFINE_QUANT,
     PER_CHANNEL_AXIS,
@@ -131,9 +134,24 @@ def init_wandb(args: argparse.Namespace) -> Optional[Any]:
     def _finish_wandb() -> None:
         if run is not None:
             run.finish()
+        wandb.teardown()
 
     atexit.register(_finish_wandb)
+    _WANDB_FINISH_HANDLERS[id(run)] = _finish_wandb
     return run
+
+
+def finish_wandb(run: Optional[Any]) -> None:
+    """Synchronously close W&B so Slurm jobs do not linger at shutdown."""
+    if run is None:
+        return
+    handler = _WANDB_FINISH_HANDLERS.pop(id(run), None)
+    if handler is not None:
+        atexit.unregister(handler)
+    run.finish()
+    import wandb
+
+    wandb.teardown()
 
 
 def cuda_devices(*devices: str) -> List[int]:
@@ -1353,6 +1371,7 @@ def main() -> None:
             f"total_saved={100.0 * summary['total_cache_saved_fraction']:.2f}% "
             f"js={summary.get('round_js', float('nan')):.5f}"
         )
+    finish_wandb(wandb_run)
 
 
 if __name__ == "__main__":

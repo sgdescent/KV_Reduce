@@ -20,6 +20,7 @@ from tqdm import tqdm
 from benchmark_spec_kv_quantization import (
     cached_prefill,
     cached_step,
+    finish_wandb,
     init_wandb,
     quantize_cache_for_next_step,
     shared_token_logits,
@@ -693,7 +694,7 @@ def main() -> None:
     if run is not None:
         run.summary["runtime/evaluator_version"] = EVALUATOR_VERSION
         run.summary["num_examples"] = len(examples)
-        run.finish()
+    finish_wandb(run)
     print(os.path.join(args.out_dir, "summary.json"))
 
 
