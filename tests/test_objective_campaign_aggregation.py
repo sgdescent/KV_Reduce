@@ -8,6 +8,7 @@ from paper.aggregate_objective_campaign import (
     collect_rows,
     discover_aggregates,
     discover_final_results,
+    matrix_label,
 )
 
 
@@ -83,6 +84,16 @@ def write_final_summary(root: Path, name: str) -> None:
 
 
 class ObjectiveCampaignAggregationTest(unittest.TestCase):
+    def test_long_context_matrix_labels_identify_dataset(self) -> None:
+        self.assertEqual(
+            matrix_label("qwen25_all_layers_long_context_v1"),
+            "Qwen / WikiText / all-layer / 8K-16K",
+        )
+        self.assertEqual(
+            matrix_label("qwen25_all_layers_pg19_long_v1"),
+            "Qwen / PG19 / all-layer / 16K-32K",
+        )
+
     def test_discovers_only_complete_non_smoke_matrices_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
