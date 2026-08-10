@@ -3,11 +3,17 @@ set -euo pipefail
 
 dependency="${DEPENDENCY:-}"
 num_seeds="${NUM_SEEDS:-2}"
-examples="${NUM_EXAMPLES:-128}"
+hellaswag_examples="${HELLASWAG_EXAMPLES:-${NUM_EXAMPLES:-128}}"
+arc_validation_size="${ARC_VALIDATION_SIZE:-299}"
+arc_examples="${ARC_EXAMPLES:-$((arc_validation_size / num_seeds))}"
 out_base="${OUT_BASE:-outputs/kivi_multiple_choice_cross_family}"
 
-if (( num_seeds <= 0 || examples <= 0 )); then
-  echo "NUM_SEEDS and NUM_EXAMPLES must be positive" >&2
+if (( num_seeds <= 0 || hellaswag_examples <= 0 || arc_examples <= 0 )); then
+  echo "NUM_SEEDS, HELLASWAG_EXAMPLES, and ARC_EXAMPLES must be positive" >&2
+  exit 2
+fi
+if (( num_seeds * arc_examples > arc_validation_size )); then
+  echo "ARC shards request $((num_seeds * arc_examples)) examples, exceeding $arc_validation_size" >&2
   exit 2
 fi
 
@@ -34,7 +40,7 @@ for index in "${!labels[@]}"; do
     "${dependency_args[@]}" \
     --array="0-${array_max}%1" \
     --exclude=catalyst-0-9,catalyst-0-15 \
-    --export="ALL,MODEL=${model},MODEL_LABEL=${label},NUM_SEEDS=${num_seeds},HELLASWAG_EXAMPLES=${examples},ARC_EXAMPLES=${examples},OUT_ROOT=${root},WANDB_PROJECT=${WANDB_PROJECT:-kv-reduce},WANDB_GROUP=kivi-multiple-choice-cross-family" \
+    --export="ALL,MODEL=${model},MODEL_LABEL=${label},NUM_SEEDS=${num_seeds},HELLASWAG_EXAMPLES=${hellaswag_examples},ARC_EXAMPLES=${arc_examples},ARC_VALIDATION_SIZE=${arc_validation_size},OUT_ROOT=${root},WANDB_PROJECT=${WANDB_PROJECT:-kv-reduce},WANDB_GROUP=${WANDB_GROUP:-kivi-multiple-choice-cross-family}" \
     scripts/run_kivi_multiple_choice.slurm)
   aggregate_job=$(sbatch --parsable \
     --dependency="afterok:${array_job}" \
