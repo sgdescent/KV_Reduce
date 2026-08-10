@@ -49,6 +49,7 @@ fi
 
 mkdir -p "$OUT_DIR"
 acceptance_profile_args=()
+allocation_stability_args=()
 for sample_size in "${sizes[@]}"; do
   sample_root="$OUT_DIR/n${sample_size}"
   quality_out="$sample_root/quality_profile"
@@ -99,10 +100,18 @@ for sample_size in "${sizes[@]}"; do
   acceptance_profile_args+=(
     --profile "n${sample_size}=$acceptance_out/profile_summary.csv"
   )
+  allocation_stability_args+=(
+    --allocation "quality:n${sample_size}=$quality_allocation/allocation.json"
+    --allocation "acceptance:n${sample_size}=$acceptance_allocation/allocation.json"
+  )
 done
 
 "$PYTHON_BIN" -u paper/compare_calibration_profiles.py \
   "${acceptance_profile_args[@]}" \
   --out_dir "$OUT_DIR/acceptance_stability"
+
+"$PYTHON_BIN" -u compare_kv_allocation_stability.py \
+  "${allocation_stability_args[@]}" \
+  --out_dir "$OUT_DIR/allocation_stability"
 
 echo "Calibration-size ablation written to $OUT_DIR"
