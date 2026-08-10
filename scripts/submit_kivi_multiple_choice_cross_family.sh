@@ -20,6 +20,7 @@ models=(
 
 previous="$dependency"
 array_max=$((2 * num_seeds - 1))
+aggregate_jobs=()
 for index in "${!labels[@]}"; do
   label="${labels[$index]}"
   model="${models[$index]}"
@@ -43,5 +44,14 @@ for index in "${!labels[@]}"; do
 
   printf '%s_array_job=%s\n' "$label" "$array_job"
   printf '%s_aggregate_job=%s\n' "$label" "$aggregate_job"
+  aggregate_jobs+=("$aggregate_job")
   previous="$array_job"
 done
+
+aggregate_dependency=$(IFS=:; printf '%s' "${aggregate_jobs[*]}")
+meta_job=$(sbatch --parsable \
+  --dependency="afterok:${aggregate_dependency}" \
+  --exclude=catalyst-0-9,catalyst-0-15 \
+  --export="ALL,OUT_BASE=${out_base}" \
+  scripts/aggregate_kivi_multiple_choice_cross_family.slurm)
+printf 'cross_family_meta_job=%s\n' "$meta_job"
