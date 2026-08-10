@@ -245,6 +245,17 @@ standalone-cache compression, not as evidence that quantization improves task
 accuracy or that ARC resolves the K/V allocation question. Cross-family task
 runs remain in flight.
 
+The first corrected cross-family task aggregate is now complete for
+Llama-3.2-3B, with 256 paired examples per task. On ARC-Challenge, BF16 and K3V4
+both score 42.58%; K4V4 changes accuracy by +0.39 points (95% CI: -0.78 to
++1.95) while saving 53.88% of standalone cache bytes. On HellaSwag, BF16 scores
+75.00% and K4V4 scores 76.95%, with a paired change of +1.95 points (CI: +0.39
+to +3.91) and 58.57% cache savings. We treat the positive HellaSwag delta as
+finite-sample preservation rather than a quantization improvement. All four
+matched K/V comparisons span zero or touch zero: the task aggregate does not
+resolve whether keys or values deserve more bits. OLMo-2 and SmolLM2 task runs
+remain in flight.
+
 The full joint target/draft grid is now complete: 25 precision combinations at
 1K and 4K, with three disjoint seeds per context. Under target KL <= 0.01,
 target top-1 >= 95%, runtime-fidelity limits, and an acceptance lower-confidence
