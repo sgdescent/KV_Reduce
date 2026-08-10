@@ -12,6 +12,7 @@ NUM_EVAL="${NUM_EVAL:-32}"
 NUM_LAYERS="${NUM_LAYERS:-28}"
 MAX_CONCURRENT="${MAX_CONCURRENT:-2}"
 ENABLE_WANDB="${ENABLE_WANDB:-1}"
+WANDB_GROUP="${WANDB_GROUP:-objective-matrix}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-catalyst-0-9,catalyst-0-15}"
 SOURCE_DEPENDENCY="${SOURCE_DEPENDENCY:-}"
 QUALITY_PROFILE_CSV="${QUALITY_PROFILE_CSV:-$SOURCE_ROOT/quality_profile/profile_summary.csv}"
@@ -34,7 +35,7 @@ prep=$(sbatch --parsable --exclude="$EXCLUDE_NODES" "${dependency_args[@]}" \
   scripts/prepare_objective_kv_matrix.slurm)
 array=$(sbatch --parsable --exclude="$EXCLUDE_NODES" --dependency="afterok:$prep" \
   --array="0-$((num_tasks - 1))%$MAX_CONCURRENT" \
-  --export=ALL,MANIFEST="$MATRIX_ROOT/manifest.tsv",ENABLE_WANDB="$ENABLE_WANDB",WANDB_PROJECT=kv-reduce,WANDB_GROUP=objective-matrix \
+  --export=ALL,MANIFEST="$MATRIX_ROOT/manifest.tsv",ENABLE_WANDB="$ENABLE_WANDB",WANDB_PROJECT=kv-reduce,WANDB_GROUP="$WANDB_GROUP" \
   scripts/eval_objective_kv_matrix.slurm)
 aggregate=$(sbatch --parsable --exclude="$EXCLUDE_NODES" --dependency="afterok:$array" \
   --export=ALL,MATRIX_DIR="$MATRIX_ROOT",OUT_DIR="$MATRIX_ROOT/aggregate" \
