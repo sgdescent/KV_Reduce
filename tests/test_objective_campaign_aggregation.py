@@ -77,8 +77,22 @@ def write_final_summary(root: Path, name: str) -> None:
                 "all_component_mean_bits": 6.0,
                 "total_cache_saved_fraction": 0.27,
                 "spec_accept_rate_delta": 0.01,
+            },
+            {
+                "allocation": "acceptance_optimized",
+                "all_component_mean_bits": 6.0,
+                "total_cache_saved_fraction": 0.27,
+                "spec_accept_rate_delta": 0.02,
             }
         ],
+        "acceptance_exactness_audit": {
+            "valid_prompts": 62,
+            "excluded_non_tie_prompts": 2,
+            "effects": {
+                "quality_vs_native": {"mean": 0.005, "ci_low": -0.01, "ci_high": 0.02},
+                "acceptance_vs_native": {"mean": 0.015, "ci_low": -0.005, "ci_high": 0.03},
+            },
+        },
     }
     (out_dir / "summary.json").write_text(json.dumps(payload), encoding="utf-8")
 
@@ -134,6 +148,10 @@ class ObjectiveCampaignAggregationTest(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertTrue(records[0]["valid_evaluators"])
             self.assertEqual(rows[0]["baseline_spec_accept_rate"], 0.5)
+            self.assertEqual(rows[0]["spec_accept_rate_delta_raw"], 0.01)
+            self.assertEqual(rows[0]["spec_accept_rate_delta"], 0.005)
+            self.assertEqual(rows[0]["spec_accept_rate_delta_ci_low"], -0.01)
+            self.assertEqual(rows[0]["exactness_valid_prompts"], 62)
             self.assertEqual(rows[0]["total_cache_saved_fraction"], 0.27)
 
 

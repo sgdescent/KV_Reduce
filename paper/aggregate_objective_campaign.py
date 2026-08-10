@@ -211,17 +211,30 @@ def collect_final_rows(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for record in records:
         summary = record["summary"]
         baseline = summary["baseline"]
+        audit = summary.get("acceptance_exactness_audit", {})
+        audit_effects = audit.get("effects", {})
+        effect_by_allocation = {
+            "quality_optimized": audit_effects.get("quality_vs_native"),
+            "acceptance_optimized": audit_effects.get("acceptance_vs_native"),
+        }
         for row in summary["rows"]:
-            rows.append(
-                {
-                    "campaign": record["campaign"],
-                    "campaign_label": record["label"],
-                    "valid_evaluators": record["valid_evaluators"],
-                    "baseline_quality_nll": baseline.get("quality_nll"),
-                    "baseline_spec_accept_rate": baseline.get("spec_accept_rate"),
-                    **row,
-                }
-            )
+            flattened = {
+                "campaign": record["campaign"],
+                "campaign_label": record["label"],
+                "valid_evaluators": record["valid_evaluators"],
+                "baseline_quality_nll": baseline.get("quality_nll"),
+                "baseline_spec_accept_rate": baseline.get("spec_accept_rate"),
+                **row,
+            }
+            effect = effect_by_allocation.get(str(row.get("allocation")))
+            if effect:
+                flattened["spec_accept_rate_delta_raw"] = row.get("spec_accept_rate_delta")
+                flattened["spec_accept_rate_delta"] = effect.get("mean")
+                flattened["spec_accept_rate_delta_ci_low"] = effect.get("ci_low")
+                flattened["spec_accept_rate_delta_ci_high"] = effect.get("ci_high")
+                flattened["exactness_valid_prompts"] = audit.get("valid_prompts")
+                flattened["exactness_excluded_prompts"] = audit.get("excluded_non_tie_prompts")
+            rows.append(flattened)
     return rows
 
 
