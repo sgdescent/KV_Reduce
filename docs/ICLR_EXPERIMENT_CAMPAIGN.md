@@ -56,6 +56,8 @@ gated 9B checkpoint.
 11. `factorial_quality_completion`: profile per-channel affine keys with symmetric
     values under ordinary LM quality, completing all four geometry cells for both
     downstream objectives.
+12. `group_residual_sweep`: test key groups `16/32/64/128` with BF16 key-tail
+    lengths `0/128` at 1K across three seeds, under both downstream objectives.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -126,6 +128,12 @@ Complete the ordinary-quality side of the factorial with:
 
 ```bash
 AFTER_JOB=<dependency-job> bash scripts/submit_per_channel_symmetric_value_quality.sh
+```
+
+The group-size/residual-window robustness sweep is serialized cell by cell:
+
+```bash
+AFTER_JOB=<dependency-job> bash scripts/submit_kivi_group_residual_sweep.sh
 ```
 
 To run only a subset of pairs:
