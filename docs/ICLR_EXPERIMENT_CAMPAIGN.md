@@ -49,6 +49,10 @@ gated 9B checkpoint.
    128-token KIVI residual window.
 9. `standalone_target_quality`: run the same affine grid on Qwen2.5-3B without
    speculative decoding, measuring next-token KL, NLL, and top-1 preservation.
+10. `quantizer_factorial`: complete the key-axis/value-zero-point factorial by
+    pairing per-token symmetric keys with per-token affine values. Combined with
+    the other campaigns, this separates key-axis, value-scheme, and interaction
+    effects.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -107,6 +111,12 @@ after the main campaign:
 
 ```bash
 AFTER_JOB=<dependency-job> bash scripts/submit_kivi_standalone_target_quality.sh
+```
+
+The missing quantizer-factorial cell is launched with:
+
+```bash
+AFTER_JOB=<dependency-job> bash scripts/submit_per_token_affine_value_grid.sh
 ```
 
 To run only a subset of pairs:

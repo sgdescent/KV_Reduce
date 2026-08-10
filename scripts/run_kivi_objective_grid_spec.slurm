@@ -53,10 +53,10 @@ python3 -u benchmark_spec_kv_quantization.py \
   --seed "$seed" \
   --shuffle_eval \
   --quant_configs "$configs" \
-  --key_quant_axis per_channel \
-  --key_group_size 32 \
+  --key_quant_axis "${KEY_QUANT_AXIS:-per_channel}" \
+  --key_group_size "${KEY_GROUP_SIZE:-32}" \
   --key_residual_length "${KEY_RESIDUAL_LENGTH:-128}" \
-  --value_quant_scheme affine \
+  --value_quant_scheme "${VALUE_QUANT_SCHEME:-affine}" \
   --out_dir "$out_dir" \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
