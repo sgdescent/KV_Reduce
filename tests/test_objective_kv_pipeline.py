@@ -8,7 +8,7 @@ from pathlib import Path
 
 from acceptance_risk_statistics import paired_drop_statistics
 from aggregate_objective_kv_matrix import classify_exactness
-from benchmark_spec_kv_quantization import last_token_logits_kwargs
+from benchmark_spec_kv_quantization import build_joint_quant_configs, last_token_logits_kwargs
 from kv_cache_quantization import parse_csv_ints, parse_quant_config_specs
 from prepare_objective_kv_matrix import heuristic_component_bits
 
@@ -107,6 +107,26 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
         configs = parse_quant_config_specs("none;k8v4;k4v8", num_layers=3)
         self.assertEqual([config[0] for config in configs], ["none", "k8v4", "k4v8"])
         self.assertEqual(parse_csv_ints("8;4"), [8, 4])
+
+    def test_joint_quant_configs_preserve_legacy_names_and_cross_roles(self) -> None:
+        native_target = parse_quant_config_specs("none", num_layers=2)
+        draft = parse_quant_config_specs("none;k4v4", num_layers=3)
+        legacy = build_joint_quant_configs(native_target, draft)
+        self.assertEqual([candidate[0] for candidate in legacy], ["none", "k4v4"])
+
+        target = parse_quant_config_specs("none;k8v8", num_layers=2)
+        joint = build_joint_quant_configs(target, draft)
+        self.assertEqual(
+            [candidate[0] for candidate in joint],
+            [
+                "target_none__draft_none",
+                "target_none__draft_k4v4",
+                "target_k8v8__draft_none",
+                "target_k8v8__draft_k4v4",
+            ],
+        )
+        self.assertEqual(len(joint[0][2]), 2)
+        self.assertEqual(len(joint[0][5]), 3)
 
     def test_fixed_budget_allocator_changes_layout_by_objective(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import torch
 
+from benchmark_spec_kv_quantization import estimate_total_kv_memory
 from kv_cache_quantization import (
     AFFINE_QUANT,
     PER_CHANNEL_AXIS,
@@ -159,6 +160,37 @@ class KiviAxisQuantizationTest(unittest.TestCase):
             affine_values["quantized_cache_bytes"],
             per_channel["quantized_cache_bytes"],
         )
+
+    def test_joint_memory_estimate_quantizes_target_and_draft(self) -> None:
+        config = SimpleNamespace(
+            num_hidden_layers=2,
+            num_key_value_heads=2,
+            num_attention_heads=4,
+            hidden_size=32,
+            head_dim=8,
+        )
+        target = SimpleNamespace(config=config)
+        draft = SimpleNamespace(config=config)
+        memory = estimate_total_kv_memory(
+            big_model=target,
+            small_model=draft,
+            big_dtype="bf16",
+            small_dtype="bf16",
+            seq_len=1024,
+            k_bits=[4, 4],
+            v_bits=[4, 4],
+            target_k_bits=[8, 8],
+            target_v_bits=[8, 8],
+            scale_bits=16,
+            key_quant_axis=PER_CHANNEL_AXIS,
+            key_group_size=32,
+            key_residual_length=128,
+            value_quant_scheme=AFFINE_QUANT,
+        )
+        self.assertGreater(memory["target_cache_saved_fraction"], 0.0)
+        self.assertGreater(memory["draft_cache_saved_fraction"], 0.0)
+        self.assertGreater(memory["total_cache_saved_fraction"], 0.0)
+        self.assertLess(memory["quantized_total_cache_bytes"], memory["native_total_cache_bytes"])
 
 
 if __name__ == "__main__":

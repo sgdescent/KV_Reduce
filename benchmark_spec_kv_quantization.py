@@ -2,10 +2,12 @@
 """
 Benchmark sensitivity-aware draft KV-cache quantization inside speculative decoding.
 
-The target verifier remains unquantized, so draft KV compression does not change the
-target distribution used for verification. BF16 batched verification can still choose
-a different top-1 token than tokenwise BF16 decoding at numerical ties; both margins
-are recorded explicitly. Only the draft model's cached K/V tensors are fake-quantized.
+The target verifier remains unquantized by default, so draft KV compression does not
+change the target distribution used for verification. The opt-in
+``--target_quant_configs`` grid independently quantizes the verifier cache so target
+quality, speculative acceptance, and joint memory can be measured rather than inferred
+from separate runs. BF16 batched verification can still choose a different top-1 token
+than tokenwise BF16 decoding at numerical ties; both margins are recorded explicitly.
 
   draft KV bytes saved vs. speculative acceptance retained.
 """
@@ -67,6 +69,28 @@ def parse_csv_items(value: Optional[str]) -> List[str]:
     if value is None:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def build_joint_quant_configs(target_configs, draft_configs):
+    """Return a target/draft Cartesian product without renaming legacy runs."""
+    legacy_names = len(target_configs) == 1 and target_configs[0][0] == "none"
+    combined = []
+    for target_name, target_k_bits, target_v_bits, target_metadata in target_configs:
+        for draft_name, draft_k_bits, draft_v_bits, draft_metadata in draft_configs:
+            name = draft_name if legacy_names else f"target_{target_name}__draft_{draft_name}"
+            combined.append(
+                (
+                    name,
+                    target_name,
+                    target_k_bits,
+                    target_v_bits,
+                    draft_name,
+                    draft_k_bits,
+                    draft_v_bits,
+                    {"target": target_metadata, "draft": draft_metadata},
+                )
+            )
+    return combined
 
 
 def aggregate_rows(rows: List[Dict[str, Any]], exclude: Optional[Sequence[str]] = None) -> Dict[str, float]:
@@ -426,14 +450,28 @@ def greedy_speculative_decode_cached_quantized(
     k_bits: Sequence[int],
     v_bits: Sequence[int],
     shared_vocab_size: int,
+    target_k_bits: Optional[Sequence[int]] = None,
+    target_v_bits: Optional[Sequence[int]] = None,
     key_quant_axis: str = PER_TOKEN_AXIS,
     key_group_size: int = 32,
     key_residual_length: int = 128,
     value_quant_scheme: str = SYMMETRIC_QUANT,
 ) -> Dict[str, Any]:
+    if target_k_bits is None or target_v_bits is None:
+        target_k_bits, target_v_bits = uniform_bit_lists(
+            int(big_model.config.num_hidden_layers), 16, 16
+        )
     target_state = cached_prefill(big_model, prompt_ids, big_device)
     target_logits = shared_token_logits(target_state["logits"], shared_vocab_size)
-    target_cache = target_state["cache"]
+    target_cache = quantize_cache_for_next_step(
+        target_state["cache"],
+        target_k_bits,
+        target_v_bits,
+        key_quant_axis=key_quant_axis,
+        key_group_size=key_group_size,
+        key_residual_length=key_residual_length,
+        value_quant_scheme=value_quant_scheme,
+    )
     target_cache_len = int(target_state["cache_len"])
 
     draft_state = cached_prefill(small_model, prompt_ids, small_device)
@@ -556,6 +594,20 @@ def greedy_speculative_decode_cached_quantized(
         target_cache_len = committed_len
         draft_cache_len = committed_len
 
+        if accepted_this_round > 0:
+            target_cache = quantize_cache_for_next_step(
+                target_cache,
+                target_k_bits,
+                target_v_bits,
+                new_tokens=accepted_this_round,
+                key_quant_axis=key_quant_axis,
+                key_group_size=key_group_size,
+                key_residual_length=key_residual_length,
+                value_quant_scheme=value_quant_scheme,
+                key_previous_quantization_seq_len=round_prefix_len,
+                key_quantization_seq_len=committed_len,
+            )
+
         target_commit = cached_step(
             model=big_model,
             input_ids=torch.tensor([[correction_token]], dtype=prompt_ids.dtype),
@@ -565,7 +617,18 @@ def greedy_speculative_decode_cached_quantized(
         )
         target_calls += 1
         target_logits = shared_token_logits(target_commit["logits"][:, -1, :], shared_vocab_size)
-        target_cache = target_commit["cache"]
+        target_cache = quantize_cache_for_next_step(
+            target_commit["cache"],
+            target_k_bits,
+            target_v_bits,
+            new_tokens=1,
+            key_quant_axis=key_quant_axis,
+            key_group_size=key_group_size,
+            key_residual_length=key_residual_length,
+            value_quant_scheme=value_quant_scheme,
+            key_previous_quantization_seq_len=committed_len,
+            key_quantization_seq_len=committed_len + 1,
+        )
         target_cache_len = int(target_commit["cache_len"])
 
         draft_commit = draft_next_logits_from_cache(
@@ -623,16 +686,32 @@ def estimate_total_kv_memory(
     key_group_size: int = 32,
     key_residual_length: int = 128,
     value_quant_scheme: str = SYMMETRIC_QUANT,
+    target_k_bits: Optional[Sequence[int]] = None,
+    target_v_bits: Optional[Sequence[int]] = None,
 ) -> Dict[str, float]:
     big_layers = int(big_model.config.num_hidden_layers)
-    target_k_bits, target_v_bits = uniform_bit_lists(big_layers, 16, 16)
-    target = estimate_model_kv_cache_bytes(
+    target_full_k_bits, target_full_v_bits = uniform_bit_lists(big_layers, 16, 16)
+    if target_k_bits is None or target_v_bits is None:
+        target_k_bits, target_v_bits = target_full_k_bits, target_full_v_bits
+    target_native = estimate_model_kv_cache_bytes(
+        config=big_model.config,
+        seq_len=seq_len,
+        dtype_name=big_dtype,
+        k_bits_by_layer=target_full_k_bits,
+        v_bits_by_layer=target_full_v_bits,
+        scale_bits=scale_bits,
+    )
+    target_quant = estimate_model_kv_cache_bytes(
         config=big_model.config,
         seq_len=seq_len,
         dtype_name=big_dtype,
         k_bits_by_layer=target_k_bits,
         v_bits_by_layer=target_v_bits,
         scale_bits=scale_bits,
+        key_quant_axis=key_quant_axis,
+        key_group_size=key_group_size,
+        key_residual_length=key_residual_length,
+        value_quant_scheme=value_quant_scheme,
     )
     draft_full_k_bits, draft_full_v_bits = uniform_bit_lists(int(small_model.config.num_hidden_layers), 16, 16)
     draft_native = estimate_model_kv_cache_bytes(
@@ -656,26 +735,43 @@ def estimate_total_kv_memory(
         value_quant_scheme=value_quant_scheme,
     )
 
-    native_total = target["native_cache_bytes"] + draft_native["native_cache_bytes"]
-    quant_total = target["native_cache_bytes"] + draft_quant["quantized_cache_bytes"]
+    native_total = target_native["native_cache_bytes"] + draft_native["native_cache_bytes"]
+    quant_total = target_quant["quantized_cache_bytes"] + draft_quant["quantized_cache_bytes"]
     return {
         "seq_len": float(seq_len),
-        "target_cache_bytes": target["native_cache_bytes"],
+        "target_cache_bytes": target_native["native_cache_bytes"],
+        "native_target_cache_bytes": target_native["native_cache_bytes"],
+        "quantized_target_cache_bytes": target_quant["quantized_cache_bytes"],
         "native_draft_cache_bytes": draft_native["native_cache_bytes"],
         "quantized_draft_cache_bytes": draft_quant["quantized_cache_bytes"],
         "native_total_cache_bytes": native_total,
         "quantized_total_cache_bytes": quant_total,
+        "target_cache_saved_fraction": target_quant["cache_saved_fraction"],
         "draft_cache_saved_fraction": draft_quant["cache_saved_fraction"],
         "total_cache_saved_fraction": (native_total - quant_total) / native_total if native_total > 0 else 0.0,
-        "target_cache_mib": target["native_cache_mib"],
+        "target_cache_mib": target_native["native_cache_mib"],
+        "native_target_cache_mib": target_native["native_cache_mib"],
+        "quantized_target_cache_mib": target_quant["quantized_cache_mib"],
         "native_draft_cache_mib": draft_native["native_cache_mib"],
         "quantized_draft_cache_mib": draft_quant["quantized_cache_mib"],
         "native_total_cache_mib": native_total / (1024.0**2),
         "quantized_total_cache_mib": quant_total / (1024.0**2),
         "total_cache_mib_saved": (native_total - quant_total) / (1024.0**2),
+        "target_key_quantized_prefix_tokens": target_quant["key_quantized_prefix_tokens"],
+        "target_key_residual_tokens": target_quant["key_residual_tokens"],
+        "draft_key_quantized_prefix_tokens": draft_quant["key_quantized_prefix_tokens"],
+        "draft_key_residual_tokens": draft_quant["key_residual_tokens"],
+        # Compatibility aliases for existing draft-only aggregators.
         "key_quantized_prefix_tokens": draft_quant["key_quantized_prefix_tokens"],
         "key_residual_tokens": draft_quant["key_residual_tokens"],
-        **{f"allocation/{key}": value for key, value in bit_allocation_stats(k_bits, v_bits).items()},
+        **{
+            f"target_allocation/{key}": value
+            for key, value in bit_allocation_stats(target_k_bits, target_v_bits).items()
+        },
+        **{
+            f"allocation/{key}": value
+            for key, value in bit_allocation_stats(k_bits, v_bits).items()
+        },
     }
 
 
@@ -732,6 +828,8 @@ def run_one_config(
     topk: int,
     k_bits: Sequence[int],
     v_bits: Sequence[int],
+    target_k_bits: Optional[Sequence[int]],
+    target_v_bits: Optional[Sequence[int]],
     cuda_device_ids: Sequence[int],
     wandb_run: Optional[Any],
     wandb_prefix: str,
@@ -783,6 +881,8 @@ def run_one_config(
             k_bits=k_bits,
             v_bits=v_bits,
             shared_vocab_size=shared_vocab_size,
+            target_k_bits=target_k_bits,
+            target_v_bits=target_v_bits,
             key_quant_axis=key_quant_axis,
             key_group_size=key_group_size,
             key_residual_length=key_residual_length,
@@ -938,6 +1038,15 @@ def build_parser() -> argparse.ArgumentParser:
         default="none,8,k8v4,k4v8,k4v4",
         help="Comma-separated configs: none, 8, 4, k8v4, k4v8, or allocation:path.json.",
     )
+    parser.add_argument(
+        "--target_quant_configs",
+        type=str,
+        default="none",
+        help=(
+            "Target-cache configs crossed with --quant_configs. The default 'none' "
+            "preserves the audited draft-only evaluator and its output names."
+        ),
+    )
     parser.add_argument("--scale_bits", type=int, default=16)
     parser.add_argument(
         "--key_quant_axis",
@@ -1000,8 +1109,16 @@ def main() -> None:
         dtype_name=args.small_dtype,
         attn_implementation=args.attn_implementation,
     )
-    quant_configs = parse_quant_config_specs(args.quant_configs, int(small_model.config.num_hidden_layers))
-    print("Quant configs:", [name for name, _, _, _ in quant_configs])
+    draft_quant_configs = parse_quant_config_specs(
+        args.quant_configs, int(small_model.config.num_hidden_layers)
+    )
+    target_quant_configs = parse_quant_config_specs(
+        args.target_quant_configs, int(big_model.config.num_hidden_layers)
+    )
+    quant_configs = build_joint_quant_configs(target_quant_configs, draft_quant_configs)
+    print("Target quant configs:", [name for name, _, _, _ in target_quant_configs])
+    print("Draft quant configs:", [name for name, _, _, _ in draft_quant_configs])
+    print("Joint candidates:", [candidate[0] for candidate in quant_configs])
 
     prompt_iter = iter_token_blocks(
         tokenizer=big_tokenizer,
@@ -1046,7 +1163,16 @@ def main() -> None:
     benchmark_target_margins = [record["top1_margins"] for record in benchmark_reference_records]
     if warmup_prompts:
         print(f"Running {len(warmup_prompts)} warmup prompts for each config...")
-        for name, k_bits, v_bits, _ in quant_configs:
+        for (
+            name,
+            _,
+            target_k_bits,
+            target_v_bits,
+            _,
+            k_bits,
+            v_bits,
+            _,
+        ) in quant_configs:
             run_one_config(
                 config_name=name,
                 prompts=warmup_prompts,
@@ -1059,6 +1185,8 @@ def main() -> None:
                 topk=args.topk,
                 k_bits=k_bits,
                 v_bits=v_bits,
+                target_k_bits=target_k_bits,
+                target_v_bits=target_v_bits,
                 cuda_device_ids=cuda_device_ids,
                 wandb_run=None,
                 wandb_prefix="warmup",
@@ -1076,7 +1204,16 @@ def main() -> None:
     summaries: Dict[str, Dict[str, float]] = {}
     memory_estimates: Dict[str, Dict[str, float]] = {}
 
-    for config_idx, (name, k_bits, v_bits, metadata) in enumerate(quant_configs):
+    for config_idx, (
+        name,
+        target_name,
+        target_k_bits,
+        target_v_bits,
+        draft_name,
+        k_bits,
+        v_bits,
+        metadata,
+    ) in enumerate(quant_configs):
         print(f"Benchmarking quant config: {name}")
         result = run_one_config(
             config_name=name,
@@ -1090,6 +1227,8 @@ def main() -> None:
             topk=args.topk,
             k_bits=k_bits,
             v_bits=v_bits,
+            target_k_bits=target_k_bits,
+            target_v_bits=target_v_bits,
             cuda_device_ids=cuda_device_ids,
             wandb_run=wandb_run,
             wandb_prefix="spec_kv",
@@ -1115,9 +1254,16 @@ def main() -> None:
             key_group_size=args.key_group_size,
             key_residual_length=args.key_residual_length,
             value_quant_scheme=args.value_quant_scheme,
+            target_k_bits=target_k_bits,
+            target_v_bits=target_v_bits,
         )
         summary = {**result["summary"], **memory}
-        summary["metadata/spec"] = metadata.get("spec", name)
+        summary["target_config"] = target_name
+        summary["draft_config"] = draft_name
+        summary["metadata/target_spec"] = metadata["target"].get("spec", target_name)
+        summary["metadata/draft_spec"] = metadata["draft"].get("spec", draft_name)
+        # Compatibility field used by existing draft-only artifacts.
+        summary["metadata/spec"] = metadata["draft"].get("spec", draft_name)
         summaries[name] = summary
         memory_estimates[name] = memory
         all_rows.extend(result["rows"])
@@ -1126,7 +1272,7 @@ def main() -> None:
             for key, value in memory.items():
                 wandb_run.summary[f"spec_kv/{name}/{key}"] = value
 
-    baseline = summaries.get("none")
+    baseline = summaries.get("none") or summaries.get("target_none__draft_none")
     if baseline is not None:
         for name, summary in summaries.items():
             summary["accept_rate_delta_vs_none"] = summary.get("overall_accept_rate", 0.0) - baseline.get(
@@ -1142,7 +1288,11 @@ def main() -> None:
     summary_payload = {
         "config": vars(args),
         "runtime": {
-            "evaluator_version": "cached_dynamic_v4",
+            "evaluator_version": (
+                "cached_dynamic_v4"
+                if len(target_quant_configs) == 1 and target_quant_configs[0][0] == "none"
+                else "cached_dynamic_v5_joint_target_draft"
+            ),
             "target_cache_reused": True,
             "draft_cache_reused": True,
             "cache_crop_mode": "in_place",
@@ -1160,7 +1310,9 @@ def main() -> None:
         },
         "num_prompts": len(benchmark_prompts),
         "warmup_prompts": len(warmup_prompts),
-        "quant_configs": [name for name, _, _, _ in quant_configs],
+        "quant_configs": [candidate[0] for candidate in quant_configs],
+        "target_quant_configs": [name for name, _, _, _ in target_quant_configs],
+        "draft_quant_configs": [name for name, _, _, _ in draft_quant_configs],
         "tokenizer_compatibility": compatibility,
         "shared_vocab_size": shared_vocab_size,
         "model_output_vocab_sizes": {
@@ -1183,6 +1335,7 @@ def main() -> None:
     for name, summary in summaries.items():
         print(
             f"  {name}: accept={summary['overall_accept_rate']:.4f} "
+            f"target_saved={100.0 * summary['target_cache_saved_fraction']:.2f}% "
             f"draft_saved={100.0 * summary['draft_cache_saved_fraction']:.2f}% "
             f"total_saved={100.0 * summary['total_cache_saved_fraction']:.2f}% "
             f"js={summary.get('round_js', float('nan')):.5f}"
