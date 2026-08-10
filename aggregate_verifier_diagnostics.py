@@ -94,7 +94,7 @@ def main() -> None:
             {f"total_{field}": sum(int(row[field]) for row in values) for field in COUNT_FIELDS}
         )
         grouped_row.update(
-            {f"max_{field}": max(float(row[field]) for row in values) for field in MAX_FIELDS}
+            {field: max(float(row[field]) for row in values) for field in MAX_FIELDS}
         )
         grouped_rows.append(grouped_row)
 
