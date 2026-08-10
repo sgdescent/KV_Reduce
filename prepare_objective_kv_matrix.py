@@ -106,7 +106,9 @@ def main() -> None:
 
     manifest_path = root / "manifest.tsv"
     with manifest_path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0]), delimiter="\t")
+        # Bash reads the manifest line-by-line; avoid CSV's default CRLF so the
+        # final out_dir field does not acquire a literal carriage return.
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]), delimiter="\t", lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     print(f"Prepared {len(rows)} evaluation tasks")
