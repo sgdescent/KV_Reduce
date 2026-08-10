@@ -53,10 +53,29 @@ def bootstrap_mean_ci(values: List[float], *, seed: int, samples: int = 2000) ->
     return mean(values), estimates[int(0.025 * samples)], estimates[min(samples - 1, int(0.975 * samples))]
 
 
+def classify_exactness(row: Dict[str, str], *, tie_margin: float) -> str:
+    """Classify target-output agreement without hiding finite-precision ties."""
+    if float(row["matches_target_greedy"]) >= 0.5:
+        return "exact"
+    try:
+        margin = float(row["mismatch_min_top1_margin"])
+    except (KeyError, TypeError, ValueError):
+        margin = float("nan")
+    if math.isfinite(margin) and margin <= tie_margin:
+        return "numerical_tie"
+    return "non_tie_or_unknown"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Aggregate the objective-aware KV matrix.")
     parser.add_argument("--matrix_dir", required=True)
     parser.add_argument("--out_dir", required=True)
+    parser.add_argument(
+        "--exactness_tie_margin",
+        type=float,
+        default=1e-3,
+        help="Maximum target top-1 margin treated as a finite-precision numerical tie.",
+    )
     return parser
 
 
@@ -111,6 +130,13 @@ def main() -> None:
     prompt_effects: Dict[Tuple[int, int], Dict[str, List[float]]] = defaultdict(
         lambda: {"acceptance": [], "quality_kl": [], "quality_delta_nll": []}
     )
+    acceptance_prompt_counts: Dict[Tuple[int, int], Dict[str, int]] = defaultdict(
+        lambda: {"candidate_pairs": 0, "excluded_non_tie": 0, "used": 0}
+    )
+    exactness_counts: Dict[Tuple[int, int, int], Dict[str, int]] = defaultdict(
+        lambda: {"exact": 0, "numerical_tie": 0, "non_tie_or_unknown": 0, "invalid_prompts": 0}
+    )
+    exactness_examples: List[Dict[str, Any]] = []
 
     for budget_dir in sorted(matrix_dir.glob("budget_*")):
         budget = int(budget_dir.name.split("_", 1)[1])
@@ -167,11 +193,35 @@ def main() -> None:
                 acceptance_name = str(acceptance_allocation["name"])
                 acceptance_rows = read_csv(seed_dir / "acceptance" / "benchmark_rows.csv")
                 acceptance_by_prompt: Dict[str, Dict[str, float]] = defaultdict(dict)
+                invalid_prompts = set()
                 for row in acceptance_rows:
+                    status = classify_exactness(row, tie_margin=args.exactness_tie_margin)
+                    exactness_counts[(budget, context, seed)][status] += 1
+                    if status == "non_tie_or_unknown":
+                        invalid_prompts.add(row["prompt_idx"])
+                        if len(exactness_examples) < 100:
+                            exactness_examples.append(
+                                {
+                                    "budget": budget,
+                                    "context": context,
+                                    "seed": seed,
+                                    "prompt_idx": int(row["prompt_idx"]),
+                                    "config": row["config"],
+                                    "mismatch_source": row.get("mismatch_source", ""),
+                                    "mismatch_min_top1_margin": row.get("mismatch_min_top1_margin", "nan"),
+                                }
+                            )
                     if row["config"] in {quality_name, acceptance_name}:
                         acceptance_by_prompt[row["prompt_idx"]][row["config"]] = float(row["accept_rate"])
-                for pair in acceptance_by_prompt.values():
+                exactness_counts[(budget, context, seed)]["invalid_prompts"] = len(invalid_prompts)
+                prompt_count = acceptance_prompt_counts[(budget, context)]
+                for prompt_idx, pair in acceptance_by_prompt.items():
                     if set(pair) == {quality_name, acceptance_name}:
+                        prompt_count["candidate_pairs"] += 1
+                        if prompt_idx in invalid_prompts:
+                            prompt_count["excluded_non_tie"] += 1
+                            continue
+                        prompt_count["used"] += 1
                         prompt_effects[(budget, context)]["acceptance"].append(
                             pair[acceptance_name] - pair[quality_name]
                         )
@@ -256,17 +306,36 @@ def main() -> None:
             row[f"paired_{metric}_mean"] = estimate
             row[f"paired_{metric}_ci_low"] = low
             row[f"paired_{metric}_ci_high"] = high
+        prompt_count = acceptance_prompt_counts[(budget, context)]
+        row["paired_acceptance_candidate_n"] = prompt_count["candidate_pairs"]
+        row["paired_acceptance_excluded_non_tie_n"] = prompt_count["excluded_non_tie"]
+        row["paired_acceptance_valid_n"] = prompt_count["used"]
         effect_rows.append(row)
+
+    exactness_rows = []
+    for (budget, context, seed), counts in sorted(exactness_counts.items()):
+        exactness_rows.append({"budget": budget, "context": context, "seed": seed, **counts})
+    exactness_totals = {
+        key: sum(row[key] for row in exactness_rows)
+        for key in ("exact", "numerical_tie", "non_tie_or_unknown", "invalid_prompts")
+    }
 
     write_csv(rows, out_dir / "matrix_rows.csv")
     write_csv(grouped_rows, out_dir / "matrix_grouped.csv")
     write_csv(effect_rows, out_dir / "cross_objective_effects.csv")
+    write_csv(exactness_rows, out_dir / "exactness_audit.csv")
     payload = {
         "num_complete_rows": len(rows),
         "num_missing_pairs": len(missing),
         "num_rejected_pairs": len(rejected),
         "missing_pairs": missing,
         "rejected_pairs": rejected,
+        "exactness_tie_margin": args.exactness_tie_margin,
+        "exactness_audit": {
+            "totals": exactness_totals,
+            "cells": exactness_rows,
+            "non_tie_or_unknown_examples": exactness_examples,
+        },
         "grouped": grouped_rows,
         "cross_objective_effects": effect_rows,
         "plots": make_plot(grouped_rows, out_dir),

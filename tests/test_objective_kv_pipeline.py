@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from aggregate_objective_kv_matrix import classify_exactness
 from kv_cache_quantization import parse_csv_ints, parse_quant_config_specs
 
 
@@ -32,6 +33,17 @@ def write_profile(path: Path, risk_field: str, risks: dict[tuple[int, str, int],
 
 
 class ObjectiveKVPipelineTest(unittest.TestCase):
+    def test_exactness_classification_distinguishes_numerical_ties(self) -> None:
+        exact = {"matches_target_greedy": "1.0", "mismatch_min_top1_margin": "nan"}
+        tie = {"matches_target_greedy": "0.0", "mismatch_min_top1_margin": "0.0005"}
+        non_tie = {"matches_target_greedy": "0.0", "mismatch_min_top1_margin": "0.125"}
+        unknown = {"matches_target_greedy": "0.0", "mismatch_min_top1_margin": "nan"}
+
+        self.assertEqual(classify_exactness(exact, tie_margin=1e-3), "exact")
+        self.assertEqual(classify_exactness(tie, tie_margin=1e-3), "numerical_tie")
+        self.assertEqual(classify_exactness(non_tie, tie_margin=1e-3), "non_tie_or_unknown")
+        self.assertEqual(classify_exactness(unknown, tie_margin=1e-3), "non_tie_or_unknown")
+
     def test_semicolon_quant_configs(self) -> None:
         configs = parse_quant_config_specs("none;k8v4;k4v8", num_layers=3)
         self.assertEqual([config[0] for config in configs], ["none", "k8v4", "k4v8"])
