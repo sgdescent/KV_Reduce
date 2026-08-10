@@ -10,6 +10,31 @@ from statistics import mean, stdev
 from typing import Any, Dict, List, Sequence
 
 
+def _finite_float(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def passes_target_exactness(row: Dict[str, Any], *, tie_margin: float = 1e-3) -> bool:
+    """Keep exact rows and BF16 ties; reject resolved target-reference mismatches."""
+    if "matches_target_greedy" not in row:
+        return True
+    if _finite_float(row.get("matches_target_greedy")) == 1.0:
+        return True
+    for field in (
+        "mismatch_min_top1_margin",
+        "mismatch_target_top1_margin",
+        "mismatch_verifier_top1_margin",
+    ):
+        margin = _finite_float(row.get(field))
+        if margin is not None:
+            return margin <= tie_margin
+    return False
+
+
 def read_csv(path: Path) -> List[Dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as f:
         return list(csv.DictReader(f))
@@ -35,13 +60,32 @@ def paired_drop_statistics(
     metric: str = "accept_rate",
     prefix: str = "accept_rate_drop",
     z_score: float = 1.96,
+    exactness_tie_margin: float | None = 1e-3,
 ) -> Dict[str, float]:
-    baseline = {str(row["prompt_idx"]): float(row[metric]) for row in baseline_rows}
-    candidate = {str(row["prompt_idx"]): float(row[metric]) for row in candidate_rows}
-    shared = sorted(set(baseline) & set(candidate), key=int)
+    baseline_source = {str(row["prompt_idx"]): row for row in baseline_rows}
+    candidate_source = {str(row["prompt_idx"]): row for row in candidate_rows}
+    shared_before_audit = sorted(set(baseline_source) & set(candidate_source), key=int)
+    if exactness_tie_margin is None:
+        shared = shared_before_audit
+    else:
+        shared = [
+            prompt_idx
+            for prompt_idx in shared_before_audit
+            if passes_target_exactness(
+                baseline_source[prompt_idx],
+                tie_margin=exactness_tie_margin,
+            )
+            and passes_target_exactness(
+                candidate_source[prompt_idx],
+                tie_margin=exactness_tie_margin,
+            )
+        ]
     if not shared:
         raise ValueError("No paired prompt rows were found for acceptance-risk estimation.")
-    drops = [baseline[prompt_idx] - candidate[prompt_idx] for prompt_idx in shared]
+    drops = [
+        float(baseline_source[prompt_idx][metric]) - float(candidate_source[prompt_idx][metric])
+        for prompt_idx in shared
+    ]
     estimate = mean(drops)
     standard_error = stdev(drops) / math.sqrt(len(drops)) if len(drops) > 1 else 0.0
     lower = estimate - z_score * standard_error
@@ -53,6 +97,8 @@ def paired_drop_statistics(
         f"{prefix}_ucb95": upper,
         f"{prefix}_ucb95_clipped": max(0.0, upper),
         "paired_prompt_count": float(len(drops)),
+        "paired_prompt_count_before_exactness_audit": float(len(shared_before_audit)),
+        "excluded_non_tie_prompt_count": float(len(shared_before_audit) - len(shared)),
     }
 
 
@@ -64,6 +110,8 @@ def zero_drop_statistics(prefix: str = "accept_rate_drop") -> Dict[str, float]:
         f"{prefix}_ucb95": 0.0,
         f"{prefix}_ucb95_clipped": 0.0,
         "paired_prompt_count": 0.0,
+        "paired_prompt_count_before_exactness_audit": 0.0,
+        "excluded_non_tie_prompt_count": 0.0,
     }
 
 

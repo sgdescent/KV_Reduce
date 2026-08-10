@@ -159,6 +159,40 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
         self.assertAlmostEqual(mass_stats["accept_mass_drop_prompt_mean"], 0.075)
         self.assertGreater(mass_stats["accept_mass_drop_ucb95_clipped"], 0.075)
 
+    def test_paired_acceptance_risk_excludes_resolved_target_mismatches(self) -> None:
+        baseline = [
+            {
+                "prompt_idx": 0,
+                "accept_rate": 0.5,
+                "matches_target_greedy": 1,
+                "mismatch_min_top1_margin": float("nan"),
+            },
+            {
+                "prompt_idx": 1,
+                "accept_rate": 0.9,
+                "matches_target_greedy": 0,
+                "mismatch_min_top1_margin": 0.1,
+            },
+            {
+                "prompt_idx": 2,
+                "accept_rate": 0.7,
+                "matches_target_greedy": 0,
+                "mismatch_min_top1_margin": 5e-4,
+            },
+        ]
+        candidate = [
+            {**baseline[0], "accept_rate": 0.4},
+            {**baseline[1], "accept_rate": 0.1},
+            {**baseline[2], "accept_rate": 0.6},
+        ]
+
+        stats = paired_drop_statistics(baseline, candidate)
+
+        self.assertAlmostEqual(stats["accept_rate_drop_prompt_mean"], 0.1)
+        self.assertEqual(stats["paired_prompt_count"], 2.0)
+        self.assertEqual(stats["paired_prompt_count_before_exactness_audit"], 3.0)
+        self.assertEqual(stats["excluded_non_tie_prompt_count"], 1.0)
+
     def test_exactness_classification_distinguishes_numerical_ties(self) -> None:
         exact = {"matches_target_greedy": "1.0", "mismatch_min_top1_margin": "nan"}
         tie = {"matches_target_greedy": "0.0", "mismatch_min_top1_margin": "0.0005"}
