@@ -28,6 +28,7 @@ MATRIX_LABELS = {
 }
 
 FINAL_LABELS = {
+    "qwen25_objective_1k_v1": "Qwen / WikiText / top-8",
     "qwen25_objective_all_layers_1k_v1": "Qwen / WikiText / all-layer / 8 prompts",
     "llama_objective_1k_v1": "Llama / WikiText / top-8",
     "olmo2_objective_1k_v1": "OLMo / WikiText / top-8",
