@@ -26,9 +26,11 @@ from benchmark_spec_kv_quantization import (
     shared_token_logits,
 )
 from kv_cache_quantization import (
+    AFFINE_QUANT,
     FULL_PRECISION_BITS,
     PER_CHANNEL_AXIS,
     PER_TOKEN_AXIS,
+    SYMMETRIC_QUANT,
     bit_allocation_stats,
     estimate_model_kv_cache_bytes,
     parse_csv_ints,
@@ -140,6 +142,7 @@ def evaluate_quantized_sequence(
     key_quant_axis: str = PER_TOKEN_AXIS,
     key_group_size: int = 32,
     key_residual_length: int = 128,
+    value_quant_scheme: str = SYMMETRIC_QUANT,
 ) -> Dict[str, float]:
     state = cached_prefill(model, prompt_ids, device)
     logits = shared_token_logits(state["logits"], vocab_size)
@@ -150,6 +153,7 @@ def evaluate_quantized_sequence(
         key_quant_axis=key_quant_axis,
         key_group_size=key_group_size,
         key_residual_length=key_residual_length,
+        value_quant_scheme=value_quant_scheme,
     )
     cache_len = int(state["cache_len"])
     token_rows: List[Dict[str, float]] = []
@@ -179,6 +183,7 @@ def evaluate_quantized_sequence(
             key_quant_axis=key_quant_axis,
             key_group_size=key_group_size,
             key_residual_length=key_residual_length,
+            value_quant_scheme=value_quant_scheme,
         )
         cache_len = int(step["cache_len"])
 
@@ -230,6 +235,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--key_group_size", type=int, default=32)
     parser.add_argument("--key_residual_length", type=int, default=128)
+    parser.add_argument(
+        "--value_quant_scheme",
+        type=str,
+        default=SYMMETRIC_QUANT,
+        choices=[SYMMETRIC_QUANT, AFFINE_QUANT],
+    )
     parser.add_argument("--topk", type=int, default=5)
     parser.add_argument(
         "--quality_risk_metric",
@@ -393,6 +404,7 @@ def main() -> None:
                     key_quant_axis=args.key_quant_axis,
                     key_group_size=args.key_group_size,
                     key_residual_length=args.key_residual_length,
+                    value_quant_scheme=args.value_quant_scheme,
                 )
             metric_rows[name].append(metrics)
             raw_rows.append(
@@ -428,6 +440,7 @@ def main() -> None:
             key_quant_axis=args.key_quant_axis,
             key_group_size=args.key_group_size,
             key_residual_length=args.key_residual_length,
+            value_quant_scheme=args.value_quant_scheme,
         )
         row = {
             "candidate": name,
@@ -458,6 +471,7 @@ def main() -> None:
             "key_quant_axis": args.key_quant_axis,
             "key_group_size": args.key_group_size,
             "key_residual_length": args.key_residual_length,
+            "value_quant_scheme": args.value_quant_scheme,
         },
         "mode": mode,
         "model": args.model,

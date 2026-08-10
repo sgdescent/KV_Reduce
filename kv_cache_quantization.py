@@ -11,6 +11,8 @@ from kv_utils import get_head_dim, get_num_kv_heads
 FULL_PRECISION_BITS = 16
 PER_TOKEN_AXIS = "per_token"
 PER_CHANNEL_AXIS = "per_channel"
+SYMMETRIC_QUANT = "symmetric"
+AFFINE_QUANT = "affine"
 
 
 def dtype_bits(dtype_name: str) -> int:
@@ -37,6 +39,35 @@ def quantize_dequantize_per_vector_symmetric(x: torch.Tensor, bits: int) -> torc
     scale = x.float().abs().amax(dim=-1, keepdim=True).clamp_min(1e-8) / qmax
     q = torch.round(x.float() / scale).clamp(-qmax, qmax)
     return (q * scale).to(dtype=x.dtype)
+
+
+def quantize_dequantize_per_vector_affine(x: torch.Tensor, bits: int) -> torch.Tensor:
+    """Fake-quantize each token vector with an affine scale and offset."""
+    if bits >= FULL_PRECISION_BITS:
+        return x
+    if bits < 2:
+        raise ValueError("Affine KV quantization needs at least 2 bits.")
+
+    qmax = float((1 << bits) - 1)
+    values = x.float()
+    minimum = values.amin(dim=-1, keepdim=True)
+    maximum = values.amax(dim=-1, keepdim=True)
+    scale = (maximum - minimum).clamp_min(1e-8) / qmax
+    q = torch.round((values - minimum) / scale).clamp(0.0, qmax)
+    return (q * scale + minimum).to(dtype=x.dtype)
+
+
+def quantize_dequantize_per_vector(
+    x: torch.Tensor,
+    bits: int,
+    *,
+    scheme: str = SYMMETRIC_QUANT,
+) -> torch.Tensor:
+    if scheme == SYMMETRIC_QUANT:
+        return quantize_dequantize_per_vector_symmetric(x, bits)
+    if scheme == AFFINE_QUANT:
+        return quantize_dequantize_per_vector_affine(x, bits)
+    raise ValueError(f"Unsupported quantization scheme: {scheme!r}")
 
 
 def _validate_grouping(group_size: int, residual_length: int) -> None:
@@ -250,6 +281,7 @@ def quantize_legacy_cache(
     key_quant_axis: str = PER_TOKEN_AXIS,
     key_group_size: int = 32,
     key_residual_length: int = 128,
+    value_quant_scheme: str = SYMMETRIC_QUANT,
 ) -> Tuple[Tuple[torch.Tensor, torch.Tensor], ...]:
     if len(legacy_cache) != len(k_bits_by_layer) or len(legacy_cache) != len(v_bits_by_layer):
         raise ValueError("Cache layer count and bit allocation length must match.")
@@ -272,7 +304,11 @@ def quantize_legacy_cache(
         quantized.append(
             (
                 quantized_key,
-                quantize_dequantize_per_vector_symmetric(v, int(v_bits_by_layer[layer_idx])),
+                quantize_dequantize_per_vector(
+                    v,
+                    int(v_bits_by_layer[layer_idx]),
+                    scheme=value_quant_scheme,
+                ),
             )
         )
     return tuple(quantized)
@@ -290,6 +326,7 @@ def estimate_model_kv_cache_bytes(
     key_quant_axis: str = PER_TOKEN_AXIS,
     key_group_size: int = 32,
     key_residual_length: int = 128,
+    value_quant_scheme: str = SYMMETRIC_QUANT,
 ) -> Dict[str, float]:
     num_layers = int(config.num_hidden_layers)
     if len(k_bits_by_layer) != num_layers or len(v_bits_by_layer) != num_layers:
@@ -303,6 +340,8 @@ def estimate_model_kv_cache_bytes(
 
     if key_quant_axis not in {PER_TOKEN_AXIS, PER_CHANNEL_AXIS}:
         raise ValueError(f"Unsupported key_quant_axis: {key_quant_axis!r}")
+    if value_quant_scheme not in {SYMMETRIC_QUANT, AFFINE_QUANT}:
+        raise ValueError(f"Unsupported value_quant_scheme: {value_quant_scheme!r}")
     key_quantized_tokens = (
         per_channel_quantized_prefix_length(
             seq_len,
@@ -347,7 +386,8 @@ def estimate_model_kv_cache_bytes(
             quantized_bytes += vector_values * full_bits / 8.0
         else:
             quantized_bytes += vector_values * v_bits / 8.0
-            quantized_bytes += per_token_scales * scale_bits / 8.0
+            value_metadata_count = 2.0 if value_quant_scheme == AFFINE_QUANT else 1.0
+            quantized_bytes += value_metadata_count * per_token_scales * scale_bits / 8.0
 
     return {
         "native_cache_bytes": native_bytes,

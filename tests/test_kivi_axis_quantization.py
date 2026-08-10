@@ -4,15 +4,26 @@ from types import SimpleNamespace
 import torch
 
 from kv_cache_quantization import (
+    AFFINE_QUANT,
     PER_CHANNEL_AXIS,
     PER_TOKEN_AXIS,
     estimate_model_kv_cache_bytes,
     quantize_dequantize_per_vector_symmetric,
+    quantize_dequantize_per_vector_affine,
     quantize_key_cache_kivi_style,
 )
 
 
 class KiviAxisQuantizationTest(unittest.TestCase):
+    def test_affine_values_use_the_full_unsigned_range(self) -> None:
+        values = torch.tensor([[[[-3.0, -2.0, 1.0, 5.0]]]])
+        symmetric = quantize_dequantize_per_vector_symmetric(values, bits=2)
+        affine = quantize_dequantize_per_vector_affine(values, bits=2)
+
+        affine_mse = torch.mean((affine - values) ** 2)
+        symmetric_mse = torch.mean((symmetric - values) ** 2)
+        self.assertLess(float(affine_mse), float(symmetric_mse))
+
     def test_per_channel_affine_keys_isolate_channel_outliers(self) -> None:
         keys = torch.tensor(
             [[[[100.0, 1.0], [80.0, 0.8], [60.0, 0.6], [40.0, 0.4]]]]
@@ -100,6 +111,22 @@ class KiviAxisQuantizationTest(unittest.TestCase):
         self.assertEqual(per_channel["key_residual_tokens"], 128.0)
         self.assertNotEqual(per_channel["quantized_cache_bytes"], per_token["quantized_cache_bytes"])
         self.assertLess(per_channel["quantized_cache_bytes"], per_channel["native_cache_bytes"])
+
+        affine_values = estimate_model_kv_cache_bytes(
+            config=config,
+            seq_len=1024,
+            dtype_name="bf16",
+            k_bits_by_layer=[4, 4],
+            v_bits_by_layer=[4, 4],
+            key_quant_axis=PER_CHANNEL_AXIS,
+            key_group_size=32,
+            key_residual_length=128,
+            value_quant_scheme=AFFINE_QUANT,
+        )
+        self.assertGreater(
+            affine_values["quantized_cache_bytes"],
+            per_channel["quantized_cache_bytes"],
+        )
 
 
 if __name__ == "__main__":
