@@ -69,7 +69,11 @@ def bootstrap_macro_ci(
 
 
 def collect_pair_rows(
-    root: Path, expected_pairs: Sequence[str]
+    root: Path,
+    expected_pairs: Sequence[str],
+    *,
+    aggregate_name: str = "aggregate",
+    comparison_name: str = "",
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     matched: List[Dict[str, Any]] = []
     preferences: List[Dict[str, Any]] = []
@@ -78,8 +82,10 @@ def collect_pair_rows(
     run_counts: Dict[str, Dict[str, int]] = {}
     for pair in expected_pairs:
         comparison_dir = root / "comparison" / pair
-        spec_summary_path = root / "spec" / pair / "aggregate" / "summary.json"
-        quality_summary_path = root / "quality" / pair / "aggregate" / "summary.json"
+        if comparison_name:
+            comparison_dir = comparison_dir / comparison_name
+        spec_summary_path = root / "spec" / pair / aggregate_name / "summary.json"
+        quality_summary_path = root / "quality" / pair / aggregate_name / "summary.json"
         matched_path = comparison_dir / "matched_objectives.csv"
         preference_path = comparison_dir / "paired_preferences.csv"
         required = (spec_summary_path, quality_summary_path, matched_path, preference_path)
@@ -260,6 +266,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--out_dir", type=Path, required=True)
     parser.add_argument("--expected_pairs", default=",".join(DEFAULT_PAIRS))
+    parser.add_argument(
+        "--aggregate_name",
+        default="aggregate",
+        help="Per-pair aggregate subdirectory, useful for explicitly labeled partial analyses.",
+    )
+    parser.add_argument(
+        "--comparison_name",
+        default="",
+        help="Optional subdirectory below comparison/<pair>.",
+    )
     parser.add_argument("--acceptance_drop_budget", type=float, default=0.02)
     parser.add_argument("--quality_kl_budget", type=float, default=0.01)
     parser.add_argument("--allow_incomplete", action="store_true")
@@ -270,7 +286,12 @@ def main() -> None:
     args = build_parser().parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     expected = [value.strip() for value in args.expected_pairs.split(",") if value.strip()]
-    matched, preferences, audit = collect_pair_rows(args.root, expected)
+    matched, preferences, audit = collect_pair_rows(
+        args.root,
+        expected,
+        aggregate_name=args.aggregate_name,
+        comparison_name=args.comparison_name,
+    )
     if audit["missing_artifacts"] and not args.allow_incomplete:
         raise ValueError(
             "Missing cross-family artifacts:\n" + "\n".join(audit["missing_artifacts"])

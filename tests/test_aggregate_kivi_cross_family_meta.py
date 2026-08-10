@@ -123,6 +123,38 @@ class CrossFamilyMetaAggregationTest(unittest.TestCase):
         self.assertEqual(summary["num_preference_reversals"], 2)
         self.assertEqual(summary["num_memory_matched_preference_reversals"], 1)
 
+    def test_supports_explicit_partial_subdirectories(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            pair = "pair_a"
+            for role in ("spec", "quality"):
+                path = root / role / pair / "aggregate_partial" / "summary.json"
+                path.parent.mkdir(parents=True)
+                payload = {"num_complete_runs": 1}
+                if role == "spec":
+                    payload.update({"exactness": {"exact": 1}, "invalid_prompt_occurrences": 0})
+                path.write_text(json.dumps(payload), encoding="utf-8")
+            comparison = root / "comparison" / pair / "partial"
+            write_csv(
+                comparison / "matched_objectives.csv",
+                [{"context": 1024, "config": "k4v4"}],
+            )
+            write_csv(
+                comparison / "paired_preferences.csv",
+                [{"memory_matched": True, "preference_reversal": False}],
+            )
+
+            matched, preferences, audit = collect_pair_rows(
+                root,
+                [pair],
+                aggregate_name="aggregate_partial",
+                comparison_name="partial",
+            )
+
+            self.assertEqual(len(matched), 1)
+            self.assertEqual(len(preferences), 1)
+            self.assertFalse(audit["missing_artifacts"])
+
 
 if __name__ == "__main__":
     unittest.main()
