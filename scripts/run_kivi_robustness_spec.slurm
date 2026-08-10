@@ -58,14 +58,16 @@ esac
 root="${SPEC_ROOT:-outputs/kivi_objective_robustness/spec}"
 out_dir="$root/$domain/ctx_${context}/seed_${seed}"
 configs="${QUANT_CONFIGS:-none;k8v4;k4v8;k4v4;k3v4;k4v3;k2v4;k4v2;k2v2}"
+warmup_prompts="${WARMUP_PROMPTS:-2}"
+skip_prompts=$((seed * (prompts + warmup_prompts)))
 
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
 export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 
 python3 -u benchmark_spec_kv_quantization.py \
-  --big_model Qwen/Qwen2.5-3B \
-  --small_model Qwen/Qwen2.5-1.5B \
+  --big_model "${BIG_MODEL:-Qwen/Qwen2.5-3B}" \
+  --small_model "${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}" \
   --big_device cuda:0 \
   --small_device cuda:0 \
   --attn_implementation sdpa \
@@ -74,20 +76,20 @@ python3 -u benchmark_spec_kv_quantization.py \
   --text_column "$column" \
   --eval_split "$split" \
   --stream_eval \
-  --shuffle_eval \
   --prompt_len "$context" \
   --num_prompts "$prompts" \
-  --warmup_prompts 2 \
+  --warmup_prompts "$warmup_prompts" \
+  --skip_prompts "$skip_prompts" \
   --draft_steps 4 \
   --max_new_tokens 16 \
   --seed "$seed" \
   --quant_configs "$configs" \
-  --key_quant_axis per_channel \
-  --key_group_size 32 \
-  --key_residual_length 128 \
-  --value_quant_scheme affine \
+  --key_quant_axis "${KEY_QUANT_AXIS:-per_channel}" \
+  --key_group_size "${KEY_GROUP_SIZE:-32}" \
+  --key_residual_length "${KEY_RESIDUAL_LENGTH:-128}" \
+  --value_quant_scheme "${VALUE_QUANT_SCHEME:-affine}" \
   --out_dir "$out_dir" \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
-  --wandb_group kivi-objective-robustness-spec \
+  --wandb_group "${WANDB_GROUP:-kivi-objective-robustness-spec}" \
   --wandb_run_name "${domain}_kivi_spec_c${context}_s${seed}"

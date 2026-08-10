@@ -58,13 +58,15 @@ esac
 root="${QUALITY_ROOT:-outputs/kivi_objective_robustness/quality}"
 out_dir="$root/$domain/ctx_${context}/seed_${seed}"
 configs="${QUANT_CONFIGS:-none;k8v4;k4v8;k4v4;k3v4;k4v3;k2v4;k4v2;k2v2}"
+paired_warmup_prompts="${PAIRED_WARMUP_PROMPTS:-2}"
+skip_sequences=$((seed * (sequences + paired_warmup_prompts) + paired_warmup_prompts))
 
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
 export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 
 python3 -u profile_kv_quality_sensitivity.py \
-  --model Qwen/Qwen2.5-1.5B \
+  --model "${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}" \
   --device cuda:0 \
   --attn_implementation sdpa \
   --dataset_name "$dataset" \
@@ -72,18 +74,18 @@ python3 -u profile_kv_quality_sensitivity.py \
   --text_column "$column" \
   --eval_split "$split" \
   --stream_eval \
-  --shuffle_eval \
   --prompt_len "$context" \
   --continuation_len "${CONTINUATION_LEN:-32}" \
   --num_sequences "$sequences" \
+  --skip_sequences "$skip_sequences" \
   --seed "$seed" \
   --quant_configs "$configs" \
-  --key_quant_axis per_channel \
-  --key_group_size 32 \
-  --key_residual_length 128 \
-  --value_quant_scheme affine \
+  --key_quant_axis "${KEY_QUANT_AXIS:-per_channel}" \
+  --key_group_size "${KEY_GROUP_SIZE:-32}" \
+  --key_residual_length "${KEY_RESIDUAL_LENGTH:-128}" \
+  --value_quant_scheme "${VALUE_QUANT_SCHEME:-affine}" \
   --out_dir "$out_dir" \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
-  --wandb_group kivi-objective-robustness-quality \
+  --wandb_group "${WANDB_GROUP:-kivi-objective-robustness-quality}" \
   --wandb_run_name "${domain}_kivi_quality_c${context}_s${seed}"

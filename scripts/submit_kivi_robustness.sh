@@ -11,13 +11,13 @@ spec=$(sbatch --parsable \
   "${dependency_args[@]}" \
   --array=0-8%1 \
   --exclude="$exclude" \
-  --export=ALL,WANDB_PROJECT=kv-reduce \
+  --export="ALL,WANDB_PROJECT=${WANDB_PROJECT:-kv-reduce}" \
   scripts/run_kivi_robustness_spec.slurm)
 quality=$(sbatch --parsable \
   "${dependency_args[@]}" \
   --array=0-8%1 \
   --exclude="$exclude" \
-  --export=ALL,WANDB_PROJECT=kv-reduce \
+  --export="ALL,WANDB_PROJECT=${WANDB_PROJECT:-kv-reduce}" \
   scripts/run_kivi_robustness_quality.slurm)
 aggregate=$(sbatch --parsable \
   --dependency="afterok:${spec}:${quality}" \
