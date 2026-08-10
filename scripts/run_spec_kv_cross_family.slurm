@@ -29,18 +29,24 @@ WANDB_PROJECT="${WANDB_PROJECT:-kv-reduce}"
 DATASET_NAME="${DATASET_NAME:-wikitext}"
 DATASET_CONFIG="${DATASET_CONFIG:-wikitext-2-raw-v1}"
 EVAL_SPLIT="${EVAL_SPLIT:-validation}"
-SEED="${SEED:-0}"
 QUANT_CONFIGS="${QUANT_CONFIGS:-none,8,k8v4,k4v8,k4v4}"
 BIG_DEVICE="${BIG_DEVICE:-cuda:0}"
 SMALL_DEVICE="${SMALL_DEVICE:-cuda:0}"
 ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
 DRAFT_STEPS="${DRAFT_STEPS:-4}"
 
+PAIR_TASK_ID="$TASK_ID"
+SEED="${SEED:-0}"
+if [[ "$STAGE" == "value_precision" ]]; then
+  PAIR_TASK_ID=$((TASK_ID % 6))
+  SEED="${VALUE_SEED:-$((20 + TASK_ID / 6))}"
+fi
+
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
 export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 
-case "$TASK_ID" in
+case "$PAIR_TASK_ID" in
   0)
     PAIR_NAME="qwen25_3b_15b"
     BIG_MODEL="Qwen/Qwen2.5-3B"
@@ -72,12 +78,15 @@ case "$TASK_ID" in
     SMALL_MODEL="HuggingFaceTB/SmolLM2-360M"
     ;;
   *)
-    echo "Unsupported task id $TASK_ID; expected 0-5." >&2
+    echo "Unsupported pair task id $PAIR_TASK_ID; expected 0-5." >&2
     exit 2
     ;;
 esac
 
 BASE_OUT="outputs/iclr_spec_kv/${PAIR_NAME}"
+if [[ "$STAGE" == "value_precision" ]]; then
+  BASE_OUT="${VALUE_SWEEP_ROOT:-outputs/value_precision_cross_family}/${PAIR_NAME}"
+fi
 mkdir -p "$BASE_OUT"
 
 WANDB_ARGS=()
@@ -109,6 +118,7 @@ run_benchmark() {
   local configs="$5"
   shift 5
   local out_dir="$BASE_OUT/$label"
+  local wandb_label="${label//\//_}"
 
   "$PYTHON_BIN" -u benchmark_spec_kv_quantization.py \
     "${common_args[@]}" \
@@ -119,7 +129,7 @@ run_benchmark() {
     --out_dir "$out_dir" \
     "${WANDB_ARGS[@]}" \
     --wandb_group "iclr-spec-kv-${STAGE}" \
-    --wandb_run_name "${PAIR_NAME}_${label}" \
+    --wandb_run_name "${PAIR_NAME}_${wandb_label}" \
     "$@"
 }
 
@@ -205,8 +215,14 @@ case "$STAGE" in
     run_benchmark 16384 "${PROMPTS_16K:-2}" 1 "wikitext_ctx16384" "none,k8v4,k4v8"
     ;;
 
+  value_precision)
+    configs="${VALUE_QUANT_CONFIGS:-none;k8v8;k8v4;k8v3;k8v2;k4v8}"
+    run_benchmark 1024 "${VALUE_PROMPTS_1K:-32}" 2 "ctx_1024/seed_${SEED}" "$configs" --shuffle_eval
+    run_benchmark 4096 "${VALUE_PROMPTS_4K:-12}" 2 "ctx_4096/seed_${SEED}" "$configs" --shuffle_eval
+    ;;
+
   *)
-    echo "Unsupported stage $STAGE; use smoke, main, sensitivity, allocation, robustness, or long_context." >&2
+    echo "Unsupported stage $STAGE; use smoke, main, sensitivity, allocation, robustness, long_context, or value_precision." >&2
     exit 2
     ;;
 esac
