@@ -146,17 +146,20 @@ non-overlapping shards of 512 speculative prompts and 256 ordinary-quality
 sequences per shard. Aggregators report every requested-versus-observed sample
 shortfall explicitly.
 
-The first of those three powered FineWeb-Edu shards is now complete. After
-excluding four prompts with non-tie target-reference mismatches, K4V3-minus-K3V4
-acceptance is -1.25 points across 508 paired prompts (95% bootstrap CI: -2.16 to
--0.36), so speculative decoding significantly favors K3V4 in this shard. The
-matched ordinary-quality shard reaches the same conclusion: K4V3-minus-K3V4 KL
-is +0.00838 across 256 sequences (95% CI: +0.00708 to +0.01007), and K4V3 has
-1.83 points lower top-1 agreement. K4V3 and K3V4 save 27.18% and 27.01% of
-combined target-plus-draft KV, respectively. This is a one-shard interim result,
-not the predeclared three-shard conclusion, but it argues against both the
-original reversal and a geometry-independent claim that keys always require
-more precision.
+All three powered FineWeb-Edu ordinary-quality shards are now complete, covering
+768 requested and observed sequences with disjoint streaming offsets. K4V3 has
+mean KL 0.01529 versus 0.00681 for K3V4. The paired K4V3-minus-K3V4 KL contrast
+is +0.00848 (95% bootstrap CI: +0.00777 to +0.00927), and K4V3 has 1.86 points
+lower top-1 agreement. Thus, the powered ordinary-quality result decisively
+favors preserving value precision. On the speculative side, two of three shards
+are complete. After excluding ten prompt occurrences with non-tie target-reference
+mismatches, K4V3-minus-K3V4 acceptance is -1.02 points across 1,014 valid paired
+prompt occurrences (95% CI: -1.64 to -0.40), also favoring K3V4. K4V3 and K3V4
+save 27.18% and 27.01% of combined target-plus-draft KV, respectively.
+Speculative acceptance remains an interim result until the final predeclared
+512-prompt shard finishes, but the available powered evidence argues against
+both the original reversal and a geometry-independent claim that keys always
+require more precision.
 
 The broader cross-family result suggests a practical two-stage policy even
 without a resolved preference reversal. Across 48 model-pair/configuration cells,
