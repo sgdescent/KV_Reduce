@@ -398,6 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset_config", type=str, default="wikitext-2-raw-v1")
     parser.add_argument("--eval_split", type=str, default="validation")
     parser.add_argument("--eval_split_fallbacks", type=str, default="test,train")
+    parser.add_argument("--shuffle_eval", action="store_true")
     parser.add_argument("--prompt_len", type=int, default=1024)
     parser.add_argument("--num_prompts", type=int, default=2)
     parser.add_argument("--skip_prompts", type=int, default=0)
@@ -429,7 +430,7 @@ def main() -> None:
             dataset_config=args.dataset_config,
             split=args.eval_split,
             split_fallbacks=parse_csv_items(args.eval_split_fallbacks),
-            shuffle=False,
+            shuffle=args.shuffle_eval,
             seed=args.seed,
             streaming=False,
         )
