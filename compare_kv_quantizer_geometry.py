@@ -52,16 +52,16 @@ def load_naive_rows(path: Path, *, run: str) -> Dict[str, Dict[str, Any]]:
     return output
 
 
-def load_kivi_rows(root: Path, *, context: int) -> Dict[str, Dict[str, Any]]:
+def load_kivi_rows(path: Path, *, context: int) -> Dict[str, Dict[str, Any]]:
     output = {}
-    for summary_path in sorted(root.glob("*/summary.json")):
-        pair = summary_path.parent.name
-        payload = json.loads(summary_path.read_text(encoding="utf-8"))
-        for row in payload.get("comparisons", []):
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        rows = csv.DictReader(handle)
+        for row in rows:
             if int(row["context"]) != context:
                 continue
             if row["config_a"] != "k8v4" or row["config_b"] != "k4v8":
                 continue
+            pair = str(row["pair"])
             output[pair] = {
                 "effect": float(row["spec_acceptance_a_minus_b_mean"]),
                 "ci_low": float(row["spec_acceptance_a_minus_b_ci_low"]),
@@ -136,7 +136,7 @@ def make_plot(rows: Sequence[Dict[str, Any]], out_dir: Path) -> List[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--naive_summary", type=Path, required=True)
-    parser.add_argument("--kivi_comparison_root", type=Path, required=True)
+    parser.add_argument("--kivi_preference_csv", type=Path, required=True)
     parser.add_argument("--naive_run", default="wikitext_ctx1024")
     parser.add_argument("--context", type=int, default=1024)
     parser.add_argument("--out_dir", type=Path, required=True)
@@ -147,7 +147,7 @@ def main() -> None:
 
     rows = join_geometry_rows(
         load_naive_rows(args.naive_summary, run=args.naive_run),
-        load_kivi_rows(args.kivi_comparison_root, context=args.context),
+        load_kivi_rows(args.kivi_preference_csv, context=args.context),
     )
     if not rows:
         raise ValueError("No model pairs were shared by the two quantizer campaigns.")
@@ -168,6 +168,10 @@ def main() -> None:
     )
     write_csv(args.out_dir / "paired_geometry_results.csv", rows)
     payload = {
+        "inputs": {
+            "naive_summary": str(args.naive_summary),
+            "kivi_preference_csv": str(args.kivi_preference_csv),
+        },
         "num_paired_model_pairs": len(rows),
         "contrast": "acceptance(K8V4) - acceptance(K4V8)",
         "inference_unit": "model_pair",
