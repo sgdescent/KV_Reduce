@@ -1,6 +1,7 @@
 import unittest
+from pathlib import Path
 
-from aggregate_kv_multiple_choice import paired_metric_differences
+from aggregate_kv_multiple_choice import paired_metric_differences, underfilled_run_record
 
 
 class MultipleChoiceAggregationTest(unittest.TestCase):
@@ -34,6 +35,21 @@ class MultipleChoiceAggregationTest(unittest.TestCase):
                 metric="raw_correct",
             ),
             [],
+        )
+
+    def test_reports_dataset_exhaustion(self):
+        summary = {
+            "task": "arc_challenge",
+            "num_examples": 148,
+            "config": {"num_examples": 256, "seed": 4},
+        }
+        record = underfilled_run_record(Path("seed_4/summary.json"), summary)
+        self.assertEqual(record["actual"], 148)
+        self.assertEqual(record["shortfall"], 108)
+
+        summary["num_examples"] = 256
+        self.assertIsNone(
+            underfilled_run_record(Path("seed_4/summary.json"), summary)
         )
 
 

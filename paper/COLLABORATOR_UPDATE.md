@@ -258,6 +258,9 @@ objective-specific differences instead of assuming they exist.
 - Diagnostic WikiText Qwen2.5-7B/3B replication, followed by a corrected,
   disjoint-shard FineWeb-Edu K4V3-versus-K3V4 test.
 - Eight-shot HellaSwag and ARC-Challenge task accuracy across disjoint seeds.
+- Dependency-gated cross-family HellaSwag and ARC-Challenge validation on
+  Llama-3.2-3B, OLMo-2-1B, and SmolLM2-360M using two disjoint 128-example
+  shards per task and the same matched-memory K/V policies.
 - Controlled 4K quantizer-geometry factorial replication.
 - C4, GSM8K, and HumanEval robustness aggregation and paper integration.
 

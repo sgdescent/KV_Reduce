@@ -16,6 +16,24 @@ from spec_kv_statistics import bootstrap_mean_ci
 EVALUATOR_VERSION = "kv_multiple_choice_cached_v2"
 
 
+def underfilled_run_record(
+    summary_path: Path,
+    summary: Dict[str, Any],
+) -> Dict[str, Any] | None:
+    requested = int(summary["config"]["num_examples"])
+    actual = int(summary["num_examples"])
+    if actual >= requested:
+        return None
+    return {
+        "summary_path": str(summary_path),
+        "task": str(summary["task"]),
+        "seed": int(summary["config"]["seed"]),
+        "requested": requested,
+        "actual": actual,
+        "shortfall": requested - actual,
+    }
+
+
 def read_csv(path: Path) -> List[Dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle))
@@ -93,6 +111,7 @@ def main() -> None:
     all_rows: List[Dict[str, str]] = []
     runs: List[Dict[str, Any]] = []
     missing: List[str] = []
+    underfilled_runs: List[Dict[str, Any]] = []
     for seed_dir in sorted(args.root.glob("*/seed_*")):
         summary_path = seed_dir / "summary.json"
         rows_path = seed_dir / "example_rows.csv"
@@ -103,6 +122,9 @@ def main() -> None:
         version = summary.get("runtime", {}).get("evaluator_version")
         if version != EVALUATOR_VERSION:
             raise ValueError(f"Unexpected evaluator {version!r} in {summary_path}")
+        underfilled = underfilled_run_record(summary_path, summary)
+        if underfilled is not None:
+            underfilled_runs.append(underfilled)
         all_rows.extend(read_csv(rows_path))
         runs.append(
             {
@@ -195,12 +217,16 @@ def main() -> None:
         "evaluator_version": EVALUATOR_VERSION,
         "num_complete_runs": len(runs),
         "missing_runs": missing,
+        "underfilled_runs": underfilled_runs,
         "grouped": grouped,
         "comparisons": comparisons,
         "plots": make_plot(grouped, args.out_dir),
     }
     (args.out_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    print(f"Aggregated {len(runs)} multiple-choice runs")
+    print(
+        f"Aggregated {len(runs)} multiple-choice runs; "
+        f"underfilled {len(underfilled_runs)}"
+    )
     print(args.out_dir / "summary.json")
 
 
