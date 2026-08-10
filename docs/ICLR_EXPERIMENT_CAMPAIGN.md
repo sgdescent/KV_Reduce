@@ -41,8 +41,9 @@ gated 9B checkpoint.
 5. `robustness`: three shuffled seeds for Qwen2.5-3B/1.5B on C4 validation,
    GSM8K questions, and HumanEval prompts. Every domain uses the same KIVI
    geometry under both speculative acceptance and teacher-forced LM quality.
-6. `long_context`: exploratory 16K-prefix and 32K-total-sequence Qwen2.5 runs
-   on PG19 before increasing the prompt count for the final long-context result.
+6. `long_context`: paired 16K-prefix and 32K-total-sequence runs on PG19. The
+   completed Qwen2.5 study is followed by dependency-gated OLMo-2-7B/1B and
+   Llama-3.1-8B/3.2-3B replications under the same KIVI geometry.
    The 32K arm uses a 32,752-token prefix plus 16 generated/continuation tokens
    so it remains inside the draft model's declared 32,768-token window.
 7. `matched_objectives`: the same 21 uniform K/V configurations are evaluated
@@ -76,11 +77,11 @@ gated 9B checkpoint.
     predeclared experiment uses three explicit, non-overlapping FineWeb-Edu
     shards with 512 speculative prompts and 256 ordinary-quality sequences per
     shard. Aggregation reports every requested-versus-observed shortfall. The
-    first powered shard favors K3V4 under both objectives: K4V3-minus-K3V4
-    acceptance is -1.25 points (95% CI: -2.16 to -0.36; 508 valid paired
-    prompts), while the ordinary-quality KL contrast is +0.00838 (95% CI:
-    +0.00708 to +0.01007; 256 sequences). This remains interim until all three
-    disjoint shards complete.
+    All three quality shards are complete: across 768 sequences,
+    K4V3-minus-K3V4 KL is +0.00848 (95% CI: +0.00777 to +0.00927). Two of three
+    speculative shards are complete: acceptance is -1.02 points across 1,014
+    valid paired prompt occurrences (95% CI: -1.64 to -0.40). The speculative
+    result remains interim until the final 512-prompt shard completes.
 16. `verifier_exactness_powered`: quantify finite-precision verifier drift on
     32 held-out prompts for each BF16/FP32 and SDPA/eager combination. This
     separates implementation correctness from backend-dependent numerical paths.
@@ -101,15 +102,25 @@ gated 9B checkpoint.
     same BF16, K8V4, K4V8, K4V4, K3V4, and K4V3 policies. The three model arrays
     are dependency-chained and serialized to one GPU; any notable effect must be
     powered separately before becoming a headline claim.
-20. `strong_allocator_baselines`: compare objective-aware allocations against
-    KVTuner-style attention-output sensitivity, RateQuant-style calibrated
-    rate--distortion allocation, and Block-GTQ-style RoPE-aware key allocation at
-    exactly matched packed-cache budgets.
+20. `strong_allocator_baselines` (planned, not yet implemented faithfully):
+    compare objective-aware allocations against official or independently
+    validated KVTuner, RateQuant, and Block-GTQ implementations at matched packed
+    cache budgets. The current additive one-at-a-time sensitivity allocator is an
+    internal baseline and must not be labeled as one of those published methods.
 21. `held_out_allocator_matrix`: fit allocations on calibration shards, then
     cross-evaluate ordinary quality and speculative acceptance on explicit,
     non-overlapping streaming shards. Manifest-level block offsets include
     speculative warmups and use a fixed dataset order, preventing finite-split
     reshuffling from being mistaken for independent replication.
+22. `uniform_allocator_control`: every new all-layer Qwen, OLMo, and Llama
+    FineWeb-Edu cross-evaluation includes native BF16, uniform K8V8,
+    ordinary-quality-optimized, and acceptance-optimized policies. Aggregation
+    reports equal nominal mean bits separately from equality of actual KV bytes,
+    because the BF16 recent-key residual can create a small byte mismatch.
+23. `cross_family_long_context`: OLMo and Llama 16K/32K arrays use deterministic,
+    non-overlapping PG19 block offsets. The ordinary-quality shard skips the
+    corresponding speculative warmup block so both objectives evaluate matched
+    held-out content.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -247,6 +258,29 @@ The group-size/residual-window robustness sweep is serialized cell by cell:
 
 ```bash
 AFTER_JOB=<dependency-job> bash scripts/submit_kivi_group_residual_sweep.sh
+```
+
+The all-layer held-out allocator campaign accepts model, layer, dataset, and
+budget overrides. New runs include the uniform matched-budget control by
+default:
+
+```bash
+TAG=<campaign-tag> BIG_MODEL=<target> SMALL_MODEL=<draft> \
+NUM_LAYERS=<draft-layers> LAYERS=all DATASET_NAME=HuggingFaceFW/fineweb-edu \
+DATASET_CONFIG=sample-10BT EVAL_SPLIT=train STREAM_EVAL=1 \
+START_DEPENDENCY=<dependency-job> bash scripts/submit_objective_kv_campaign.sh
+```
+
+The generalized long-context launcher can place target and draft on separate
+GPUs while keeping quality evaluation on one GPU:
+
+```bash
+AFTER_JOB=<allocator-final-job> ROOT=<output-root> \
+BIG_MODEL=<target> SMALL_MODEL=<draft> MODEL=<draft> \
+BIG_DEVICE=cuda:0 SMALL_DEVICE=cuda:1 SPEC_GPUS=2 QUALITY_GPUS=1 \
+QUANT_CONFIGS='none;k8v8;k8v4;k4v8;k4v4;k4v3;k3v4' \
+CONFIG_PAIRS='k8v4,k4v8;k4v3,k3v4' \
+bash scripts/submit_kivi_long_context.sh
 ```
 
 To run only a subset of pairs:
