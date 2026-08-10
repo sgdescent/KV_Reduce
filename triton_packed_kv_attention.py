@@ -68,7 +68,7 @@ def _packed_kv_decode_kernel(
         token_mask = offsets_n < seq_len
         matrix_mask = token_mask[:, None] & dim_mask[None, :]
 
-        key_value_base = (batch_idx * kv_heads + kv_head) * seq_len * head_dim
+        key_value_base = (batch_idx * kv_heads + kv_head) * prefix_len * head_dim
         key_value_indices = key_value_base + offsets_n[:, None] * head_dim + offsets_d[None, :]
         prefix_mask = offsets_n < prefix_len
         quantized_key = _load_unsigned(
@@ -200,4 +200,3 @@ def theoretical_attention_flops(query: torch.Tensor, seq_len: int) -> int:
     """Approximate dot-product plus value-accumulation FLOPs for one decode query."""
     batch, query_heads, _, head_dim = query.shape
     return int(4 * batch * query_heads * seq_len * head_dim)
-
