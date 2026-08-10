@@ -44,6 +44,7 @@ DRAFT_STEPS="${DRAFT_STEPS:-4}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16}"
 SEED="${SEED:-0}"
 ATTN_IMPLEMENTATION="${ATTN_IMPLEMENTATION:-sdpa}"
+DTYPE="${DTYPE:-bf16}"
 SMALL_DEVICE="${SMALL_DEVICE:-}"
 
 if [[ -n "$BENCHMARK_PROMPT_IDX" ]]; then
@@ -56,7 +57,7 @@ cmd=(
   --model "$MODEL"
   --small_model "$SMALL_MODEL"
   --device cuda:0
-  --dtype bf16
+  --dtype "$DTYPE"
   --attn_implementation "$ATTN_IMPLEMENTATION"
   --dataset_name "$DATASET_NAME"
   --dataset_config "$DATASET_CONFIG"
