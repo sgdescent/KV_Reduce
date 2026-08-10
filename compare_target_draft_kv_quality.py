@@ -177,18 +177,38 @@ def make_plot(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
     fig, axes = plt.subplots(
         1, len(contexts), figsize=(5.4 * len(contexts), 4.8), squeeze=False
     )
+    label_offsets = {
+        "k2v2": (-43, 6),
+        "k2v4": (5, 4),
+        "k3v4": (5, -14),
+        "k4v2": (5, -12),
+        "k4v3": (5, 4),
+        "k4v4": (5, 8),
+        "k4v8": (5, -13),
+        "k8v4": (5, -13),
+    }
     for axis, context in zip(axes[0], contexts):
         subset = [row for row in rows if int(row["context"]) == context]
+        values = [
+            float(row[field])
+            for row in subset
+            for field in ("target_kl_macro_mean", "draft_kl_macro_mean")
+            if float(row[field]) > 0.0
+        ]
+        minimum = min(values) / 1.6
         maximum = max(
-            [
-                float(row["target_kl_macro_mean"])
-                for row in subset
-            ]
-            + [float(row["draft_kl_macro_mean"]) for row in subset]
-            + [1e-4]
+            values + [1e-4]
+        ) * 1.35
+        axis.plot(
+            [minimum, maximum],
+            [minimum, maximum],
+            "--",
+            color="#777777",
+            linewidth=1.2,
+            label="Equal sensitivity",
         )
-        axis.plot([0.0, maximum], [0.0, maximum], "--", color="#777777")
         for row in subset:
+            config = str(row["config"])
             axis.scatter(
                 float(row["draft_kl_macro_mean"]),
                 float(row["target_kl_macro_mean"]),
@@ -198,18 +218,28 @@ def make_plot(rows: List[Dict[str, Any]], out_dir: Path) -> List[str]:
                 s=55,
             )
             axis.annotate(
-                str(row["config"]),
+                config.upper(),
                 (
                     float(row["draft_kl_macro_mean"]),
                     float(row["target_kl_macro_mean"]),
                 ),
                 fontsize=8,
+                xytext=label_offsets.get(config, (5, 4)),
+                textcoords="offset points",
             )
+        axis.set_xscale("log")
+        axis.set_yscale("log")
+        axis.set_xlim(minimum, maximum)
+        axis.set_ylim(minimum, maximum)
         axis.set_title(f"Context {context:,}")
-        axis.set_xlabel("Draft checkpoint KL")
-        axis.set_ylabel("Target checkpoint KL")
-        axis.grid(alpha=0.22)
-    fig.suptitle("KV Quantization Sensitivity by Model Role", fontweight="bold")
+        axis.set_xlabel("Smaller draft model KL")
+        axis.set_ylabel("Larger target model KL")
+        axis.grid(alpha=0.22, which="both")
+        axis.legend(loc="upper left", frameon=False, fontsize=8)
+    fig.suptitle(
+        "Larger Target Models Are More Robust to the Same KV Quantization",
+        fontweight="bold",
+    )
     fig.tight_layout()
     paths = []
     for extension in ("png", "pdf"):

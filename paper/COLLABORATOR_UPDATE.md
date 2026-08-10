@@ -61,6 +61,17 @@ acceptance evaluation is still needed to identify additional aggressive but safe
 operating points. This is an empirical screen on the tested cells, not a formal
 guarantee.
 
+We also completed the target-versus-draft role comparison. Across the same six
+model pairs and eight K/V precision settings, the larger target checkpoint has
+lower ordinary-LM KL than the smaller draft in all 48 matched comparisons. At
+K4V4, target KL is 0.00571 versus 0.00730 for the draft (paired macro difference
+-0.00159, 95% CI: -0.00276 to -0.00068); at K4V8, it is 0.00157 versus 0.00190
+(difference -0.00033, CI: -0.00046 to -0.00021). Since target role and model size
+are confounded, this supports role-and-scale-aware calibration rather than a
+causal claim that being a target makes a model robust. Quantizing the target also
+changes the final model distribution, so its policy needs stricter top-1 and task
+quality constraints than draft-only quantization.
+
 ## Is This Sufficiently Novel For A Main Track?
 
 KV-cache quantization alone is not novel. KIVI established asymmetric K/V
@@ -119,7 +130,7 @@ quantization, then measure which objective selects which precision allocation.
 ## Experiments In Flight
 
 - Powered Qwen2.5-7B/3B equal-memory K4V3 versus K3V4 test.
-- Expanded cross-family target-cache quality and role comparison.
+- Joint target/draft quantization under strict quality and acceptance budgets.
 - C4, GSM8K, and HumanEval robustness evaluation.
 - Eight-shot HellaSwag and ARC-Challenge task accuracy across disjoint seeds.
 - Synthetic passkey retrieval at 4K, 8K, and 16K context and three insertion

@@ -464,6 +464,34 @@ of the tested cells rather than a distribution-free safety guarantee.
   \label{fig:quality-surrogate}
 \end{figure}
 
+\subsection{Larger target checkpoints are more quantization-robust}
+
+Ordinary-decoding robustness also depends on which model owns the cache. We
+apply the same eight K/V precision settings separately to the larger target and
+smaller draft checkpoint in each of the six model pairs. The target has lower KL
+in all 48 paired model--configuration comparisons. At K4V4, target KL is
+$0.00571$ versus $0.00730$ for the draft (paired macro difference $-0.00159$,
+95\% model-pair bootstrap CI $[-0.00276,-0.00068]$); at K4V8, it is $0.00157$
+versus $0.00190$ (difference $-0.00033$, CI
+$[-0.00046,-0.00021]$). Figure~\ref{fig:role-quality} shows the effect across the
+full precision grid.
+
+Because target role is confounded with model size in standard speculative pairs,
+we interpret this as evidence for role-and-scale-aware calibration rather than a
+causal target-role effect. Moreover, a quantized verifier is no longer exact:
+lower teacher-forced KL does not eliminate rare top-1 changes. Draft-only
+compression therefore remains the lossless operating mode, while target-cache
+compression requires explicit quality and exactness budgets.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.82\linewidth]{campaign_artifacts/target_vs_draft_quality.pdf}
+  \caption{Ordinary-LM KL under identical KV precision for the larger target
+  and smaller draft checkpoints, macro-averaged across six model families.
+  Every setting lies below the equal-sensitivity diagonal.}
+  \label{fig:role-quality}
+\end{figure}
+
 \subsection{Objective-specific profiles do not improve acceptance consistently}
 
 Optimizing the sensitivity profile under the speculative loop is not reliably
@@ -569,8 +597,9 @@ speculative-specific policy.
 The observed cross-family correlation supports a two-stage calibration procedure:
 ordinary-quality metrics cheaply reject risky configurations, then direct
 acceptance testing searches the remaining memory frontier. These findings
-motivate packed asymmetric kernels and allocation policies trained against the
-downstream decoding objective rather than reconstruction error alone.
+motivate role-and-scale-aware calibration, packed asymmetric kernels, and
+allocation policies trained against the downstream decoding objective rather
+than reconstruction error alone.
 
 \bibliography{references}
 \bibliographystyle{template/iclr2026_conference}
