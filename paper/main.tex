@@ -150,6 +150,15 @@ uncertainty-aware risk
   =\max\left(0,\widehat r^{\mathrm{SD}}_{\ell,c,b}
   +1.96\,\mathrm{SE}(\alpha_{\mathrm{BF16}}-\alpha_{\ell,c,b})\right).
 \end{equation}
+As a smoother alternative to discrete greedy accept/reject events, we profile
+the speculative acceptance mass
+\begin{equation}
+  A(p,q)=\sum_y\min\{p(y),q(y)\}=1-\mathrm{TV}(p,q),
+\end{equation}
+which is the expected one-step acceptance probability under the standard
+stochastic speculative-decoding correction rule. We evaluate allocations from
+both the paired acceptance-rate UCB and the paired acceptance-mass UCB; neither
+surrogate is selected using held-out evaluation outcomes.
 We additionally log
 accepted tokens per verification round, top-1 match, acceptance mass,
 Jensen--Shannon divergence, greedy target agreement, and the target top-1 margin
@@ -200,7 +209,9 @@ Qwen matrix on streaming C4 and compare 16- versus 64-prompt acceptance
 calibration. Main profiles cover the top eight draft layers; an all-layer Qwen
 run measures the larger attainable memory reduction. Cross-family evaluation
 includes Qwen2.5, Llama 3, and OLMo 2 before optional broader-family validation.
-All pairs are checked for tokenizer compatibility.
+We also vary the proposal length over $\gamma\in\{2,4,8\}$ to test whether
+allocation rankings change as rejection wastes longer draft blocks. All pairs
+are checked for tokenizer compatibility.
 
 \begin{table}[t]
   \caption{Cross-family evaluation. Each pair is tested at 1K and 4K context,
