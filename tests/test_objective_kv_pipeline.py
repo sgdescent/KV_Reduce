@@ -36,6 +36,8 @@ def write_profile(path: Path, risk_field: str, risks: dict[tuple[int, str, int],
 
 class ObjectiveKVPipelineTest(unittest.TestCase):
     def test_matched_memory_heuristics_prioritize_k_or_v(self) -> None:
+        self.assertEqual(heuristic_component_bits(4, prioritize="k"), (4, 4))
+        self.assertEqual(heuristic_component_bits(4, prioritize="v"), (4, 4))
         self.assertEqual(heuristic_component_bits(6, prioritize="k"), (8, 4))
         self.assertEqual(heuristic_component_bits(6, prioritize="v"), (4, 8))
         self.assertEqual(heuristic_component_bits(10, prioritize="k"), (16, 4))
