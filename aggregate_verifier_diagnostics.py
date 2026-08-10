@@ -72,6 +72,19 @@ def main() -> None:
             "attn_implementation": config["attn_implementation"],
             "seed": config["seed"],
             "skip_prompts": config["skip_prompts"],
+            "num_prompts": int(payload.get("num_prompts", 1)),
+            "prompts_with_speculative_mismatch": int(
+                payload.get(
+                    "speculative_prompts_with_top1_mismatch",
+                    int(payload.get("speculative_top1_mismatches", 0)) > 0,
+                )
+            ),
+            "prompts_with_independent_greedy_mismatch": int(
+                payload.get(
+                    "speculative_prompts_with_independent_greedy_mismatch",
+                    int(payload.get("speculative_independent_greedy_mismatches", 0)) > 0,
+                )
+            ),
         }
         row.update({field: int(payload[field]) for field in COUNT_FIELDS})
         row.update({field: float(payload[field]) for field in MAX_FIELDS})
@@ -85,9 +98,14 @@ def main() -> None:
         grouped_row: Dict[str, Any] = {
             "dtype": dtype,
             "attn_implementation": backend,
-            "num_prompts": len(values),
+            "num_runs": len(values),
+            "num_prompts": sum(int(row["num_prompts"]) for row in values),
             "prompts_with_speculative_mismatch": sum(
-                int(row["speculative_top1_mismatches"]) > 0 for row in values
+                int(row["prompts_with_speculative_mismatch"]) for row in values
+            ),
+            "prompts_with_independent_greedy_mismatch": sum(
+                int(row["prompts_with_independent_greedy_mismatch"])
+                for row in values
             ),
         }
         grouped_row.update(

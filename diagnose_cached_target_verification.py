@@ -518,7 +518,9 @@ def main() -> None:
 
     summary = {
         "config": vars(args),
-        "num_prompts": len(audits),
+        "num_prompts": len(prompts),
+        "num_unit_audit_prompts": len(audits),
+        "num_speculative_audit_prompts": len(speculative_audits),
         "batch_vs_sequential_top1_mismatches": sum(
             row["batch_vs_sequential/top1_match"] < 0.5 for row in all_position_rows
         ),
@@ -540,6 +542,12 @@ def main() -> None:
             audit["top1_mismatches"] for audit in speculative_audits
         ),
         "speculative_independent_greedy_mismatches": sum(
+            not audit["matches_independent_target_greedy"] for audit in speculative_audits
+        ),
+        "speculative_prompts_with_top1_mismatch": sum(
+            audit["top1_mismatches"] > 0 for audit in speculative_audits
+        ),
+        "speculative_prompts_with_independent_greedy_mismatch": sum(
             not audit["matches_independent_target_greedy"] for audit in speculative_audits
         ),
         "audits": audits,

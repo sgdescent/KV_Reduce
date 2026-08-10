@@ -74,6 +74,9 @@ gated 9B checkpoint.
     quality sequences per seed across three new seeds. This is a predeclared
     confirmation experiment for a small acceptance effect, not an exploratory
     source of additional allocation comparisons.
+16. `verifier_exactness_powered`: quantify finite-precision verifier drift on
+    32 held-out prompts for each BF16/FP32 and SDPA/eager combination. This
+    separates implementation correctness from backend-dependent numerical paths.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -160,6 +163,12 @@ cross-family and gamma analyses complete:
 
 ```bash
 AFTER_JOB=<dependency-job> bash scripts/submit_qwen7_reversal_powered.sh
+```
+
+The expanded verifier exactness audit is serialized over one GPU:
+
+```bash
+AFTER_JOB=<dependency-job> bash scripts/submit_verifier_exactness_replication.sh
 ```
 
 The missing quantizer-factorial cell is launched with:
