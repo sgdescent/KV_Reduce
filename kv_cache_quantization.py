@@ -152,12 +152,18 @@ def quantize_key_cache_kivi_style(
     group_size: int = 32,
     residual_length: int = 128,
     previous_seq_len: int = 0,
+    quantization_seq_len: int | None = None,
 ) -> torch.Tensor:
     """Quantize only newly eligible grouped K prefixes and preserve a BF16 tail."""
     if bits >= FULL_PRECISION_BITS:
         return x
     seq_len = int(x.shape[-2])
-    if previous_seq_len < 0 or previous_seq_len > seq_len:
+    boundary_seq_len = seq_len if quantization_seq_len is None else int(quantization_seq_len)
+    if boundary_seq_len < 0 or boundary_seq_len > seq_len:
+        raise ValueError(
+            f"quantization_seq_len={boundary_seq_len} is invalid for seq_len={seq_len}."
+        )
+    if previous_seq_len < 0 or previous_seq_len > boundary_seq_len:
         raise ValueError(f"previous_seq_len={previous_seq_len} is invalid for seq_len={seq_len}.")
     previous_end = per_channel_quantized_prefix_length(
         previous_seq_len,
@@ -165,7 +171,7 @@ def quantize_key_cache_kivi_style(
         residual_length=residual_length,
     )
     current_end = per_channel_quantized_prefix_length(
-        seq_len,
+        boundary_seq_len,
         group_size=group_size,
         residual_length=residual_length,
     )
@@ -282,33 +288,45 @@ def quantize_legacy_cache(
     key_group_size: int = 32,
     key_residual_length: int = 128,
     value_quant_scheme: str = SYMMETRIC_QUANT,
+    new_tokens: int | None = None,
+    key_previous_quantization_seq_len: int | None = None,
+    key_quantization_seq_len: int | None = None,
 ) -> Tuple[Tuple[torch.Tensor, torch.Tensor], ...]:
     if len(legacy_cache) != len(k_bits_by_layer) or len(legacy_cache) != len(v_bits_by_layer):
         raise ValueError("Cache layer count and bit allocation length must match.")
 
     quantized = []
     for layer_idx, (k, v) in enumerate(legacy_cache):
+        token_slice = slice(None) if new_tokens is None else slice(-new_tokens, None)
         if key_quant_axis == PER_TOKEN_AXIS:
-            quantized_key = quantize_dequantize_per_vector_symmetric(
-                k, int(k_bits_by_layer[layer_idx])
+            quantized_key = k.clone()
+            quantized_key[..., token_slice, :] = quantize_dequantize_per_vector_symmetric(
+                k[..., token_slice, :], int(k_bits_by_layer[layer_idx])
             )
         elif key_quant_axis == PER_CHANNEL_AXIS:
+            previous_seq_len = 0 if new_tokens is None else int(k.shape[-2]) - new_tokens
+            if key_previous_quantization_seq_len is not None:
+                previous_seq_len = int(key_previous_quantization_seq_len)
             quantized_key = quantize_key_cache_kivi_style(
                 k,
                 int(k_bits_by_layer[layer_idx]),
                 group_size=key_group_size,
                 residual_length=key_residual_length,
+                previous_seq_len=previous_seq_len,
+                quantization_seq_len=key_quantization_seq_len,
             )
         else:
             raise ValueError(f"Unsupported key_quant_axis: {key_quant_axis!r}")
+        quantized_value = v.clone()
+        quantized_value[..., token_slice, :] = quantize_dequantize_per_vector(
+            v[..., token_slice, :],
+            int(v_bits_by_layer[layer_idx]),
+            scheme=value_quant_scheme,
+        )
         quantized.append(
             (
                 quantized_key,
-                quantize_dequantize_per_vector(
-                    v,
-                    int(v_bits_by_layer[layer_idx]),
-                    scheme=value_quant_scheme,
-                ),
+                quantized_value,
             )
         )
     return tuple(quantized)

@@ -87,6 +87,11 @@ reference generation is performed once outside each timed configuration. Runs
 missing `runtime.evaluator_version=cached_dynamic_v4` are rejected by the paper
 aggregation script.
 
+Grouped keys enter the quantized prefix only after their tokens are committed.
+Unverified draft tokens remain in the BF16 residual tail, which can temporarily
+grow by at most the proposal length. This prevents a rejected speculative suffix
+from irreversibly quantizing a group that should return to the residual window.
+
 Greedy exact-match is reported together with the target top-1 logit margin at
 the first mismatch. BF16/SDPA can select a different token when the top logits
 are tied; the aggregate distinguishes these numerical ties from non-tie

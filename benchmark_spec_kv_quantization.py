@@ -184,6 +184,8 @@ def quantize_cache_for_next_step(
     key_group_size: int = 32,
     key_residual_length: int = 128,
     value_quant_scheme: str = SYMMETRIC_QUANT,
+    key_previous_quantization_seq_len: Optional[int] = None,
+    key_quantization_seq_len: Optional[int] = None,
 ):
     if all(int(bits) >= 16 for bits in k_bits) and all(int(bits) >= 16 for bits in v_bits):
         return past_key_values
@@ -210,13 +212,18 @@ def quantize_cache_for_next_step(
                 else:
                     key_slice.copy_(quantized_key)
             elif key_quant_axis == PER_CHANNEL_AXIS:
-                previous_seq_len = 0 if new_tokens is None else int(layer.keys.shape[-2]) - new_tokens
+                previous_seq_len = (
+                    0 if new_tokens is None else int(layer.keys.shape[-2]) - new_tokens
+                )
+                if key_previous_quantization_seq_len is not None:
+                    previous_seq_len = int(key_previous_quantization_seq_len)
                 layer.keys = quantize_key_cache_kivi_style(
                     layer.keys,
                     int(k_bits[layer_idx]),
                     group_size=key_group_size,
                     residual_length=key_residual_length,
                     previous_seq_len=previous_seq_len,
+                    quantization_seq_len=key_quantization_seq_len,
                 )
             else:
                 raise ValueError(f"Unsupported key_quant_axis: {key_quant_axis!r}")
@@ -234,6 +241,9 @@ def quantize_cache_for_next_step(
         key_group_size=key_group_size,
         key_residual_length=key_residual_length,
         value_quant_scheme=value_quant_scheme,
+        new_tokens=new_tokens,
+        key_previous_quantization_seq_len=key_previous_quantization_seq_len,
+        key_quantization_seq_len=key_quantization_seq_len,
     )
     return legacy_to_cache(quantized)
 
@@ -376,6 +386,8 @@ def draft_next_logits_from_cache(
     key_group_size: int,
     key_residual_length: int,
     value_quant_scheme: str,
+    key_previous_quantization_seq_len: Optional[int] = None,
+    key_quantization_seq_len: Optional[int] = None,
 ) -> Dict[str, Any]:
     input_ids = torch.tensor([[token]], dtype=dtype, device=small_device)
     step = cached_step(
@@ -394,6 +406,8 @@ def draft_next_logits_from_cache(
         key_group_size=key_group_size,
         key_residual_length=key_residual_length,
         value_quant_scheme=value_quant_scheme,
+        key_previous_quantization_seq_len=key_previous_quantization_seq_len,
+        key_quantization_seq_len=key_quantization_seq_len,
     )
     return {"logits": step["logits"][:, -1, :], "cache": cache, "cache_len": int(step["cache_len"])}
 
@@ -484,6 +498,8 @@ def greedy_speculative_decode_cached_quantized(
                 key_group_size=key_group_size,
                 key_residual_length=key_residual_length,
                 value_quant_scheme=value_quant_scheme,
+                key_previous_quantization_seq_len=round_prefix_len,
+                key_quantization_seq_len=round_prefix_len,
             )
             draft_decode_calls += 1
             draft_logits = shared_token_logits(next_step["logits"], shared_vocab_size)
@@ -565,6 +581,8 @@ def greedy_speculative_decode_cached_quantized(
             key_group_size=key_group_size,
             key_residual_length=key_residual_length,
             value_quant_scheme=value_quant_scheme,
+            key_previous_quantization_seq_len=round_prefix_len,
+            key_quantization_seq_len=committed_len + 1,
         )
         draft_decode_calls += 1
         draft_logits = shared_token_logits(draft_commit["logits"], shared_vocab_size)
@@ -1128,6 +1146,7 @@ def main() -> None:
             "target_cache_reused": True,
             "draft_cache_reused": True,
             "cache_crop_mode": "in_place",
+            "grouped_key_promotion": "committed_tokens_only",
             "key_quant_axis": args.key_quant_axis,
             "key_group_size": args.key_group_size,
             "key_residual_length": args.key_residual_length,

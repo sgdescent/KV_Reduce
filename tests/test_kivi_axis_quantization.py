@@ -80,6 +80,38 @@ class KiviAxisQuantizationTest(unittest.TestCase):
 
         torch.testing.assert_close(incremental, one_shot)
 
+    def test_speculative_tail_does_not_promote_uncommitted_key_group(self) -> None:
+        torch.manual_seed(13)
+        keys = torch.randn(1, 2, 36, 8)
+        committed = quantize_key_cache_kivi_style(
+            keys[..., :32, :],
+            bits=4,
+            group_size=4,
+            residual_length=8,
+        )
+        speculative = torch.cat((committed, keys[..., 32:, :]), dim=-2)
+
+        unchanged = quantize_key_cache_kivi_style(
+            speculative,
+            bits=4,
+            group_size=4,
+            residual_length=8,
+            previous_seq_len=32,
+            quantization_seq_len=32,
+        )
+        torch.testing.assert_close(unchanged, speculative)
+
+        promoted = quantize_key_cache_kivi_style(
+            unchanged,
+            bits=4,
+            group_size=4,
+            residual_length=8,
+            previous_seq_len=32,
+            quantization_seq_len=36,
+        )
+        self.assertFalse(torch.equal(promoted[..., 24:28, :], keys[..., 24:28, :]))
+        torch.testing.assert_close(promoted[..., 28:, :], keys[..., 28:, :])
+
     def test_memory_estimate_counts_scales_and_residual(self) -> None:
         config = SimpleNamespace(
             num_hidden_layers=2,
