@@ -93,6 +93,7 @@ quantization, then measure which objective selects which precision allocation.
 - Powered Qwen2.5-7B/3B equal-memory K4V3 versus K3V4 test.
 - Expanded cross-family target-cache quality and role comparison.
 - C4, GSM8K, and HumanEval robustness evaluation.
+- Eight-shot HellaSwag and ARC-Challenge task accuracy across disjoint seeds.
 - 16K and 32K PG19 long-context evaluation.
 - Draft-only versus target-only versus joint target/draft quantization.
 - Speculation-length (`gamma`) sensitivity.

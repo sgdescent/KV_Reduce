@@ -77,6 +77,12 @@ gated 9B checkpoint.
 16. `verifier_exactness_powered`: quantify finite-precision verifier drift on
     32 held-out prompts for each BF16/FP32 and SDPA/eager combination. This
     separates implementation correctness from backend-dependent numerical paths.
+17. `multiple_choice_accuracy`: evaluate the standalone Qwen2.5-1.5B cache on
+    disjoint HellaSwag and ARC-Challenge examples across three seeds. Each
+    example uses a fixed eight-shot training prefix so grouped key quantization
+    extends beyond the 128-token BF16 residual window. The evaluator reports raw
+    and length-normalized accuracy, paired BF16 agreement, and equal-memory
+    K8V4-versus-K4V8 confidence intervals.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -92,6 +98,7 @@ two-GPU chain is capped at one concurrent job, so it consumes at most two GPUs.
 
 - speculative token acceptance rate and accepted tokens per verification round;
 - target/draft top-1 match, Jensen-Shannon divergence, and acceptance mass;
+- HellaSwag and ARC-Challenge multiple-choice accuracy under ordinary decoding;
 - draft and total KV-cache bytes saved;
 - exact-match against greedy target decoding;
 - measured runtime only as a diagnostic, because the current fake-quantization
@@ -169,6 +176,13 @@ The expanded verifier exactness audit is serialized over one GPU:
 
 ```bash
 AFTER_JOB=<dependency-job> bash scripts/submit_verifier_exactness_replication.sh
+```
+
+The actual task-accuracy study is also serialized over one GPU. Its three seeds
+select disjoint examples from a common shuffled task stream:
+
+```bash
+DEPENDENCY=<dependency-job> bash scripts/submit_kivi_multiple_choice.sh
 ```
 
 The missing quantizer-factorial cell is launched with:
