@@ -43,3 +43,27 @@ def test_exactness_audit_keeps_ties_and_excludes_non_ties():
     assert math.isclose(audit["effects"]["quality_vs_native"]["mean"], -0.05)
     assert math.isclose(audit["effects"]["acceptance_vs_native"]["mean"], 0.025)
     assert math.isclose(audit["effects"]["acceptance_vs_quality"]["mean"], 0.075)
+
+
+def test_exactness_audit_compares_optimized_policies_to_uniform():
+    rows = []
+    values = {
+        0: {"none": 0.70, "k8v8": 0.65, "quality": 0.66, "acceptance": 0.68},
+        1: {"none": 0.60, "k8v8": 0.55, "quality": 0.54, "acceptance": 0.57},
+    }
+    for prompt_idx, configs in values.items():
+        for config, accept_rate in configs.items():
+            rows.append(make_row(prompt_idx, config, accept_rate))
+
+    audit = audit_acceptance_rows(
+        rows,
+        quality_name="quality",
+        acceptance_name="acceptance",
+        uniform_name="k8v8",
+    )
+
+    assert audit["candidate_prompts"] == 2
+    assert audit["valid_prompts"] == 2
+    assert math.isclose(audit["effects"]["uniform_vs_native"]["mean"], -0.05)
+    assert math.isclose(audit["effects"]["quality_vs_uniform"]["mean"], 0.0, abs_tol=1e-12)
+    assert math.isclose(audit["effects"]["acceptance_vs_uniform"]["mean"], 0.025)

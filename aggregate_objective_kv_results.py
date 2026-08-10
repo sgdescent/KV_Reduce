@@ -54,10 +54,13 @@ def audit_acceptance_rows(
     *,
     quality_name: str,
     acceptance_name: str,
+    uniform_name: str | None = None,
     tie_margin: float = 1e-3,
 ) -> Dict[str, Any]:
     """Build paired acceptance effects after excluding genuine target mismatches."""
     expected = {"none", quality_name, acceptance_name}
+    if uniform_name is not None:
+        expected.add(uniform_name)
     by_prompt: Dict[int, Dict[str, float]] = defaultdict(dict)
     bad_prompts = set()
     counts: Counter[str] = Counter()
@@ -87,6 +90,20 @@ def audit_acceptance_rows(
     def paired_difference(left: str, right: str) -> Dict[str, float]:
         return _bootstrap_mean_ci([values[left] - values[right] for _, values in valid])
 
+    effects = {
+        "quality_vs_native": paired_difference(quality_name, "none"),
+        "acceptance_vs_native": paired_difference(acceptance_name, "none"),
+        "acceptance_vs_quality": paired_difference(acceptance_name, quality_name),
+    }
+    if uniform_name is not None:
+        effects.update(
+            {
+                "uniform_vs_native": paired_difference(uniform_name, "none"),
+                "quality_vs_uniform": paired_difference(quality_name, uniform_name),
+                "acceptance_vs_uniform": paired_difference(acceptance_name, uniform_name),
+            }
+        )
+
     return {
         "tie_margin": tie_margin,
         "row_counts": {
@@ -99,11 +116,7 @@ def audit_acceptance_rows(
         "valid_prompts": len(valid),
         "excluded_non_tie_prompts": len({idx for idx, _ in candidates} & bad_prompts),
         "excluded_prompt_indices": sorted({idx for idx, _ in candidates} & bad_prompts),
-        "effects": {
-            "quality_vs_native": paired_difference(quality_name, "none"),
-            "acceptance_vs_native": paired_difference(acceptance_name, "none"),
-            "acceptance_vs_quality": paired_difference(acceptance_name, quality_name),
-        },
+        "effects": effects,
     }
 
 
@@ -114,7 +127,7 @@ def make_plot(rows: List[Dict[str, Any]], out_dir: str) -> List[str]:
         return []
 
     labels = [row["allocation"] for row in rows]
-    colors = ["#26456E", "#D1495B"]
+    colors = ["#6C757D", "#26456E", "#D1495B"]
     fig, axes = plt.subplots(1, 2, figsize=(9.4, 4.2))
     axes[0].bar(labels, [row["quality_delta_nll"] for row in rows], color=colors[: len(rows)])
     axes[0].set_title("Ordinary LM Quality")
@@ -143,6 +156,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quality_allocation", type=str, required=True)
     parser.add_argument("--acceptance_allocation", type=str, required=True)
     parser.add_argument("--comparison_summary", type=str, default=None)
+    parser.add_argument(
+        "--uniform_config",
+        type=str,
+        default=None,
+        help="Optional matched-budget uniform configuration name, for example k8v8.",
+    )
     parser.add_argument("--out_dir", type=str, default="outputs/kv_objective_final")
     return parser
 
@@ -161,6 +180,31 @@ def main() -> None:
     baseline_quality = quality_summaries["none"]
     baseline_acceptance = acceptance_summaries["none"]
     rows: List[Dict[str, Any]] = []
+    if args.uniform_config is not None:
+        if args.uniform_config not in quality_summaries:
+            raise ValueError(f"Uniform config {args.uniform_config!r} is missing from quality summary.")
+        if args.uniform_config not in acceptance_summaries:
+            raise ValueError(f"Uniform config {args.uniform_config!r} is missing from acceptance summary.")
+        quality = quality_summaries[args.uniform_config]
+        acceptance = acceptance_summaries[args.uniform_config]
+        rows.append(
+            {
+                "allocation": args.uniform_config,
+                "profile_objective": "uniform",
+                "profiled_mean_bits": quality["allocation/all_bits_mean"],
+                "all_component_mean_bits": quality["allocation/all_bits_mean"],
+                "quality_delta_nll": quality["delta_nll"],
+                "quality_js": quality["js"],
+                "quality_top1_match": quality["top1_match"],
+                "spec_accept_rate": acceptance["overall_accept_rate"],
+                "spec_accept_rate_delta": acceptance["overall_accept_rate"]
+                - baseline_acceptance["overall_accept_rate"],
+                "spec_accepted_per_round": acceptance["accepted_per_round"],
+                "spec_round_js": acceptance["round_js"],
+                "draft_cache_saved_fraction": acceptance["draft_cache_saved_fraction"],
+                "total_cache_saved_fraction": acceptance["total_cache_saved_fraction"],
+            }
+        )
     for allocation in allocations:
         name = str(allocation["name"])
         quality = quality_summaries[name]
@@ -184,7 +228,10 @@ def main() -> None:
             }
         )
 
-    equal_memory = abs(rows[0]["all_component_mean_bits"] - rows[1]["all_component_mean_bits"]) < 1e-9
+    nominal_bits = [float(row["all_component_mean_bits"]) for row in rows]
+    actual_savings = [float(row["total_cache_saved_fraction"]) for row in rows]
+    equal_memory = max(nominal_bits) - min(nominal_bits) < 1e-9
+    equal_actual_total_cache = max(actual_savings) - min(actual_savings) < 1e-9
     by_name = {row["allocation"]: row for row in rows}
     quality_row = by_name[quality_allocation["name"]]
     acceptance_row = by_name[acceptance_allocation["name"]]
@@ -196,6 +243,7 @@ def main() -> None:
                 list(csv.DictReader(f)),
                 quality_name=str(quality_allocation["name"]),
                 acceptance_name=str(acceptance_allocation["name"]),
+                uniform_name=args.uniform_config,
             )
     payload: Dict[str, Any] = {
         "evaluator_versions": {
@@ -203,9 +251,19 @@ def main() -> None:
             "acceptance": acceptance_eval.get("runtime", {}).get("evaluator_version"),
         },
         "equal_memory": equal_memory,
+        "memory_matching": {
+            "equal_nominal_mean_bits": equal_memory,
+            "nominal_mean_bits_min": min(nominal_bits),
+            "nominal_mean_bits_max": max(nominal_bits),
+            "equal_actual_total_cache_bytes": equal_actual_total_cache,
+            "total_cache_saved_fraction_min": min(actual_savings),
+            "total_cache_saved_fraction_max": max(actual_savings),
+            "total_cache_saved_fraction_span": max(actual_savings) - min(actual_savings),
+        },
         "baseline": {
             "quality_nll": baseline_quality["quantized_nll"],
             "spec_accept_rate": baseline_acceptance["overall_accept_rate"],
+            "uniform_config": args.uniform_config,
         },
         "rows": rows,
         "cross_objective_effect": {
@@ -220,6 +278,11 @@ def main() -> None:
         payload["cross_objective_effect"]["paired_exactness_filtered_acceptance_advantage"] = (
             acceptance_audit["effects"]["acceptance_vs_quality"]
         )
+        if args.uniform_config is not None:
+            payload["uniform_baseline_effects"] = {
+                "quality_vs_uniform_acceptance": acceptance_audit["effects"]["quality_vs_uniform"],
+                "acceptance_vs_uniform_acceptance": acceptance_audit["effects"]["acceptance_vs_uniform"],
+            }
     if args.comparison_summary:
         payload["sensitivity_comparison"] = read_json(args.comparison_summary)
     payload["plots"] = make_plot(rows, args.out_dir)

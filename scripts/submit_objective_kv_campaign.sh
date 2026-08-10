@@ -20,6 +20,7 @@ EXPORT_BITS="${BITS//,/;}"
 # by the shared bit-list parser.
 ALLOWED_BITS="${ALLOWED_BITS:-$EXPORT_BITS;16}"
 TARGET_PROFILED_MEAN_BITS="${TARGET_PROFILED_MEAN_BITS:-8}"
+UNIFORM_CONFIG="${UNIFORM_CONFIG:-k${TARGET_PROFILED_MEAN_BITS}v${TARGET_PROFILED_MEAN_BITS}}"
 EXCLUDE_NODES="${EXCLUDE_NODES:-catalyst-0-9,catalyst-0-15}"
 WANDB_PROJECT="${WANDB_PROJECT:-kv-reduce}"
 ENABLE_WANDB="${ENABLE_WANDB:-1}"
@@ -60,10 +61,10 @@ acceptance_alloc_job=$(submit --dependency="afterok:$acceptance_job" --export=AL
 both_allocations="afterok:$quality_alloc_job:$acceptance_alloc_job"
 comparison_job=$(submit --dependency="$both_allocations" --export=ALL,QUALITY_PROFILE_CSV="$QUALITY_PROFILE/profile_summary.csv",ACCEPTANCE_PROFILE_CSV="$ACCEPTANCE_PROFILE/profile_summary.csv",QUALITY_ALLOCATION="$QUALITY_ALLOCATION/allocation.json",ACCEPTANCE_ALLOCATION="$ACCEPTANCE_ALLOCATION/allocation.json",OUT_DIR="$COMPARISON" scripts/compare_kv_objectives.slurm)
 
-configs="none;allocation:$QUALITY_ALLOCATION/allocation.json;allocation:$ACCEPTANCE_ALLOCATION/allocation.json"
+configs="none;$UNIFORM_CONFIG;allocation:$QUALITY_ALLOCATION/allocation.json;allocation:$ACCEPTANCE_ALLOCATION/allocation.json"
 quality_eval_job=$(submit --dependency="$both_allocations" --export=ALL,MODEL="$SMALL_MODEL",PROMPT_LEN="$PROMPT_LEN",CONTINUATION_LEN="$CONTINUATION_LEN",NUM_SEQUENCES="$NUM_EVAL",SKIP_SEQUENCES="$QUALITY_EVAL_SKIP",QUANT_CONFIGS="$configs",KEY_QUANT_AXIS="$KEY_QUANT_AXIS",KEY_GROUP_SIZE="$KEY_GROUP_SIZE",KEY_RESIDUAL_LENGTH="$KEY_RESIDUAL_LENGTH",VALUE_QUANT_SCHEME="$VALUE_QUANT_SCHEME",OUT_DIR="$QUALITY_EVAL",ENABLE_WANDB="$ENABLE_WANDB",WANDB_PROJECT="$WANDB_PROJECT",WANDB_GROUP=objective-cross-eval,WANDB_RUN_NAME="${TAG}_quality_cross_eval" scripts/profile_kv_quality_sensitivity.slurm)
 acceptance_eval_job=$(submit --dependency="$both_allocations" --export=ALL,BIG_MODEL="$BIG_MODEL",SMALL_MODEL="$SMALL_MODEL",PROMPT_LEN="$PROMPT_LEN",NUM_PROMPTS="$NUM_EVAL",WARMUP_PROMPTS=2,SKIP_PROMPTS="$ACCEPTANCE_EVAL_SKIP",QUANT_CONFIGS="$configs",KEY_QUANT_AXIS="$KEY_QUANT_AXIS",KEY_GROUP_SIZE="$KEY_GROUP_SIZE",KEY_RESIDUAL_LENGTH="$KEY_RESIDUAL_LENGTH",VALUE_QUANT_SCHEME="$VALUE_QUANT_SCHEME",OUT_DIR="$ACCEPTANCE_EVAL",ENABLE_WANDB="$ENABLE_WANDB",WANDB_PROJECT="$WANDB_PROJECT",WANDB_GROUP=objective-cross-eval,WANDB_RUN_NAME="${TAG}_acceptance_cross_eval" scripts/benchmark_spec_kv_quantization.slurm)
-final_job=$(submit --dependency="afterok:$comparison_job:$quality_eval_job:$acceptance_eval_job" --export=ALL,QUALITY_SUMMARY="$QUALITY_EVAL/summary.json",ACCEPTANCE_SUMMARY="$ACCEPTANCE_EVAL/summary.json",QUALITY_ALLOCATION="$QUALITY_ALLOCATION/allocation.json",ACCEPTANCE_ALLOCATION="$ACCEPTANCE_ALLOCATION/allocation.json",COMPARISON_SUMMARY="$COMPARISON/summary.json",OUT_DIR="$FINAL_RESULTS" scripts/aggregate_objective_kv_results.slurm)
+final_job=$(submit --dependency="afterok:$comparison_job:$quality_eval_job:$acceptance_eval_job" --export=ALL,QUALITY_SUMMARY="$QUALITY_EVAL/summary.json",ACCEPTANCE_SUMMARY="$ACCEPTANCE_EVAL/summary.json",QUALITY_ALLOCATION="$QUALITY_ALLOCATION/allocation.json",ACCEPTANCE_ALLOCATION="$ACCEPTANCE_ALLOCATION/allocation.json",COMPARISON_SUMMARY="$COMPARISON/summary.json",UNIFORM_CONFIG="$UNIFORM_CONFIG",OUT_DIR="$FINAL_RESULTS" scripts/aggregate_objective_kv_results.slurm)
 
 cat <<EOF
 Submitted objective-aware KV campaign: $TAG
@@ -71,6 +72,7 @@ Submitted objective-aware KV campaign: $TAG
   acceptance profile:   $acceptance_job
   quality allocation:   $quality_alloc_job
   acceptance allocation:$acceptance_alloc_job
+  uniform baseline:      $UNIFORM_CONFIG
   objective comparison: $comparison_job
   quality cross-eval:   $quality_eval_job
   acceptance cross-eval:$acceptance_eval_job

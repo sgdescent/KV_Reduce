@@ -17,10 +17,14 @@ if [[ -f .venv/bin/activate ]]; then
   source .venv/bin/activate
 fi
 
-python3 -u aggregate_objective_kv_results.py \
+cmd=(python3 -u aggregate_objective_kv_results.py \
   --quality_summary "${QUALITY_SUMMARY:?Set QUALITY_SUMMARY}" \
   --acceptance_summary "${ACCEPTANCE_SUMMARY:?Set ACCEPTANCE_SUMMARY}" \
   --quality_allocation "${QUALITY_ALLOCATION:?Set QUALITY_ALLOCATION}" \
   --acceptance_allocation "${ACCEPTANCE_ALLOCATION:?Set ACCEPTANCE_ALLOCATION}" \
   --comparison_summary "${COMPARISON_SUMMARY:?Set COMPARISON_SUMMARY}" \
-  --out_dir "${OUT_DIR:-outputs/kv_objective_final_${SLURM_JOB_ID:-local}}"
+  --out_dir "${OUT_DIR:-outputs/kv_objective_final_${SLURM_JOB_ID:-local}}")
+if [[ -n "${UNIFORM_CONFIG:-}" ]]; then
+  cmd+=(--uniform_config "$UNIFORM_CONFIG")
+fi
+"${cmd[@]}"
