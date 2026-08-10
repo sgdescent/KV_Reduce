@@ -7,6 +7,7 @@ configs="${QUANT_CONFIGS:-none;k8v8;k8v4;k4v8;k4v4;k3v8}"
 groups=(16 32 64 128)
 residuals=(0 128)
 chain_job="${AFTER_JOB:-}"
+serialize_objectives="${SERIALIZE_CELL_OBJECTIVES:-1}"
 
 for group_size in "${groups[@]}"; do
   for residual_length in "${residuals[@]}"; do
@@ -24,8 +25,12 @@ for group_size in "${groups[@]}"; do
       --export="ALL,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=${group_size},KEY_RESIDUAL_LENGTH=${residual_length},VALUE_QUANT_SCHEME=affine,SPEC_ROOT=${cell_root}/spec,QUANT_CONFIGS=${configs},WANDB_PROJECT=kv-reduce,WANDB_GROUP=${group_name}-spec" \
       scripts/run_kivi_objective_grid_spec.slurm)
 
+    quality_dependency_args=("${dependency_args[@]}")
+    if [[ "$serialize_objectives" == "1" ]]; then
+      quality_dependency_args=(--dependency="afterok:${spec_job}")
+    fi
     quality_job=$(sbatch --parsable \
-      "${dependency_args[@]}" \
+      "${quality_dependency_args[@]}" \
       --array=0-2%1 \
       --exclude="$exclude" \
       --export="ALL,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=${group_size},KEY_RESIDUAL_LENGTH=${residual_length},VALUE_QUANT_SCHEME=affine,QUALITY_ROOT=${cell_root}/quality,QUANT_CONFIGS=${configs},WANDB_PROJECT=kv-reduce,WANDB_GROUP=${group_name}-quality" \
