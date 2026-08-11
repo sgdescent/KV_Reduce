@@ -137,16 +137,24 @@ so it is not yet an end-to-end speed claim.
 ## Work In Progress
 
 - Exact proposal-length sweep at `gamma = 2, 4, 8`, including aggressive
-  `K4V2` and `K2V4` controls.
+  `K4V2` and `K2V4` controls. Two of three `gamma=2` seeds are complete:
+  `K4V2 - K2V4` is provisionally **-4.08 acceptance points**, 95% CI
+  **[-7.47, -0.82]**. The mild `K8V4 - K4V8` contrast remains unresolved at
+  **-0.13 points**, CI **[-1.23, +1.01]**.
 - Six-pair exact `K4V2` versus `K2V4` cross-family replication, paired with an
-  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM.
+  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. Four
+  exact runs are complete; the current three-family provisional macro favors
+  `K2V4` by 2.27 acceptance points, but its CI **[-5.47, +0.69]** still crosses
+  zero.
 - Exact key-quantization group-size sweep over 16, 32, 64, and 128 channels,
   with three disjoint seeds and metadata-adjusted byte accounting.
 - Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
   to separate low-bit compression from the protection of recent context.
 - Exact 4K/8K/16K speculative long-context replication.
 - Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; the 256-token
-  SmolLM2/OLMo2/Llama replication is complete.
+  SmolLM2/OLMo2/Llama replication is complete. In the first Qwen2.5-3B
+  256-token seed, `K4V8` retains 40.43% of BF16 tokens versus 28.59% for
+  `K8V4`; this is provisional until all three seeds finish.
 - Cross-family ARC-Challenge/HellaSwag task checks.
 - Model-weighted paper tables and objective-comparison figures.
 - Packed-kernel optimization and a serving-capacity benchmark.
