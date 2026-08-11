@@ -44,6 +44,20 @@ def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def enforce_full_run(
+    summary_path: Path,
+    underfilled: Dict[str, Any] | None,
+    *,
+    enabled: bool,
+) -> None:
+    if underfilled is None or not enabled:
+        return
+    raise ValueError(
+        f"{summary_path} is underfilled: requested {underfilled['requested']}, "
+        f"observed {underfilled['actual']} sequences."
+    )
+
+
 def paired_sequence_metric_differences(
     rows: List[Dict[str, str]],
     *,
@@ -118,6 +132,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional comma-separated seed allowlist for provenance-safe partial aggregation.",
     )
+    parser.add_argument(
+        "--require_full_runs",
+        action="store_true",
+        help="Reject summaries that contain fewer sequences than requested.",
+    )
     return parser
 
 
@@ -164,6 +183,11 @@ def main() -> None:
         )
         if underfilled is not None:
             underfilled_runs.append(underfilled)
+        enforce_full_run(
+            summary_path,
+            underfilled,
+            enabled=args.require_full_runs,
+        )
         for raw in raw_rows:
             name = raw["candidate"]
             if name == "none":
@@ -277,6 +301,7 @@ def main() -> None:
         "missing_runs": missing,
         "underfilled_runs": underfilled_runs,
         "selected_seeds": sorted(selected_seeds) if selected_seeds is not None else None,
+        "full_run_gate": args.require_full_runs,
         "grouped": grouped,
         "paired_precision_contrasts": paired_comparisons,
         "plots": make_plot(grouped, args.out_dir),
