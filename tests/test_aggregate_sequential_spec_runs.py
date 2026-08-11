@@ -1,10 +1,12 @@
 import random
 import unittest
+from pathlib import Path
 
 from aggregate_sequential_spec_runs import (
     aggregate,
     bootstrap_paired_ratio_difference,
     bootstrap_ratio_ci,
+    validate_prompt_count,
 )
 
 
@@ -26,6 +28,23 @@ def row(prompt, config, accepted, proposed):
 
 
 class SequentialSpecAggregationTest(unittest.TestCase):
+    def test_full_run_gate_rejects_underfilled_summary(self):
+        payload = {"config": {"num_prompts": 8}, "num_prompts": 5}
+        with self.assertRaisesRegex(ValueError, "requested 8, observed 5"):
+            validate_prompt_count(
+                payload,
+                path=Path("summary.json"),
+                require_full_runs=True,
+            )
+        self.assertEqual(
+            validate_prompt_count(
+                payload,
+                path=Path("summary.json"),
+                require_full_runs=False,
+            ),
+            (8, 5),
+        )
+
     def test_ratio_uses_token_counts_not_mean_prompt_rates(self):
         mean, low, high = bootstrap_ratio_ci(
             [1, 9], [2, 18], rng=random.Random(1), samples=0

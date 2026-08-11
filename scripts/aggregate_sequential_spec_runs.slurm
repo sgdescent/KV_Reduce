@@ -17,7 +17,13 @@ if [[ -f .venv/bin/activate ]]; then
   source .venv/bin/activate
 fi
 
+full_run_args=()
+if [[ "${REQUIRE_FULL_RUNS:-0}" == "1" ]]; then
+  full_run_args+=(--require_full_runs)
+fi
+
 python3 -u aggregate_sequential_spec_runs.py \
   --summary_glob "${SUMMARY_GLOB:?Set SUMMARY_GLOB}" \
   --out_dir "${OUT_DIR:?Set OUT_DIR}" \
-  --bootstrap_samples "${BOOTSTRAP_SAMPLES:-20000}"
+  --bootstrap_samples "${BOOTSTRAP_SAMPLES:-20000}" \
+  "${full_run_args[@]}"

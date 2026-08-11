@@ -186,7 +186,19 @@ def bootstrap_macro_paired_ratio_difference(
     return estimate, percentile(draws, 0.025), percentile(draws, 0.975)
 
 
-def load_runs(patterns: Iterable[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def validate_prompt_count(
+    payload: Dict[str, Any], *, path: Path, require_full_runs: bool
+) -> Tuple[int, int]:
+    requested = int(payload.get("config", {}).get("num_prompts", 0))
+    actual = int(payload.get("num_prompts", 0))
+    if require_full_runs and actual < requested:
+        raise ValueError(f"{path} is underfilled: requested {requested}, observed {actual} prompts.")
+    return requested, actual
+
+
+def load_runs(
+    patterns: Iterable[str], *, require_full_runs: bool = False
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     paths = sorted({path for pattern in patterns for path in glob.glob(pattern, recursive=True)})
     if not paths:
         raise FileNotFoundError("No strict sequential-target summaries matched.")
@@ -213,6 +225,9 @@ def load_runs(patterns: Iterable[str]) -> Tuple[List[Dict[str, Any]], List[Dict[
         if mismatches:
             raise ValueError(f"{path} contains {len(mismatches)} target-exactness failures.")
         config = payload.get("config", {})
+        requested_prompts, actual_prompts = validate_prompt_count(
+            payload, path=path, require_full_runs=require_full_runs
+        )
         run_id = str(path.parent)
         runs.append(
             {
@@ -224,7 +239,9 @@ def load_runs(patterns: Iterable[str]) -> Tuple[List[Dict[str, Any]], List[Dict[
                 "max_new_tokens": int(config.get("max_new_tokens", 0)),
                 "draft_steps": int(config.get("draft_steps", 0)),
                 "seed": int(config.get("seed", 0)),
-                "num_prompts": int(payload.get("num_prompts", 0)),
+                "num_prompts": actual_prompts,
+                "requested_num_prompts": requested_prompts,
+                "underfilled_by": max(0, requested_prompts - actual_prompts),
             }
         )
         memory = payload.get("memory_estimates", {})
@@ -454,9 +471,16 @@ def main() -> None:
     parser.add_argument("--out_dir", required=True)
     parser.add_argument("--bootstrap_samples", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=8675309)
+    parser.add_argument(
+        "--require_full_runs",
+        action="store_true",
+        help="Reject summaries that contain fewer prompts than requested.",
+    )
     args = parser.parse_args()
 
-    rows, runs = load_runs(parse_patterns(args.summary_glob))
+    rows, runs = load_runs(
+        parse_patterns(args.summary_glob), require_full_runs=args.require_full_runs
+    )
     summaries, contrasts, macro_summaries, macro_contrasts = aggregate(
         rows, bootstrap_samples=args.bootstrap_samples, seed=args.seed
     )
@@ -470,6 +494,7 @@ def main() -> None:
         "runtime": {
             "source_evaluator_version": EXPECTED_VERSION,
             "exactness_gate": "all_rows_match_independent_target_greedy",
+            "full_run_gate": args.require_full_runs,
         },
         "runs": runs,
         "summaries": summaries,
