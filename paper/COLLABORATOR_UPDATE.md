@@ -1,6 +1,6 @@
 # KV-Cache Quantization: Collaborator Update
 
-Status: audited results as of August 10, 2026. All speculative-decoding numbers
+Status: audited results as of August 11, 2026. All speculative-decoding numbers
 below use a sequential BF16 target verifier, an unquantized target cache, and
 produce exactly the same target-greedy tokens as the independent BF16 target.
 
@@ -251,10 +251,16 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   are equivalent. The intended stricter execution (`13242`--`13243`) was
   correctly excluded after its summaries revealed that SLURM had captured a
   stale four-choice script; its second 100% ceiling result is not used. The
-  corrected v2 sweep (`13443`--`13444`) evaluates `K4V2`, `K2V4`, and `K2V2`
-  at 8K/16K/32K with three disjoint seeds, and aggregation now requires all
-  runs to report 16 choices and generator version
-  `synthetic_passkey_16way_v2`.
+  corrected v2 sweep (`13443`--`13444`) is now complete and passes its strict
+  gate: 9/9 runs report 16 choices, generator version
+  `synthetic_passkey_16way_v2`, and 16 examples per run. BF16, `K4V4`,
+  `K4V2`, `K2V4`, and `K2V2` all achieve 100% accuracy at 8K, 16K, and 32K,
+  including passkeys placed at 10%, 50%, and 90% depth. `K2V2` saves 82.92%,
+  83.26%, and 83.43% of standalone cache bytes at those contexts. This remains
+  a ceiling result: increasing from four to sixteen answer choices was not
+  enough to distinguish policies. The next retrieval control should use
+  confusable distractors with shared prefixes, nearby values, or multi-hop
+  composition rather than simply adding more choices.
 - Exact quality-optimized versus acceptance-optimized allocation matrix at
   actual packed bytes: two budgets, 1K/4K contexts, three held-out seeds, and
   24 ordinary/speculative cross-evaluation cells per family. An audit found
