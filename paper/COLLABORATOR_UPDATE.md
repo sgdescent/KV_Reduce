@@ -4,8 +4,9 @@ Status: provisional results as of August 10, 2026. The matched-objective grid,
 three-length speculation sweep, 16K/32K speculative long-context sweep,
 four-condition verifier audit, corrected Qwen HellaSwag/ARC task suite, and
 powered Qwen2.5-7B/3B FineWeb-Edu K4V3-versus-K3V4 replication are complete.
-The first real bit-packed memory/attention benchmark is also complete.
-Cross-family task checks, all-layer objective-specific allocation, strict
+The real bit-packed memory benchmark and a direct packed Triton attention
+microbenchmark are also complete. Llama-3.2-3B and OLMo-2-1B ARC-Challenge and
+HellaSwag checks are complete. Additional cross-family tasks, strict
 quantizer-factorial cells, long-context replications, and free-running
 standalone-generation drift are still running.
 
@@ -28,9 +29,11 @@ for ordinary quality and speculative acceptance; and (3) a packed implementation
 that converts those policies into measured long-context memory-capacity or
 throughput gains. We already have strong evidence for the first piece and broad
 evidence that K4V4/K3V4 preserve behavior. The first small-calibration allocator
-is negative, and the actual packed benchmark validates storage but not speed. A
-powered, generalizing allocator, cross-family evidence, and fused systems results
-remain the gates for a credible main-track claim.
+is negative. The direct packed kernel improves substantially over
+materialize-then-attend and nearly eliminates dequantization workspace, but is
+still slower than native SDPA. A powered, generalizing allocator, broader
+cross-family evidence, and production-kernel results remain the gates for a
+credible main-track claim.
 
 The prior-work bar is high. KIVI already establishes asymmetric quantization
 geometry for ordinary decoding, KV-AdaQuant explicitly assigns different
@@ -50,7 +53,7 @@ quantizer geometry, introduce a robust layer-wise allocator that beats uniform
 and published asymmetric policies at equal *actual bytes*, and demonstrate a
 real serving benefit with packed/fused attention. The current evidence supports
 the first part; the campaign is testing the second, and the packed benchmark has
-validated memory storage but not production speed.
+validated memory storage and direct packed execution but not production speed.
 
 **Why restrict this to speculative decoding?** We should not. In ordinary
 autoregressive decoding, quantizing the model's K/V cache can reduce memory
@@ -66,12 +69,14 @@ target and an important control.
 Qwen2.5-1.5B-shaped GQA configuration reduces persistent storage from 896 MiB
 to 260.2 MiB at 32K tokens, a 70.96% reduction including metadata and a BF16
 residual tail. Savings are already 66.80% at 1K and approach 71% as metadata is
-amortized. The current materialize-then-attend CUDA diagnostic is 14.5x slower
-than native attention at 32K, so it validates the byte accounting but also shows
-that a fused packed attention kernel is mandatory before making a speed claim.
-Separately, a free-running target-cache campaign is queued across Qwen, Llama,
-OLMo, and SmolLM to measure exact sequence retention, token agreement, first
-divergence, and long-horizon error accumulation outside speculative decoding.
+amortized. A direct split-sequence Triton kernel matches the materialized K4V4
+reference at 0.999994 cosine, is 2.05x faster than materialize-then-attend, and
+reduces temporary allocation from 88.3 MiB to 0.38 MiB at 32K. It remains 6.88x
+slower than native BF16 SDPA, so this is a correct compressed-execution proof,
+not a serving-speed claim. Separately, a free-running target-cache campaign is
+queued across Qwen, Llama, OLMo, and SmolLM to measure exact sequence retention,
+token agreement, first divergence, and long-horizon error accumulation outside
+speculative decoding.
 
 The strict all-layer objective-specific allocation run is complete and should be
 treated as a negative result. Across 144 single-layer K/V perturbations, the
@@ -85,6 +90,23 @@ acceptance-optimized-minus-quality-optimized effect is -2.01 points with a wide
 prompts and its per-cell effects are small relative to uncertainty, so the next
 allocator must use a larger profile, hierarchical shrinkage, and held-out model
 selection rather than trusting raw layer ranks.
+
+The cross-family task checks support the broader ordinary-decoding scope, but do
+not yet establish a superior K/V policy. Across 256 paired examples per task,
+Llama-3.2-3B and OLMo-2-1B retain ARC-Challenge and HellaSwag accuracy under
+roughly 54--62% model-cache savings for K3V4/K4V3/K4V4. Most paired differences
+from BF16 and between equal-memory K/V allocations have confidence intervals
+that include zero. The result is encouraging for compression robustness, while
+also warning us not to infer a universal K-first or V-first rule from a small
+task set.
+
+An OLMo calibration profile adds a useful warning about objective-aware
+allocation: ordinary-quality and speculative-acceptance layer risks have
+Spearman correlation -0.001 and disagree on 26 of 32 K/V component choices at
+the same eight-bit mean budget. This is not yet a held-out win. Together with
+the negative Qwen held-out allocator, it shows why the paper must distinguish
+"objectives rank local perturbations differently" from the stronger claim that
+an acceptance-trained allocation generalizes better.
 
 ## Copy-Paste Message
 

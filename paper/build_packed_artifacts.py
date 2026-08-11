@@ -13,8 +13,10 @@ import matplotlib.pyplot as plt
 
 PAPER_DIR = Path(__file__).resolve().parent
 SOURCE = PAPER_DIR / "data" / "packed" / "qwen25_15b_summary.json"
+FUSED_SOURCE = PAPER_DIR / "data" / "packed" / "qwen25_15b_fused_split512_summary.json"
 OUT_DIR = PAPER_DIR / "packed_artifacts"
 EXPECTED_VERSION = "packed_unfused_attention_v1"
+EXPECTED_FUSED_VERSION = "packed_fused_attention_v1"
 COLORS = {
     "none": "#17324D",
     "k8v4": "#168C82",
@@ -42,6 +44,20 @@ def load_rows() -> List[Dict[str, Any]]:
         raise ValueError("Packed benchmark did not use actual packed payloads.")
     if runtime.get("production_throughput_claim") is not False:
         raise ValueError("Unfused benchmark must not be marked as production throughput.")
+    return payload["rows"]
+
+
+def load_fused_rows() -> List[Dict[str, Any]]:
+    payload = json.loads(FUSED_SOURCE.read_text(encoding="utf-8"))
+    runtime = payload.get("runtime", {})
+    if runtime.get("evaluator_version") != EXPECTED_FUSED_VERSION:
+        raise ValueError("Direct packed benchmark provenance is missing or unsupported.")
+    if runtime.get("storage_mode") != "actual_bit_packed_uint8_payloads":
+        raise ValueError("Direct packed benchmark did not use actual packed payloads.")
+    if runtime.get("decode_mode") != "triton_online_softmax_direct_packed_kv":
+        raise ValueError("Direct packed benchmark used an unexpected decode path.")
+    if runtime.get("production_throughput_claim") is not False:
+        raise ValueError("Microbenchmark must not be marked as production throughput.")
     return payload["rows"]
 
 
@@ -106,6 +122,67 @@ def plot(rows: List[Dict[str, Any]]) -> None:
     plt.close(fig)
 
 
+def plot_kernel(fused_rows: List[Dict[str, Any]]) -> None:
+    rows = sorted(
+        (row for row in fused_rows if row["config"] == "k4v4"),
+        key=lambda row: int(row["context"]),
+    )
+    contexts = [int(row["context"]) for row in rows]
+    fig, axes = plt.subplots(1, 2, figsize=(6.8, 2.55))
+
+    latency_series = (
+        ("Native BF16 SDPA", "native_decode_median_ms", COLORS["none"]),
+        ("Materialize then attend", "unfused_decode_median_ms", COLORS["k4v8"]),
+        ("Direct packed Triton", "fused_decode_median_ms", COLORS["k8v4"]),
+    )
+    for label, field, color in latency_series:
+        axes[0].plot(
+            contexts,
+            [row[field] for row in rows],
+            marker="o",
+            markersize=3.5,
+            linewidth=1.5,
+            color=color,
+            label=label,
+        )
+
+    axes[1].plot(
+        contexts,
+        [row["unfused_transient_peak_delta_bytes"] / 2**20 for row in rows],
+        marker="o",
+        markersize=3.5,
+        linewidth=1.5,
+        color=COLORS["k4v8"],
+        label="Materialize then attend",
+    )
+    axes[1].plot(
+        contexts,
+        [row["fused_transient_peak_delta_bytes"] / 2**20 for row in rows],
+        marker="o",
+        markersize=3.5,
+        linewidth=1.5,
+        color=COLORS["k8v4"],
+        label="Direct packed Triton",
+    )
+
+    for axis in axes:
+        axis.set_xscale("log", base=2)
+        axis.set_yscale("log", base=2)
+        axis.set_xticks(contexts, [f"{context // 1024}K" for context in contexts])
+        axis.grid(color="#D9DDD8", linewidth=0.7, alpha=0.8)
+        axis.set_axisbelow(True)
+        axis.set_xlabel("Context length")
+        axis.legend(fontsize=7.2)
+    axes[0].set_ylabel("Single-layer decode latency (ms)")
+    axes[0].set_title("K4V4 attention microbenchmark", fontweight="bold")
+    axes[1].set_ylabel("Temporary allocation (MiB)")
+    axes[1].set_title("Dequantization workspace", fontweight="bold")
+    fig.tight_layout(w_pad=1.6)
+    fig.savefig(OUT_DIR / "packed_kv_kernel.pdf")
+    fig.savefig(OUT_DIR / "packed_kv_kernel.png")
+    plt.close(fig)
+
+
 def write_outputs(rows: List[Dict[str, Any]]) -> None:
     fields = [
         "context",
@@ -143,12 +220,59 @@ def write_outputs(rows: List[Dict[str, Any]]) -> None:
     (OUT_DIR / "packed_kv_table.tex").write_text("\n".join(table) + "\n", encoding="utf-8")
 
 
+def write_kernel_outputs(fused_rows: List[Dict[str, Any]]) -> None:
+    rows = sorted(
+        (row for row in fused_rows if row["config"] == "k4v4"),
+        key=lambda row: int(row["context"]),
+    )
+    fields = [
+        "context",
+        "native_decode_median_ms",
+        "unfused_decode_median_ms",
+        "fused_decode_median_ms",
+        "fused_speedup_vs_unfused",
+        "fused_speedup_vs_native",
+        "unfused_transient_peak_delta_bytes",
+        "fused_transient_peak_delta_bytes",
+        "kernel_output_cosine",
+        "kernel_output_relative_rmse",
+    ]
+    with (OUT_DIR / "packed_kv_kernel_results.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row[field] for field in fields})
+
+    table = [
+        r"\begin{tabular}{rrrrrr}",
+        r"\toprule",
+        r"Context & Native ms & Unfused ms & Direct ms & Direct speedup & Cosine \\",
+        r"\midrule",
+    ]
+    for row in rows:
+        table.append(
+            f"{int(row['context']) // 1024}K & {row['native_decode_median_ms']:.3f} & "
+            f"{row['unfused_decode_median_ms']:.3f} & {row['fused_decode_median_ms']:.3f} & "
+            f"{row['fused_speedup_vs_unfused']:.2f}$\\times$ & "
+            f"{row['kernel_output_cosine']:.6f} \\\\"
+        )
+    table.extend([r"\bottomrule", r"\end{tabular}"])
+    (OUT_DIR / "packed_kv_kernel_table.tex").write_text(
+        "\n".join(table) + "\n", encoding="utf-8"
+    )
+
+
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     rows = load_rows()
+    fused_rows = load_fused_rows()
     configure_style()
     plot(rows)
+    plot_kernel(fused_rows)
     write_outputs(rows)
+    write_kernel_outputs(fused_rows)
     print(f"Wrote packed-cache artifacts to {OUT_DIR}.")
 
 
