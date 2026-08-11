@@ -17,9 +17,9 @@ if [[ -f .venv/bin/activate ]]; then
   source .venv/bin/activate
 fi
 
-full_run_args=()
-if [[ "${REQUIRE_FULL_RUNS:-1}" == "1" ]]; then
-  full_run_args+=(--require_full_runs)
+full_run_args=(--require_full_runs)
+if [[ "${ALLOW_UNDERFILLED_RUNS:-0}" == "1" ]]; then
+  full_run_args=()
 fi
 
 python3 -u aggregate_sequential_spec_runs.py \
