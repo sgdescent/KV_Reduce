@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 
 FULL_PRECISION_BITS = 16
@@ -16,6 +16,73 @@ FULL_PRECISION_BITS = 16
 
 def parse_csv_ints(value: str) -> List[int]:
     return [int(item.strip()) for item in value.replace(";", ",").split(",") if item.strip()]
+
+
+def profile_saved_bytes(
+    profile_csv: str,
+    *,
+    profiled_layers: List[int],
+    k_bits: int,
+    v_bits: int,
+) -> float:
+    """Sum metadata-aware one-component savings for a uniform K/V policy."""
+    with open(profile_csv, "r", encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+    wanted = {
+        (layer, component): (k_bits if component == "k" else v_bits)
+        for layer in profiled_layers
+        for component in ("k", "v")
+    }
+    found = {}
+    for row in rows:
+        try:
+            key = (int(float(row["layer"])), str(row["component"]))
+            bits = int(float(row["bits"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if key not in wanted or bits != wanted[key]:
+            continue
+        if row.get("total_cache_mib_saved", "") != "":
+            saved_bytes = float(row["total_cache_mib_saved"]) * (1024.0**2)
+        elif row.get("cache_mib_saved", "") != "":
+            saved_bytes = float(row["cache_mib_saved"]) * (1024.0**2)
+        else:
+            native = float(row.get("native_total_cache_bytes", 0.0))
+            quantized = float(row.get("quantized_total_cache_bytes", native))
+            saved_bytes = max(0.0, native - quantized)
+        found[key] = saved_bytes
+    missing = sorted(set(wanted) - set(found))
+    if missing:
+        raise ValueError(
+            f"Profile {profile_csv} is missing byte costs for K{k_bits}/V{v_bits}: {missing[:4]}"
+        )
+    return float(sum(found.values()))
+
+
+def matched_byte_target(
+    profile_csv: str,
+    *,
+    profiled_layers: List[int],
+    budget: int,
+) -> tuple[float, Dict[str, float]]:
+    """Use the less-compressed K/V-priority baseline as a shared byte target."""
+    k_priority = heuristic_component_bits(budget, prioritize="k")
+    v_priority = heuristic_component_bits(budget, prioritize="v")
+    savings = {
+        "k_priority": profile_saved_bytes(
+            profile_csv,
+            profiled_layers=profiled_layers,
+            k_bits=k_priority[0],
+            v_bits=k_priority[1],
+        ),
+        "v_priority": profile_saved_bytes(
+            profile_csv,
+            profiled_layers=profiled_layers,
+            k_bits=v_priority[0],
+            v_bits=v_priority[1],
+        ),
+    }
+    return min(savings.values()), savings
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,6 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--budgets", default="6,8,10,12")
     parser.add_argument("--contexts", default="512,1024,4096")
     parser.add_argument("--seeds", default="0,1,2")
+    parser.add_argument("--allowed_bits", default="4,8,16")
     parser.add_argument("--num_eval", type=int, default=32)
     parser.add_argument(
         "--quality_skip_base",
@@ -150,7 +218,8 @@ def run_allocator(
     *,
     profile_csv: str,
     risk_field: str,
-    budget: int,
+    target_profiled_saved_bytes: float,
+    allowed_bits: str,
     name: str,
     out_dir: Path,
     num_layers: int,
@@ -165,8 +234,10 @@ def run_allocator(
             str(num_layers),
             "--risk_field",
             risk_field,
-            "--target_profiled_mean_bits",
-            str(budget),
+            "--allowed_bits",
+            allowed_bits,
+            "--target_profiled_saved_bytes",
+            str(target_profiled_saved_bytes),
             "--name",
             name,
             "--out_dir",
@@ -184,15 +255,22 @@ def main() -> None:
     budgets = parse_csv_ints(args.budgets)
     contexts = parse_csv_ints(args.contexts)
     seeds = parse_csv_ints(args.seeds)
+    allowed_bits = ",".join(str(bits) for bits in parse_csv_ints(args.allowed_bits))
     rows = []
     profiled_layers = read_profiled_layers(args.acceptance_profile_csv)
 
     for budget in budgets:
         budget_root = root / f"budget_{budget}"
+        target_saved_bytes, heuristic_saved_bytes = matched_byte_target(
+            args.acceptance_profile_csv,
+            profiled_layers=profiled_layers,
+            budget=budget,
+        )
         quality_allocation = run_allocator(
             profile_csv=args.quality_profile_csv,
             risk_field=args.quality_risk_field,
-            budget=budget,
+            target_profiled_saved_bytes=target_saved_bytes,
+            allowed_bits=allowed_bits,
             name=f"quality_b{budget}",
             out_dir=budget_root / "quality_allocation",
             num_layers=args.num_layers,
@@ -200,7 +278,8 @@ def main() -> None:
         acceptance_allocation = run_allocator(
             profile_csv=args.acceptance_profile_csv,
             risk_field=args.acceptance_risk_field,
-            budget=budget,
+            target_profiled_saved_bytes=target_saved_bytes,
+            allowed_bits=allowed_bits,
             name=f"acceptance_b{budget}",
             out_dir=budget_root / "acceptance_allocation",
             num_layers=args.num_layers,
@@ -219,6 +298,37 @@ def main() -> None:
             num_layers=args.num_layers,
             out_dir=budget_root / "v_priority_allocation",
         )
+        for objective, path in (
+            ("quality", quality_allocation),
+            ("acceptance", acceptance_allocation),
+        ):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["nominal_budget_label"] = budget
+            payload["byte_budget_source"] = "min_k_v_priority_profiled_savings"
+            payload["heuristic_profiled_saved_bytes"] = heuristic_saved_bytes
+            payload["allocation_objective"] = objective
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        quality_payload = json.loads(quality_allocation.read_text(encoding="utf-8"))
+        acceptance_payload = json.loads(acceptance_allocation.read_text(encoding="utf-8"))
+        achieved_gap = abs(
+            float(quality_payload["achieved_profiled_saved_bytes"])
+            - float(acceptance_payload["achieved_profiled_saved_bytes"])
+        )
+        if achieved_gap > 0.5:
+            raise ValueError(
+                "Objective allocations failed equal-byte preparation gate: "
+                f"budget={budget}, achieved_saved_bytes_gap={achieved_gap}"
+            )
+        for objective, path in (
+            ("k_priority", k_priority_allocation),
+            ("v_priority", v_priority_allocation),
+        ):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["nominal_budget_label"] = budget
+            payload["byte_budget_source"] = "equal_nominal_bits_baseline"
+            payload["achieved_profiled_saved_bytes"] = heuristic_saved_bytes[objective]
+            payload["allocation_objective"] = objective
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         configs = (
             f"none;allocation:{quality_allocation};allocation:{acceptance_allocation};"
             f"allocation:{k_priority_allocation};allocation:{v_priority_allocation}"

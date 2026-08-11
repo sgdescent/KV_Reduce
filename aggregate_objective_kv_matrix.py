@@ -315,11 +315,43 @@ def main() -> None:
     manifest_cells = load_manifest_cells(matrix_dir) if args.require_complete else {}
     seen_cells = set()
     integrity_violations: List[Dict[str, Any]] = []
+    allocation_byte_audit: List[Dict[str, Any]] = []
 
     for budget_dir in sorted(matrix_dir.glob("budget_*")):
         budget = int(budget_dir.name.split("_", 1)[1])
         quality_allocation = read_json(budget_dir / "quality_allocation" / "allocation.json")
         acceptance_allocation = read_json(budget_dir / "acceptance_allocation" / "allocation.json")
+        quality_target_bytes = quality_allocation.get("target_profiled_saved_bytes")
+        acceptance_target_bytes = acceptance_allocation.get("target_profiled_saved_bytes")
+        quality_achieved_bytes = quality_allocation.get("achieved_profiled_saved_bytes")
+        acceptance_achieved_bytes = acceptance_allocation.get("achieved_profiled_saved_bytes")
+        byte_issues = []
+        if None in (
+            quality_target_bytes,
+            acceptance_target_bytes,
+            quality_achieved_bytes,
+            acceptance_achieved_bytes,
+        ):
+            byte_issues.append("objective allocations are missing metadata-aware byte budgets")
+        else:
+            if abs(float(quality_target_bytes) - float(acceptance_target_bytes)) > 0.5:
+                byte_issues.append("quality and acceptance target bytes differ")
+            if abs(float(quality_achieved_bytes) - float(acceptance_achieved_bytes)) > 0.5:
+                byte_issues.append("quality and acceptance achieved bytes differ")
+        allocation_byte_audit.append(
+            {
+                "budget": budget,
+                "quality_target_profiled_saved_bytes": quality_target_bytes,
+                "acceptance_target_profiled_saved_bytes": acceptance_target_bytes,
+                "quality_achieved_profiled_saved_bytes": quality_achieved_bytes,
+                "acceptance_achieved_profiled_saved_bytes": acceptance_achieved_bytes,
+                "issues": byte_issues,
+            }
+        )
+        if args.require_complete and byte_issues:
+            raise ValueError(
+                f"Objective matrix failed equal-byte gate at budget {budget}: {byte_issues}"
+            )
         allocations = [("quality", quality_allocation), ("acceptance", acceptance_allocation)]
         for objective in ("k_priority", "v_priority"):
             allocation_path = budget_dir / f"{objective}_allocation" / "allocation.json"
@@ -370,6 +402,12 @@ def main() -> None:
                             "allocation_objective": allocation_objective,
                             "allocation_name": name,
                             "profiled_mean_bits": allocation["achieved_profiled_mean_bits"],
+                            "target_profiled_saved_bytes": allocation.get(
+                                "target_profiled_saved_bytes"
+                            ),
+                            "achieved_profiled_saved_bytes": allocation.get(
+                                "achieved_profiled_saved_bytes"
+                            ),
                             "all_component_mean_bits": quality["allocation/all_bits_mean"],
                             "quality_delta_nll": quality["delta_nll"],
                             "quality_kl": quality["kl_p_to_q"],
@@ -785,8 +823,12 @@ def main() -> None:
                 and exactness_totals["non_tie_or_unknown"] == 0
             ),
             "paired_within_objective_gate": True,
+            "objective_allocations_byte_matched_gate": not any(
+                audit["issues"] for audit in allocation_byte_audit
+            ),
             "cross_context_ci": "hierarchical_cell_then_example_bootstrap",
         },
+        "allocation_byte_audit": allocation_byte_audit,
         "num_complete_rows": len(rows),
         "num_missing_pairs": len(missing),
         "num_rejected_pairs": len(rejected),

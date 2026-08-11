@@ -1,4 +1,8 @@
 import csv
+import importlib.util
+import json
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,6 +12,10 @@ from aggregate_objective_kv_matrix import (
     hierarchical_bootstrap_mean_ci,
     load_manifest_cells,
 )
+from prepare_objective_kv_matrix import matched_byte_target
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ObjectiveMatrixAggregationTest(unittest.TestCase):
@@ -76,6 +84,113 @@ class ObjectiveMatrixAggregationTest(unittest.TestCase):
 
         self.assertTrue(any("num_sequences" in issue for issue in issues))
         self.assertTrue(any("quality row count" in issue for issue in issues))
+
+    def test_byte_target_uses_less_compressed_nominal_baseline(self) -> None:
+        with TemporaryDirectory() as tmp:
+            profile = Path(tmp) / "profile.csv"
+            rows = []
+            savings = {
+                ("k", 8): 1.0,
+                ("k", 4): 2.0,
+                ("v", 8): 1.5,
+                ("v", 4): 3.0,
+            }
+            for layer in (0, 1):
+                for (component, bits), saved_mib in savings.items():
+                    rows.append(
+                        {
+                            "candidate": f"layer{layer}_{component}{bits}",
+                            "layer": layer,
+                            "component": component,
+                            "bits": bits,
+                            "cache_mib_saved": saved_mib,
+                        }
+                    )
+            with profile.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+                writer.writeheader()
+                writer.writerows(rows)
+
+            target, baselines = matched_byte_target(
+                str(profile),
+                profiled_layers=[0, 1],
+                budget=6,
+            )
+
+        self.assertEqual(target, 7.0 * 1024.0**2)
+        self.assertEqual(baselines["k_priority"], 8.0 * 1024.0**2)
+        self.assertEqual(baselines["v_priority"], 7.0 * 1024.0**2)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("transformers") is not None,
+        "allocator imports the experiment dependency stack",
+    )
+    def test_allocator_matches_metadata_aware_byte_target(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = root / "profile.csv"
+            out_dir = root / "allocation"
+            rows = [
+                {
+                    "candidate": "layer0_k8",
+                    "layer": 0,
+                    "component": "k",
+                    "bits": 8,
+                    "risk": 0.10,
+                    "cache_mib_saved": 100.0 / 1024.0**2,
+                },
+                {
+                    "candidate": "layer0_k4",
+                    "layer": 0,
+                    "component": "k",
+                    "bits": 4,
+                    "risk": 0.50,
+                    "cache_mib_saved": 200.0 / 1024.0**2,
+                },
+                {
+                    "candidate": "layer0_v8",
+                    "layer": 0,
+                    "component": "v",
+                    "bits": 8,
+                    "risk": 0.10,
+                    "cache_mib_saved": 100.0 / 1024.0**2,
+                },
+                {
+                    "candidate": "layer0_v4",
+                    "layer": 0,
+                    "component": "v",
+                    "bits": 4,
+                    "risk": 0.05,
+                    "cache_mib_saved": 200.0 / 1024.0**2,
+                },
+            ]
+            with profile.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+                writer.writeheader()
+                writer.writerows(rows)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "search_kv_bit_allocation.py"),
+                    "--profile_csv",
+                    str(profile),
+                    "--risk_field",
+                    "risk",
+                    "--target_profiled_saved_bytes",
+                    "300",
+                    "--out_dir",
+                    str(out_dir),
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            allocation = json.loads((out_dir / "allocation.json").read_text())
+
+        self.assertEqual(allocation["achieved_profiled_saved_bytes"], 300.0)
+        self.assertEqual(allocation["k_bits"], [8])
+        self.assertEqual(allocation["v_bits"], [4])
 
 
 if __name__ == "__main__":

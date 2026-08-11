@@ -145,6 +145,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Use a fixed mean-bit budget over profiled K/V components instead of a risk budget.",
     )
+    parser.add_argument(
+        "--target_profiled_saved_bytes",
+        type=float,
+        default=None,
+        help=(
+            "Require at least this many metadata-aware saved bytes over profiled "
+            "K/V components. This is preferred for equal-memory comparisons."
+        ),
+    )
     parser.add_argument("--name", type=str, default="sensitivity_aware")
     parser.add_argument("--out_dir", type=str, default="outputs/spec_kv_allocation")
     return parser
@@ -160,6 +169,15 @@ def main() -> None:
     if FULL_PRECISION_BITS not in allowed_bits:
         allowed_bits.append(FULL_PRECISION_BITS)
         allowed_bits = sorted(set(allowed_bits))
+    if (
+        args.target_profiled_mean_bits is not None
+        and args.target_profiled_saved_bytes is not None
+    ):
+        raise ValueError(
+            "Choose either target_profiled_mean_bits or target_profiled_saved_bytes, not both."
+        )
+    if args.target_profiled_saved_bytes is not None and args.target_profiled_saved_bytes < 0:
+        raise ValueError("target_profiled_saved_bytes must be nonnegative.")
 
     profile_rows = [
         row
@@ -193,8 +211,14 @@ def main() -> None:
         for component in ("k", "v")
     }
 
-    if args.target_profiled_mean_bits is not None:
-        if not 2.0 <= args.target_profiled_mean_bits <= float(FULL_PRECISION_BITS):
+    if (
+        args.target_profiled_mean_bits is not None
+        or args.target_profiled_saved_bytes is not None
+    ):
+        if (
+            args.target_profiled_mean_bits is not None
+            and not 2.0 <= args.target_profiled_mean_bits <= float(FULL_PRECISION_BITS)
+        ):
             raise ValueError("target_profiled_mean_bits must be between 2 and 16.")
         profiled_keys = sorted(grouped)
         options_by_key: Dict[Tuple[int, str], List[Dict[str, Any]]] = {}
@@ -221,26 +245,44 @@ def main() -> None:
                     options[bits] = option
             options_by_key[key] = list(options.values())
 
-        # Exact dynamic programming avoids a greedy search accidentally using a
-        # different memory budget for the two objectives.
+        # Exact dynamic programming avoids a greedy search accidentally assigning
+        # different packed-cache budgets to the two downstream objectives.
+        use_byte_budget = args.target_profiled_saved_bytes is not None
         states: Dict[int, Tuple[float, List[Dict[str, Any]]]] = {0: (0.0, [])}
         for key in profiled_keys:
             next_states: Dict[int, Tuple[float, List[Dict[str, Any]]]] = {}
-            for total_bits, (total_risk, path) in states.items():
+            for total_cost, (total_risk, path) in states.items():
                 for option in options_by_key[key]:
-                    new_bits = total_bits + int(option["bits"])
+                    option_cost = (
+                        int(round(float(option["saved_bytes"])))
+                        if use_byte_budget
+                        else int(option["bits"])
+                    )
+                    new_cost = total_cost + option_cost
                     new_risk = total_risk + float(option["risk"])
-                    previous = next_states.get(new_bits)
+                    previous = next_states.get(new_cost)
                     if previous is None or new_risk < previous[0]:
-                        next_states[new_bits] = (new_risk, path + [option])
+                        next_states[new_cost] = (new_risk, path + [option])
             states = next_states
 
-        target_total_bits = int(round(args.target_profiled_mean_bits * len(profiled_keys)))
-        feasible_totals = [total for total in states if total <= target_total_bits]
+        if use_byte_budget:
+            target_total = int(round(float(args.target_profiled_saved_bytes)))
+            feasible_totals = [total for total in states if total >= target_total]
+            # Use the smallest compression that satisfies the cache-byte budget;
+            # risk breaks ties among allocations with exactly the same bytes.
+            achieved_total = min(feasible_totals) if feasible_totals else None
+        else:
+            target_total = int(round(float(args.target_profiled_mean_bits) * len(profiled_keys)))
+            feasible_totals = [total for total in states if total <= target_total]
+            achieved_total = max(feasible_totals) if feasible_totals else None
         if not feasible_totals:
-            raise ValueError("The available bit candidates cannot satisfy target_profiled_mean_bits.")
-        achieved_total_bits = max(feasible_totals)
-        _, chosen_path = states[achieved_total_bits]
+            budget_name = (
+                "target_profiled_saved_bytes"
+                if use_byte_budget
+                else "target_profiled_mean_bits"
+            )
+            raise ValueError(f"The available candidates cannot satisfy {budget_name}.")
+        _, chosen_path = states[int(achieved_total)]
         for key, option in zip(profiled_keys, chosen_path):
             selections[key] = option
     else:
@@ -255,7 +297,11 @@ def main() -> None:
     def estimated_risk() -> float:
         return float(sum(selection["risk"] for selection in selections.values()))
 
-    while args.target_profiled_mean_bits is None and estimated_risk() > max_total_risk:
+    while (
+        args.target_profiled_mean_bits is None
+        and args.target_profiled_saved_bytes is None
+        and estimated_risk() > max_total_risk
+    ):
         compressive = [
             (key, selection)
             for key, selection in selections.items()
@@ -311,6 +357,7 @@ def main() -> None:
         "max_component_risk": max_component_risk,
         "max_total_risk": max_total_risk,
         "target_profiled_mean_bits": args.target_profiled_mean_bits,
+        "target_profiled_saved_bytes": args.target_profiled_saved_bytes,
         "achieved_profiled_mean_bits": (
             sum(float(selections[key]["bits"]) for key in grouped) / len(grouped)
             if grouped
@@ -318,6 +365,9 @@ def main() -> None:
         ),
         "estimated_total_risk": estimated_risk(),
         "estimated_saved_bytes_proxy": float(sum(selection["saved_bytes"] for selection in selections.values())),
+        "achieved_profiled_saved_bytes": float(
+            sum(selections[key]["saved_bytes"] for key in grouped)
+        ),
         "k_bits": k_bits,
         "v_bits": v_bits,
         "layers": [
