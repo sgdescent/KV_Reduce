@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import subprocess
 import sys
@@ -21,6 +22,34 @@ def strength_label(value: float) -> str:
 
 def allocation_name(path: Path) -> str:
     return str(json.loads(path.read_text(encoding="utf-8"))["name"])
+
+
+def validate_allocation_layers(path: Path, num_layers: int) -> None:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for field in ("k_bits", "v_bits"):
+        values = payload.get(field)
+        if not isinstance(values, list) or len(values) != num_layers:
+            actual = len(values) if isinstance(values, list) else "missing"
+            raise ValueError(
+                f"{path} has {actual} {field} entries, expected {num_layers}. "
+                "Use the draft model's num_hidden_layers."
+            )
+
+
+def validate_profile_layers(path: Path, num_layers: int) -> None:
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    layers = {
+        int(float(row["layer"]))
+        for row in rows
+        if row.get("component") in {"k", "v"} and int(float(row.get("layer", -1))) >= 0
+    }
+    expected = set(range(num_layers))
+    if layers != expected:
+        raise ValueError(
+            f"{path} profiles layers {sorted(layers)}, expected 0..{num_layers - 1}. "
+            "Use the draft model's num_hidden_layers."
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,6 +76,10 @@ def main() -> None:
     root.mkdir(parents=True, exist_ok=True)
     quality_allocation = Path(args.quality_allocation)
     acceptance_allocation = Path(args.acceptance_allocation)
+    validate_profile_layers(Path(args.quality_profile_csv), args.num_layers)
+    validate_profile_layers(Path(args.acceptance_profile_csv), args.num_layers)
+    validate_allocation_layers(quality_allocation, args.num_layers)
+    validate_allocation_layers(acceptance_allocation, args.num_layers)
     policies: List[Dict[str, str]] = [
         {
             "kind": "native",
