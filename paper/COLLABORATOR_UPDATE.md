@@ -157,9 +157,15 @@ so it is not yet an end-to-end speed claim.
   The model-weighted direction significantly favors preserving values under the
   tested KIVI geometry.
 - Exact key-quantization group-size sweep over 16, 32, 64, and 128 channels,
-  with three disjoint seeds and metadata-adjusted byte accounting.
+  with three disjoint seeds and metadata-adjusted byte accounting. An audit
+  found that the first array version advanced the FineWeb offset by treatment,
+  so it is excluded from between-group conclusions. The corrected prompt-paired
+  rerun is `13249`--`13251`; a strict meta-aggregate verifies identical offsets,
+  full rows, and exact target outputs before computing paired intervals.
 - Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
-  to separate low-bit compression from the protection of recent context.
+  to separate low-bit compression from the protection of recent context. Its
+  corrected prompt-paired chain is `13252`--`13254` and uses the same strict
+  treatment-pairing gate.
 - Exact 4K/8K/16K speculative long-context validation, followed by a
   dependency-chained paper-grade 16K/32K PG19-train extension (`13218`--`13219`). The
   first 4K and 8K seeds are exact. `K4V2 - K2V4` is **-5.48 points**, CI
