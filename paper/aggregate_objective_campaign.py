@@ -13,6 +13,12 @@ from typing import Any, Dict, Iterable, List
 
 
 MATRIX_LABELS = {
+    "qwen25_exact_objective_matrix_v2_bytes": "Qwen2.5 3B/1.5B / mild / exact-byte",
+    "qwen25_exact_aggressive_objective_matrix_v2_bytes": "Qwen2.5 3B/1.5B / aggressive / exact-byte",
+    "olmo2_exact_objective_matrix_v2_bytes": "OLMo-2 7B/1B / mild / exact-byte",
+    "olmo2_exact_aggressive_objective_matrix_v2_bytes": "OLMo-2 7B/1B / aggressive / exact-byte",
+    "smollm2_exact_objective_matrix_v2_bytes": "SmolLM2 1.7B/360M / mild / exact-byte",
+    "smollm2_exact_aggressive_objective_matrix_v2_bytes": "SmolLM2 1.7B/360M / aggressive / exact-byte",
     "qwen25_objective_matrix_v1": "Qwen / WikiText / top-8 / raw",
     "qwen25_objective_ucb_matrix_v1": "Qwen / WikiText / top-8 / rate-UCB",
     "qwen25_objective_c4_matrix_v1": "Qwen / C4 / top-8 / raw",
@@ -34,6 +40,15 @@ MATRIX_LABELS = {
 }
 
 EXACT_ACCEPTANCE_EVALUATOR_VERSION = "cached_dynamic_v6_sequential_target"
+
+REQUIRED_INTEGRITY_GATES = (
+    "require_complete",
+    "complete_matrix_gate",
+    "require_exact_target",
+    "exact_target_gate",
+    "paired_within_objective_gate",
+    "objective_allocations_byte_matched_gate",
+)
 
 FINAL_LABELS = {
     "qwen25_objective_1k_v1": "Qwen / WikiText / top-8",
@@ -76,11 +91,39 @@ def matrix_label(name: str) -> str:
     return MATRIX_LABELS.get(name, name.replace("_", " "))
 
 
+def strict_matrix_issues(summary: Dict[str, Any]) -> List[str]:
+    """Return reasons a matrix cannot support strict paper claims."""
+    issues = []
+    if int(summary.get("num_missing_pairs", 0)) != 0:
+        issues.append("missing matrix pairs")
+    if int(summary.get("num_rejected_pairs", 0)) != 0:
+        issues.append("rejected matrix pairs")
+
+    required_versions = summary.get("required_evaluator_versions", {})
+    if required_versions.get("quality") != "teacher_forced_cached_v1":
+        issues.append("unsupported quality evaluator")
+    if required_versions.get("acceptance") != EXACT_ACCEPTANCE_EVALUATOR_VERSION:
+        issues.append("unsupported acceptance evaluator")
+
+    gates = summary.get("integrity_gates", {})
+    failed_gates = [gate for gate in REQUIRED_INTEGRITY_GATES if gates.get(gate) is not True]
+    if failed_gates:
+        issues.append(f"missing or failed integrity gates: {', '.join(failed_gates)}")
+
+    exactness = summary.get("exactness_audit", {}).get("totals", {})
+    if int(exactness.get("non_tie_or_unknown", 0)) != 0:
+        issues.append("non-tie or unknown target mismatches")
+    if int(exactness.get("invalid_prompts", 0)) != 0:
+        issues.append("invalid acceptance prompts")
+    return issues
+
+
 def discover_aggregates(
     results_root: Path,
     *,
     include_incomplete: bool,
     include_smoke: bool,
+    allow_legacy_integrity: bool = False,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     accepted = []
     rejected = []
@@ -93,12 +136,10 @@ def discover_aggregates(
             continue
         missing = int(summary.get("num_missing_pairs", 0))
         stale = int(summary.get("num_rejected_pairs", 0))
-        required_versions = summary.get("required_evaluator_versions", {})
-        valid_evaluators = (
-            required_versions.get("quality") == "teacher_forced_cached_v1"
-            and required_versions.get("acceptance") == EXACT_ACCEPTANCE_EVALUATOR_VERSION
-        )
-        complete = missing == 0 and stale == 0 and valid_evaluators
+        issues = strict_matrix_issues(summary)
+        if allow_legacy_integrity:
+            issues = [issue for issue in issues if not issue.startswith("missing or failed integrity gates:")]
+        complete = not issues
         record = {
             "matrix": matrix,
             "label": matrix_label(matrix),
@@ -106,7 +147,9 @@ def discover_aggregates(
             "complete": complete,
             "missing_pairs": missing,
             "rejected_pairs": stale,
-            "valid_evaluators": valid_evaluators,
+            "valid_evaluators": not any("evaluator" in issue for issue in issues),
+            "strict_valid": complete,
+            "validation_issues": "; ".join(issues),
             "summary": summary,
         }
         if complete or include_incomplete:
@@ -535,6 +578,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out_dir", type=Path, default=Path("paper/objective_campaign_artifacts"))
     parser.add_argument("--include_incomplete", action="store_true")
     parser.add_argument("--include_smoke", action="store_true")
+    parser.add_argument(
+        "--allow_legacy_integrity",
+        action="store_true",
+        help="Admit legacy matrices without explicit strict integrity gates.",
+    )
     return parser
 
 
@@ -545,6 +593,7 @@ def main() -> None:
         args.results_root,
         include_incomplete=args.include_incomplete,
         include_smoke=args.include_smoke,
+        allow_legacy_integrity=args.allow_legacy_integrity,
     )
     final_records = discover_final_results(args.results_root, include_smoke=args.include_smoke)
     rows = collect_rows(records)

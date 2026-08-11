@@ -9,6 +9,7 @@ from paper.aggregate_objective_campaign import (
     discover_aggregates,
     discover_final_results,
     matrix_label,
+    strict_matrix_issues,
 )
 
 
@@ -22,6 +23,14 @@ def write_summary(root: Path, name: str, *, missing: int = 0) -> None:
         },
         "num_missing_pairs": missing,
         "num_rejected_pairs": 0,
+        "integrity_gates": {
+            "require_complete": True,
+            "complete_matrix_gate": True,
+            "require_exact_target": True,
+            "exact_target_gate": True,
+            "paired_within_objective_gate": True,
+            "objective_allocations_byte_matched_gate": True,
+        },
         "grouped": [
             {
                 "budget": 6,
@@ -56,10 +65,10 @@ def write_summary(root: Path, name: str, *, missing: int = 0) -> None:
         ],
         "exactness_audit": {
             "totals": {
-                "exact": 90,
-                "numerical_tie": 9,
-                "non_tie_or_unknown": 1,
-                "invalid_prompts": 1,
+                "exact": 99,
+                "numerical_tie": 1,
+                "non_tie_or_unknown": 0,
+                "invalid_prompts": 0,
             }
         },
     }
@@ -117,6 +126,16 @@ class ObjectiveCampaignAggregationTest(unittest.TestCase):
             matrix_label("qwen25_accept_mass_powered_1k_v1"),
             "Qwen / WikiText / top-8 / mass-UCB / 384 held-out",
         )
+
+    def test_exact_matrix_labels_identify_family_and_regime(self) -> None:
+        self.assertEqual(
+            matrix_label("olmo2_exact_aggressive_objective_matrix_v2_bytes"),
+            "OLMo-2 7B/1B / aggressive / exact-byte",
+        )
+        self.assertEqual(
+            matrix_label("smollm2_exact_objective_matrix_v2_bytes"),
+            "SmolLM2 1.7B/360M / mild / exact-byte",
+        )
         self.assertEqual(
             matrix_label("llama_all_layers_powered_b6_v1"),
             "Llama / WikiText / all-layer / b6 / 384 held-out",
@@ -156,6 +175,35 @@ class ObjectiveCampaignAggregationTest(unittest.TestCase):
             self.assertEqual(records, [])
             self.assertEqual([record["matrix"] for record in rejected], ["legacy"])
 
+    def test_rejects_matrix_without_explicit_integrity_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_summary(root, "legacy_integrity")
+            summary_path = root / "legacy_integrity" / "aggregate" / "summary.json"
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+            del payload["integrity_gates"]
+            summary_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            records, rejected = discover_aggregates(
+                root,
+                include_incomplete=False,
+                include_smoke=False,
+            )
+
+            self.assertEqual(records, [])
+            self.assertIn("integrity gates", rejected[0]["validation_issues"])
+
+    def test_rejects_non_tie_target_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_summary(root, "non_tie")
+            summary_path = root / "non_tie" / "aggregate" / "summary.json"
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+            payload["exactness_audit"]["totals"]["non_tie_or_unknown"] = 1
+            summary_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            self.assertIn("non-tie or unknown target mismatches", strict_matrix_issues(payload))
+
     def test_collects_effects_savings_and_exactness(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -167,7 +215,7 @@ class ObjectiveCampaignAggregationTest(unittest.TestCase):
             self.assertEqual(rows["objective"][0]["total_cache_saved_fraction"], 0.25)
             self.assertEqual(rows["kv"][0]["paired_quality_kl_mean"], 0.03)
             self.assertEqual(rows["native"][0]["paired_acceptance_mean"], -0.005)
-            self.assertAlmostEqual(rows["exactness"][0]["exact_or_tie_fraction"], 0.99)
+            self.assertAlmostEqual(rows["exactness"][0]["exact_or_tie_fraction"], 1.0)
 
     def test_discovers_and_flattens_final_result_campaigns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
