@@ -214,15 +214,18 @@ so it is not yet an end-to-end speed claim.
   evaluates `K4V2`, `K2V4`, and `K2V2` at 8K/16K/32K with three disjoint
   seeds and a completeness gate that rejects missing or underfilled runs.
 - Exact quality-optimized versus acceptance-optimized allocation matrix at
-  matched bytes: two budgets, 1K/4K contexts, three held-out seeds, and 24
-  ordinary/speculative cross-evaluation cells. The mild Qwen 4/8-bit matrix is
-  queued as SLURM jobs `13168` through `13172`. Complementary aggressive
-  2/4/8-bit matrices at mean 3- and 5-bit budgets are serialized behind it for
-  Qwen (`13183`--`13187`), OLMo2 (`13190`--`13194`), and SmolLM2
-  (`13195`--`13199`). The final aggregator now fails closed on missing or
-  underfilled cells, wrong evaluator versions, non-exact target trajectories,
-  or incomplete policy coverage; cross-context confidence intervals use a
-  hierarchical run-cell-then-example bootstrap.
+  actual packed bytes: two budgets, 1K/4K contexts, three held-out seeds, and
+  24 ordinary/speculative cross-evaluation cells per family. An audit found
+  that the first queued version matched nominal mean bits rather than metadata-
+  aware bytes and omitted 2-bit candidates during aggressive allocation; those
+  jobs were canceled before using GPU time. Corrected chains are Qwen mild
+  (`13264`--`13268`), Qwen aggressive (`13269`--`13273`), OLMo2 aggressive
+  (`13274`--`13278`), and SmolLM2 aggressive (`13279`--`13283`). Quality and
+  acceptance profiles now use identical sequence lengths and must achieve the
+  same profiled saved-byte target. The final aggregator fails closed on byte
+  mismatch, missing or underfilled cells, wrong evaluator versions, non-exact
+  target trajectories, or incomplete policy coverage; cross-context intervals
+  use a hierarchical run-cell-then-example bootstrap.
 - Model-weighted paper tables and objective-comparison figures.
 - Packed-kernel optimization and a serving-capacity benchmark.
 
