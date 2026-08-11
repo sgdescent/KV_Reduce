@@ -478,10 +478,19 @@ KV, with a $-0.73$-point change across 24 prompts (CI $[-2.99,1.28]$).
 The mild K8V4--K4V8 contrast is unresolved at 16K ($+0.13$ points,
 CI $[-1.09,1.26]$) but favors preserving values at 32K ($-3.50$ points,
 CI $[-6.62,-0.45]$). The aggressive K4V2--K2V4 contrast is unresolved at both
-contexts. A matched teacher-forced PG19 sweep is running under the same windows,
-seeds, cache geometry, and strict completeness gate; we therefore defer the
-long-context cross-objective conclusion rather than pairing these exact
-speculative results with an earlier, differently sampled quality run.
+contexts. A matched teacher-forced PG19 sweep under the same windows, seeds,
+cache geometry, and strict completeness gate is now complete and shows no
+statistically resolved objective-preference reversal. Ordinary-quality
+KL strongly favors K4V8 over K8V4 at both 16K (contrast $+0.00305$, CI
+$[+0.00210,+0.00427]$) and 32K ($+0.00309$, CI
+$[+0.00203,+0.00429]$). Acceptance agrees at 32K and is unresolved at 16K.
+At the aggressive budget, quality strongly favors K2V4 over K4V2 at 16K
+(KL contrast $+0.0752$, CI $[+0.0531,+0.1039]$) and 32K ($+0.1063$, CI
+$[+0.0633,+0.1677]$), while acceptance is unresolved at both contexts.
+Across the five compressed policies, Spearman correlation between acceptance
+harm and quality KL is 0.60 at 16K and 0.80 at 32K. Teacher-forced KL is
+therefore a useful screening objective in this setting, though acceptance
+remains the final serving metric.
 
 \subsection{Actual packed storage realizes the estimated savings}
 

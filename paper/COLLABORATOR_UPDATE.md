@@ -191,11 +191,18 @@ so it is not yet an end-to-end speed claim.
   CI **[-6.62, -0.45]**). The aggressive contrast remains unresolved at both
   contexts. Earlier sparse 4K/8K results remain directional controls, and the
   underfilled first-generation 16K cell stays excluded.
-- Matched ordinary-LM PG19-train quality at the same 16K/32K windows, seeds,
-  K/V policies, and quantizer geometry (`13229`--`13230`), followed by a strict
-  exact-acceptance versus teacher-forced KL/NLL comparison (`13232`). This is
-  the long-context test of whether ordinary-quality and speculative-acceptance
-  objectives select different policies at the same actual cache savings.
+- Matched ordinary-LM PG19-train quality and exact acceptance are complete at
+  the same 16K/32K windows, seeds, K/V policies, and quantizer geometry
+  (`13229`--`13232`). There is **no statistically resolved objective-preference
+  reversal**. Quality KL favors `K4V8` over `K8V4` at 16K by **0.00305**, CI
+  **[0.00210, 0.00427]**, and at 32K by **0.00309**, CI
+  **[0.00203, 0.00429]**; exact acceptance agrees at 32K and is unresolved at
+  16K. Quality also strongly favors `K2V4` over `K4V2`, while acceptance is
+  unresolved at both contexts. Spearman correlation between acceptance harm
+  and quality KL across the five policies is **0.60 at 16K** and **0.80 at
+  32K**. KL is therefore a useful screen here, but direct acceptance remains
+  the final serving objective. The per-layer byte-matched matrices are the
+  stronger remaining test of objective-specific allocation.
 - Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; all twelve cells
   are complete. The 64-token sweep covers three seeds per
   model: `K8V4 - K4V8` changes exact-token retention by **-5.12 points**, CI
