@@ -16,6 +16,7 @@ def row(prompt, config, accepted, proposed):
         "small_model": "draft",
         "prompt_len": 1024,
         "max_new_tokens": 16,
+        "draft_steps": 4,
         "config": config,
         "accepted_tokens": accepted,
         "proposed_tokens": proposed,
@@ -51,6 +52,23 @@ class SequentialSpecAggregationTest(unittest.TestCase):
         self.assertEqual(len(contrasts), 1)
         self.assertAlmostEqual(contrasts[0]["acceptance_difference"], -0.2)
         self.assertEqual(contrasts[0]["num_paired_prompts"], 3)
+
+    def test_aggregate_does_not_pool_proposal_lengths(self):
+        rows = []
+        for draft_steps in (2, 8):
+            left = row(0, "k4v2", draft_steps, 10)
+            right = row(0, "k2v4", 10 - draft_steps, 10)
+            left["draft_steps"] = draft_steps
+            right["draft_steps"] = draft_steps
+            rows.extend((left, right))
+        summaries, contrasts = aggregate(rows, bootstrap_samples=0, seed=4)
+        self.assertEqual({item["draft_steps"] for item in summaries}, {2, 8})
+        self.assertEqual(len(contrasts), 2)
+        differences = {
+            item["draft_steps"]: item["acceptance_difference"] for item in contrasts
+        }
+        self.assertAlmostEqual(differences[2], -0.6)
+        self.assertAlmostEqual(differences[8], 0.6)
 
 
 if __name__ == "__main__":

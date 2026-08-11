@@ -19,7 +19,16 @@ except ImportError:  # Small local tests can use the dependency-free fallback.
 
 
 EXPECTED_VERSION = "cached_dynamic_v6_sequential_target"
-CONTRASTS = (("k8v4", "k4v8"), ("k4v4", "none"), ("k4v8", "none"), ("k8v4", "none"))
+CONTRASTS = (
+    ("k8v4", "k4v8"),
+    ("k4v2", "k2v4"),
+    ("k4v3", "k3v4"),
+    ("k4v4", "none"),
+    ("k4v8", "none"),
+    ("k8v4", "none"),
+    ("k4v2", "none"),
+    ("k2v4", "none"),
+)
 
 
 def parse_patterns(value: str) -> List[str]:
@@ -158,6 +167,7 @@ def load_runs(patterns: Iterable[str]) -> Tuple[List[Dict[str, Any]], List[Dict[
                 "small_model": config.get("small_model"),
                 "prompt_len": int(config.get("prompt_len", 0)),
                 "max_new_tokens": int(config.get("max_new_tokens", 0)),
+                "draft_steps": int(config.get("draft_steps", 0)),
                 "seed": int(config.get("seed", 0)),
                 "num_prompts": int(payload.get("num_prompts", 0)),
             }
@@ -170,6 +180,7 @@ def load_runs(patterns: Iterable[str]) -> Tuple[List[Dict[str, Any]], List[Dict[
             row["small_model"] = config.get("small_model")
             row["prompt_len"] = int(config.get("prompt_len", 0))
             row["max_new_tokens"] = int(config.get("max_new_tokens", 0))
+            row["draft_steps"] = int(config.get("draft_steps", 0))
             row["draft_cache_saved_fraction"] = float(
                 memory.get(row["config"], {}).get("draft_cache_saved_fraction", 0.0)
             )
@@ -183,8 +194,8 @@ def load_runs(patterns: Iterable[str]) -> Tuple[List[Dict[str, Any]], List[Dict[
 def aggregate(
     rows: Sequence[Dict[str, Any]], *, bootstrap_samples: int, seed: int
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    grouped: Dict[Tuple[str, str, int, int, str], List[Dict[str, Any]]] = defaultdict(list)
-    paired: Dict[Tuple[str, str, int, int], Dict[str, Dict[str, Dict[str, Any]]]] = defaultdict(
+    grouped: Dict[Tuple[str, str, int, int, int, str], List[Dict[str, Any]]] = defaultdict(list)
+    paired: Dict[Tuple[str, str, int, int, int], Dict[str, Dict[str, Dict[str, Any]]]] = defaultdict(
         lambda: defaultdict(dict)
     )
     for row in rows:
@@ -193,14 +204,22 @@ def aggregate(
             str(row["small_model"]),
             int(row["prompt_len"]),
             int(row["max_new_tokens"]),
+            int(row["draft_steps"]),
             str(row["config"]),
         )
         grouped[key].append(row)
-        paired[key[:4]][str(row["prompt_key"])][str(row["config"])] = row
+        paired[key[:5]][str(row["prompt_key"])][str(row["config"])] = row
 
     rng = random.Random(seed)
     summaries: List[Dict[str, Any]] = []
-    for (big_model, small_model, prompt_len, max_new_tokens, config), items in sorted(grouped.items()):
+    for (
+        big_model,
+        small_model,
+        prompt_len,
+        max_new_tokens,
+        draft_steps,
+        config,
+    ), items in sorted(grouped.items()):
         accepted = [float(row["accepted_tokens"]) for row in items]
         proposed = [float(row["proposed_tokens"]) for row in items]
         mean, low, high = bootstrap_ratio_ci(accepted, proposed, rng=rng, samples=bootstrap_samples)
@@ -210,6 +229,7 @@ def aggregate(
                 "small_model": small_model,
                 "prompt_len": prompt_len,
                 "max_new_tokens": max_new_tokens,
+                "draft_steps": draft_steps,
                 "config": config,
                 "num_paired_prompts": len(items),
                 "acceptance_rate": mean,
@@ -222,7 +242,13 @@ def aggregate(
         )
 
     contrasts: List[Dict[str, Any]] = []
-    for (big_model, small_model, prompt_len, max_new_tokens), prompt_rows in sorted(paired.items()):
+    for (
+        big_model,
+        small_model,
+        prompt_len,
+        max_new_tokens,
+        draft_steps,
+    ), prompt_rows in sorted(paired.items()):
         for left_name, right_name in CONTRASTS:
             common = [configs for configs in prompt_rows.values() if left_name in configs and right_name in configs]
             if not common:
@@ -238,6 +264,7 @@ def aggregate(
                     "small_model": small_model,
                     "prompt_len": prompt_len,
                     "max_new_tokens": max_new_tokens,
+                    "draft_steps": draft_steps,
                     "left_config": left_name,
                     "right_config": right_name,
                     "num_paired_prompts": len(common),
