@@ -47,7 +47,7 @@ export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 cmd=(
   python3 -u profile_kv_quality_sensitivity.py
   --model "${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}"
-  --device cuda:0
+  --device "${QUALITY_DEVICE:-cuda:0}"
   --attn_implementation sdpa
   --dataset_name "$dataset_name"
   --dataset_config "$dataset_config"

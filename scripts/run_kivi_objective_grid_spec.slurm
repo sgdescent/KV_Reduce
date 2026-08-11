@@ -49,8 +49,8 @@ cmd=(
   python3 -u benchmark_spec_kv_quantization.py
   --big_model "${BIG_MODEL:-Qwen/Qwen2.5-3B}"
   --small_model "${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}"
-  --big_device cuda:0
-  --small_device cuda:0
+  --big_device "${BIG_DEVICE:-cuda:0}"
+  --small_device "${SMALL_DEVICE:-cuda:0}"
   --attn_implementation sdpa
   --dataset_name "$dataset_name"
   --dataset_config "$dataset_config"
