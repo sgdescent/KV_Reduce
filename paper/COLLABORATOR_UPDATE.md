@@ -137,17 +137,18 @@ so it is not yet an end-to-end speed claim.
 ## Work In Progress
 
 - Exact proposal-length sweep at `gamma = 2, 4, 8`, including aggressive
-  `K4V2` and `K2V4` controls. Gamma 2 is complete across three seeds; gamma 4
-  and 8 have two of three seeds. `K4V2 - K2V4` is provisionally **-5.04**,
+  `K4V2` and `K2V4` controls. Gamma 2 and 4 are complete across three seeds;
+  gamma 8 has two of three seeds. `K4V2 - K2V4` is provisionally **-5.04**,
   **-5.93**, and **-3.50** acceptance points at gamma 2, 4, and 8,
   respectively; all three confidence intervals exclude zero. The mild
   `K8V4 - K4V8` contrast is unresolved at gamma 2 and 4 but is **+1.64
   points**, CI **[+0.40, +2.97]**, at gamma 8.
 - Six-pair exact `K4V2` versus `K2V4` cross-family replication, paired with an
-  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. Ten
+  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. Eleven
   exact runs are complete: three seeds each for Qwen2.5-3B/1.5B, OLMo2-7B/1B,
-  and SmolLM2-1.7B/360M, plus the first Qwen2.5-7B/3B seed. Across these four
-  pairs, `K4V2 - K2V4` is **-1.48 acceptance points**, CI **[-3.59, +0.76]**.
+  and SmolLM2-1.7B/360M, plus the first Qwen2.5-7B/3B and Qwen3-8B/4B seeds.
+  Across these five pairs, `K4V2 - K2V4` is **-1.17 acceptance points**, CI
+  **[-3.08, +0.92]**.
   The direction favors preserving values but is no longer statistically
   resolved; remaining larger-pair seeds are running.
 - Exact key-quantization group-size sweep over 16, 32, 64, and 128 channels,
