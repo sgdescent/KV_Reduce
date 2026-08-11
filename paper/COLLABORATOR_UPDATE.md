@@ -170,6 +170,11 @@ so it is not yet an end-to-end speed claim.
   yielded only 5 of 8 requested prompts, so it is excluded from paper-grade
   evidence. The replacement sweep uses three seeds and a strict aggregation
   gate that rejects every underfilled run.
+- Matched ordinary-LM PG19-train quality at the same 16K/32K windows, seeds,
+  K/V policies, and quantizer geometry (`13229`--`13230`), followed by a strict
+  exact-acceptance versus teacher-forced KL/NLL comparison (`13232`). This is
+  the long-context test of whether ordinary-quality and speculative-acceptance
+  objectives select different policies at the same actual cache savings.
 - Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; all twelve cells
   are complete. The 64-token sweep covers three seeds per
   model: `K8V4 - K4V8` changes exact-token retention by **-5.12 points**, CI
