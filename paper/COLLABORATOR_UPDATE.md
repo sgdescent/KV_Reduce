@@ -180,9 +180,14 @@ so it is not yet an end-to-end speed claim.
   zero. Fine grouping therefore makes the value-precision preference strongest;
   K/V allocation and key-group geometry must be selected jointly.
 - Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
-  to separate low-bit compression from the protection of recent context. Its
-  corrected prompt-paired chain is `13252`--`13254` and uses the same strict
-  treatment-pairing gate.
+  is complete across 12 runs and passes prompt-pairing, full-run, and exact-target
+  gates. For `K4V4`, no residual saves **70.56%** of draft KV and **30.87%**
+  of combined KV; relative to 128 residual tokens, acceptance changes by only
+  **-0.37 points**, CI **[-1.82, +1.05]**. A 256-token residual reduces draft
+  savings to **62.10%** without a resolved acceptance gain. The allocation
+  interaction is non-monotonic: `K8V4 - K4V8` is **+1.29 points**, CI
+  **[+0.03, +2.68]**, at residual 32, while `K4V2 - K2V4` is **-3.33 points**,
+  CI **[-6.26, -0.42]**, at residual 256; the other six contrasts are unresolved.
 - The paper-grade PG19-train long-context extension (`13218`--`13219`) is
   complete: six full runs, three seeds per context, 60 prompts, and 360 exact
   target-matching trajectories at 16K and 32K. `K4V4` saves **30.99%** of
@@ -229,7 +234,13 @@ so it is not yet an end-to-end speed claim.
   **0.00 points**, CI **[-1.01, +1.01]**, on 297 ARC examples and **+0.17
   points**, CI **[-0.52, +1.04]**, on 576 HellaSwag examples. OLMo `K4V4`
   is within paired uncertainty of BF16 on both tasks while saving **53.91%**
-  and **58.59%** of standalone cache bytes. SmolLM2 task shards are running.
+  and **58.59%** of standalone cache bytes. SmolLM2 is also complete: its
+  `K8V4 - K4V8` contrasts are **-0.34 points**, CI **[-1.01, 0.00]**, on
+  ARC and **+0.52 points**, CI **[-0.17, +1.39]**, on HellaSwag. SmolLM
+  `K4V4` exactly matches BF16 ARC accuracy and remains within uncertainty on
+  HellaSwag while saving **54.62%** and **58.32%** of cache bytes. The strict
+  four-model meta-aggregate rejects no summaries and finds no consistent task
+  winner between `K8V4` and `K4V8`.
 - The first synthetic passkey retrieval sweep is complete across 4K, 8K, and
   16K contexts, three seeds, and 72 examples per context. BF16 and every tested
   3/4/8-bit allocation achieve 100% accuracy, including keys placed at 10%,
@@ -249,7 +260,15 @@ so it is not yet an end-to-end speed claim.
   same profiled saved-byte target. The final aggregator fails closed on byte
   mismatch, missing or underfilled cells, wrong evaluator versions, non-exact
   target trajectories, or incomplete policy coverage; cross-context intervals
-  use a hierarchical run-cell-then-example bootstrap.
+  use a hierarchical run-cell-then-example bootstrap. Both Qwen matrices are
+  now complete with **48/48 cells**, no rejected pairs, and **3,840/3,840**
+  exact target outcomes each. At six bits, both objectives select top-eight
+  `K4V8`; at eight bits both select `K8V8`. At the aggressive three-bit budget,
+  acceptance profiling chooses a heterogeneous V policy at exactly the same
+  profiled saved bytes as quality-selected `K2V4`, but is **-0.61 acceptance
+  points** worse on held-out data, CI **[-1.98, +0.60]**, and has KL higher by
+  **0.01485**, CI **[+0.01120, +0.02060]**. At five bits both select `K2V8`.
+  OLMo2 is in its final matrix wave; SmolLM2 follows.
 - Model-weighted paper tables and objective-comparison figures.
 - Packed-kernel optimization and a serving-capacity benchmark.
 
