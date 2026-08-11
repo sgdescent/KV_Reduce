@@ -45,11 +45,14 @@ python paper/build_free_generation_artifacts.py \
 By default, incomplete matrices, stale evaluator outputs, and smoke runs are not
 included in the paper artifacts.
 
-The current objective-matrix aggregator accepts only `cached_dynamic_v4` speculative
-summaries and `teacher_forced_cached_v1` ordinary-quality summaries, computes prompt-level
-bootstrap confidence intervals and paired equal-memory effects, audits numerical
-tie versus non-tie target mismatches, and writes paper-ready PDF/PNG figures plus
-a LaTeX table.
+The current objective-matrix aggregator accepts only
+`cached_dynamic_v6_sequential_target` speculative summaries and
+`teacher_forced_cached_v1` ordinary-quality summaries. It requires sequential
+BF16 target verification with an unquantized target cache, computes prompt-level
+bootstrap confidence intervals and paired equal-memory effects, audits exact
+target-greedy agreement, and writes paper-ready PDF/PNG figures plus a LaTeX
+table. Earlier `cached_dynamic_v4` matrices are exploratory artifacts and are
+not admitted to paper tables.
 
 ## Current evidence status
 

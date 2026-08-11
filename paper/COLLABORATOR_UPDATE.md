@@ -144,20 +144,23 @@ so it is not yet an end-to-end speed claim.
   `K8V4 - K4V8` contrast is unresolved at gamma 2 and 4 but is **+1.64
   points**, CI **[+0.40, +2.97]**, at gamma 8.
 - Six-pair exact `K4V2` versus `K2V4` cross-family replication, paired with an
-  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. The
-  first three families are complete across nine exact runs; their macro
-  `K4V2 - K2V4` is **-2.10 acceptance points**, CI **[-4.24, -0.009]**. This
-  interval only narrowly excludes zero: Qwen is individually resolved, while
-  OLMo2 and SmolLM2 are not. Larger two-GPU model pairs are now running.
+  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. Ten
+  exact runs are complete: three seeds each for Qwen2.5-3B/1.5B, OLMo2-7B/1B,
+  and SmolLM2-1.7B/360M, plus the first Qwen2.5-7B/3B seed. Across these four
+  pairs, `K4V2 - K2V4` is **-1.48 acceptance points**, CI **[-3.59, +0.76]**.
+  The direction favors preserving values but is no longer statistically
+  resolved; remaining larger-pair seeds are running.
 - Exact key-quantization group-size sweep over 16, 32, 64, and 128 channels,
   with three disjoint seeds and metadata-adjusted byte accounting.
 - Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
   to separate low-bit compression from the protection of recent context.
 - Exact 4K/8K/16K speculative long-context replication.
-- Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; the 256-token
-  SmolLM2/OLMo2/Llama replication is complete. In the first Qwen2.5-3B
-  256-token seed, `K4V8` retains 40.43% of BF16 tokens versus 28.59% for
-  `K8V4`; this is provisional until all three seeds finish.
+- Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; seven of twelve
+  cells are complete. Across two seeds per model at 64 generated tokens,
+  `K8V4 - K4V8` changes exact-token retention by **-5.29 points**, CI
+  **[-12.83, +2.56]**, while the retained-prefix contrast is **-10.27 points**,
+  CI **[-18.86, -1.67]**. The 256-token cells remain incomplete. The separate
+  three-seed SmolLM2/OLMo2/Llama replication is complete.
 - Cross-family ARC-Challenge/HellaSwag task checks.
 - Exact quality-optimized versus acceptance-optimized allocation matrix at
   matched bytes: two budgets, 1K/4K contexts, three held-out seeds, and 24
