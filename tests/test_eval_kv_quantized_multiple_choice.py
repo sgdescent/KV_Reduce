@@ -59,6 +59,27 @@ class MultipleChoiceFormattingTest(unittest.TestCase):
             self.assertEqual(len(row["choices"]), 4)
             self.assertEqual(row["choices"][row["gold"]], row["passkey"])
 
+    def test_generates_harder_sixteen_way_passkeys(self):
+        examples = generate_passkey_examples(
+            num_examples=3,
+            skip_examples=0,
+            dataset_seed=17,
+            num_choices=16,
+        )
+        for _source_idx, row in examples:
+            self.assertEqual(len(row["choices"]), 16)
+            self.assertEqual(len(set(row["choices"])), 16)
+            self.assertEqual(row["choices"][row["gold"]], row["passkey"])
+
+    def test_rejects_degenerate_passkey_choices(self):
+        with self.assertRaises(ValueError):
+            generate_passkey_examples(
+                num_examples=1,
+                skip_examples=0,
+                dataset_seed=17,
+                num_choices=1,
+            )
+
     def test_assembles_exact_length_passkey_prompt(self):
         prompt = assemble_passkey_prompt_ids(
             prefix_ids=torch.tensor([1, 1]),

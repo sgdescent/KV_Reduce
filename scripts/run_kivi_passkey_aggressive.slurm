@@ -43,6 +43,7 @@ python3 -u eval_kv_quantized_multiple_choice.py \
   --num_fewshot 0 \
   --max_prompt_tokens "$context" \
   --max_choice_tokens 16 \
+  --passkey_num_choices 16 \
   --seed "$seed" \
   --quant_configs "${QUANT_CONFIGS:-none;k4v4;k4v2;k2v4;k2v2}" \
   --key_quant_axis per_channel \

@@ -118,6 +118,8 @@ def main() -> None:
     parser.add_argument("--expected_contexts", default="4096,8192,16384")
     parser.add_argument("--expected_seeds", default="0,1,2")
     parser.add_argument("--expected_examples_per_run", type=int, default=0)
+    parser.add_argument("--expected_num_choices", type=int, default=4)
+    parser.add_argument("--expected_generator_version", default=GENERATOR_VERSION)
     parser.add_argument("--require_complete", action="store_true")
     parser.add_argument("--bootstrap_samples", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=2026)
@@ -142,12 +144,14 @@ def main() -> None:
             runtime = summary.get("runtime", {})
             if runtime.get("evaluator_version") != EVALUATOR_VERSION:
                 raise ValueError(f"Unexpected evaluator in {summary_path}")
-            if runtime.get("task_generator_version") != GENERATOR_VERSION:
+            if runtime.get("task_generator_version") != args.expected_generator_version:
                 raise ValueError(f"Unexpected passkey generator in {summary_path}")
             if summary.get("task") != "passkey":
                 raise ValueError(f"Unexpected task in {summary_path}")
             if int(summary["config"]["max_prompt_tokens"]) != context:
                 raise ValueError(f"Context mismatch in {summary_path}")
+            if int(summary["config"].get("passkey_num_choices", 4)) != args.expected_num_choices:
+                raise ValueError(f"Choice-count mismatch in {summary_path}")
             if (
                 args.expected_examples_per_run > 0
                 and int(summary.get("num_examples", -1))
@@ -272,11 +276,12 @@ def main() -> None:
     write_csv(args.out_dir / "paired_comparisons.csv", comparisons)
     payload = {
         "evaluator_version": EVALUATOR_VERSION,
-        "task_generator_version": GENERATOR_VERSION,
+        "task_generator_version": args.expected_generator_version,
         "num_complete_runs": len(runs),
         "expected_contexts": expected_contexts,
         "expected_seeds": expected_seeds,
         "expected_examples_per_run": args.expected_examples_per_run,
+        "expected_num_choices": args.expected_num_choices,
         "missing_runs": missing,
         "underfilled_runs": underfilled,
         "complete_run_gate": args.require_complete and not missing and not underfilled,

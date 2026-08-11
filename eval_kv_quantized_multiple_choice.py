@@ -47,6 +47,8 @@ from kv_utils import (
 
 
 EVALUATOR_VERSION = "kv_multiple_choice_cached_v2"
+PASSKEY_GENERATOR_V1 = "synthetic_passkey_v1"
+PASSKEY_GENERATOR_V2 = "synthetic_passkey_16way_v2"
 TASK_SPECS = {
     "hellaswag": {
         "dataset_name": "Rowan/hellaswag",
@@ -127,16 +129,19 @@ def generate_passkey_examples(
     num_examples: int,
     skip_examples: int,
     dataset_seed: int,
+    num_choices: int = 4,
 ) -> List[Tuple[int, Dict[str, Any]]]:
-    """Create deterministic four-way passkey retrieval examples."""
+    """Create deterministic passkey retrieval examples."""
 
+    if num_choices < 2:
+        raise ValueError("Passkey evaluation requires at least two choices.")
     depths = (0.1, 0.5, 0.9)
     examples: List[Tuple[int, Dict[str, Any]]] = []
     for source_idx in range(skip_examples, skip_examples + num_examples):
         rng = random.Random(dataset_seed + source_idx * 104_729)
         passkey = f"{rng.randrange(100_000, 1_000_000):06d}"
         choices = {passkey}
-        while len(choices) < 4:
+        while len(choices) < num_choices:
             choices.add(f"{rng.randrange(100_000, 1_000_000):06d}")
         shuffled = sorted(choices)
         rng.shuffle(shuffled)
@@ -162,12 +167,14 @@ def load_examples(
     skip_examples: int,
     dataset_seed: int,
     streaming: bool,
+    passkey_num_choices: int = 4,
 ) -> List[Tuple[int, Dict[str, Any]]]:
     if task == "passkey":
         return generate_passkey_examples(
             num_examples=num_examples,
             skip_examples=skip_examples,
             dataset_seed=dataset_seed,
+            num_choices=passkey_num_choices,
         )
 
     try:
@@ -412,6 +419,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fewshot_seed", type=int, default=31415)
     parser.add_argument("--max_prompt_tokens", type=int, default=1024)
     parser.add_argument("--max_choice_tokens", type=int, default=128)
+    parser.add_argument("--passkey_num_choices", type=int, default=4)
     parser.add_argument("--quant_configs", default="none;k8v4;k4v8;k4v4;k3v4;k4v3")
     parser.add_argument("--scale_bits", type=int, default=16)
     parser.add_argument("--key_quant_axis", default=PER_CHANNEL_AXIS, choices=[PER_TOKEN_AXIS, PER_CHANNEL_AXIS])
@@ -454,6 +462,7 @@ def main() -> None:
         skip_examples=args.skip_examples,
         dataset_seed=args.dataset_seed,
         streaming=args.streaming,
+        passkey_num_choices=args.passkey_num_choices,
     )
     if not examples:
         raise ValueError("No task examples were loaded.")
@@ -467,6 +476,7 @@ def main() -> None:
             skip_examples=0,
             dataset_seed=args.fewshot_seed,
             streaming=args.streaming,
+            passkey_num_choices=args.passkey_num_choices,
         )
     )
     fewshot_prefix = build_fewshot_prefix(
@@ -675,7 +685,13 @@ def main() -> None:
             "key_residual_length": args.key_residual_length,
             "value_quant_scheme": args.value_quant_scheme,
             "task_generator_version": (
-                "synthetic_passkey_v1" if args.task == "passkey" else None
+                (
+                    PASSKEY_GENERATOR_V1
+                    if args.passkey_num_choices == 4
+                    else PASSKEY_GENERATOR_V2
+                )
+                if args.task == "passkey"
+                else None
             ),
         },
         "task": args.task,

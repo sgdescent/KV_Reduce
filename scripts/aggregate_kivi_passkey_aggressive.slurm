@@ -24,4 +24,6 @@ python3 -u aggregate_kv_passkey.py \
   --expected_contexts 8192,16384,32768 \
   --expected_seeds 0,1,2 \
   --expected_examples_per_run "${PASSKEY_EXAMPLES:-16}" \
+  --expected_num_choices 16 \
+  --expected_generator_version synthetic_passkey_16way_v2 \
   --require_complete
