@@ -8,6 +8,6 @@ export PASSKEY_NUM_CHOICES="${PASSKEY_NUM_CHOICES:-16}"
 export PASSKEY_VARIANT=confusable_records
 export PASSKEY_SCORE=normalized
 export PASSKEY_GENERATOR_VERSION=synthetic_associative_passkey_v3
-export PASSKEY_WANDB_GROUP=kivi-passkey-confusable
+export PASSKEY_WANDB_GROUP="${PASSKEY_WANDB_GROUP:-kivi-passkey-confusable}"
 
 exec bash scripts/submit_kivi_passkey_aggressive.sh
