@@ -26,7 +26,9 @@ context="${contexts[$((task_id / 3))]}"
 seed=$((task_id % 3))
 examples="${PASSKEY_EXAMPLES:-16}"
 skip=$((seed * examples))
-root="${OUT_ROOT:-outputs/kivi_passkey_aggressive_v1/qwen25_15b}"
+model="${MODEL:-Qwen/Qwen2.5-1.5B}"
+model_tag="${MODEL_TAG:-qwen25_15b}"
+root="${OUT_ROOT:-outputs/kivi_passkey_aggressive_v2/$model_tag}"
 out_dir="$root/ctx_${context}/seed_${seed}"
 
 export TOKENIZERS_PARALLELISM=false
@@ -34,7 +36,7 @@ export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
 export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 
 python3 -u eval_kv_quantized_multiple_choice.py \
-  --model Qwen/Qwen2.5-1.5B \
+  --model "$model" \
   --device cuda:0 \
   --attn_implementation sdpa \
   --task passkey \
@@ -56,4 +58,4 @@ python3 -u eval_kv_quantized_multiple_choice.py \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
   --wandb_group "${PASSKEY_WANDB_GROUP:-kivi-passkey-aggressive}" \
-  --wandb_run_name "qwen25_15b_passkey_${PASSKEY_VARIANT:-random}_c${context}_s${seed}"
+  --wandb_run_name "${model_tag}_passkey_${PASSKEY_VARIANT:-random}_c${context}_s${seed}"

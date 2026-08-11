@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-export OUT_ROOT="${OUT_ROOT:-outputs/kivi_passkey_confusable_v3/qwen25_15b}"
+export MODEL="${MODEL:-Qwen/Qwen2.5-1.5B}"
+export MODEL_TAG="${MODEL_TAG:-qwen25_15b}"
+export OUT_ROOT="${OUT_ROOT:-outputs/kivi_passkey_confusable_v3/$MODEL_TAG}"
 export PASSKEY_NUM_CHOICES="${PASSKEY_NUM_CHOICES:-16}"
 export PASSKEY_VARIANT=confusable_records
 export PASSKEY_SCORE=normalized

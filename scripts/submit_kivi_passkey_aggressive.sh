@@ -2,7 +2,9 @@
 set -euo pipefail
 
 dependency="${DEPENDENCY:-}"
-out_root="${OUT_ROOT:-outputs/kivi_passkey_aggressive_v2/qwen25_15b}"
+model="${MODEL:-Qwen/Qwen2.5-1.5B}"
+model_tag="${MODEL_TAG:-qwen25_15b}"
+out_root="${OUT_ROOT:-outputs/kivi_passkey_aggressive_v2/$model_tag}"
 num_choices="${PASSKEY_NUM_CHOICES:-16}"
 variant="${PASSKEY_VARIANT:-random}"
 score="${PASSKEY_SCORE:-raw}"
@@ -21,7 +23,7 @@ array_job=$(sbatch --parsable \
   "${dependency_args[@]}" \
   --array=0-8%1 \
   --exclude=catalyst-0-9,catalyst-0-15 \
-  --export="ALL,WANDB_PROJECT=${WANDB_PROJECT:-kv-reduce},PASSKEY_EXAMPLES=${PASSKEY_EXAMPLES:-16},PASSKEY_NUM_CHOICES=$num_choices,PASSKEY_VARIANT=$variant,PASSKEY_SCORE=$score,PASSKEY_WANDB_GROUP=${PASSKEY_WANDB_GROUP:-kivi-passkey-aggressive},OUT_ROOT=$out_root" \
+  --export="ALL,WANDB_PROJECT=${WANDB_PROJECT:-kv-reduce},MODEL=$model,MODEL_TAG=$model_tag,PASSKEY_EXAMPLES=${PASSKEY_EXAMPLES:-16},PASSKEY_NUM_CHOICES=$num_choices,PASSKEY_VARIANT=$variant,PASSKEY_SCORE=$score,PASSKEY_WANDB_GROUP=${PASSKEY_WANDB_GROUP:-kivi-passkey-aggressive},OUT_ROOT=$out_root" \
   scripts/run_kivi_passkey_aggressive.slurm)
 aggregate_job=$(sbatch --parsable \
   --dependency="afterok:${array_job}" \
