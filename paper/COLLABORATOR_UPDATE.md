@@ -171,11 +171,14 @@ so it is not yet an end-to-end speed claim.
   The model-weighted direction significantly favors preserving values under the
   tested KIVI geometry.
 - Exact key-quantization group-size sweep over 16, 32, 64, and 128 channels,
-  with three disjoint seeds and metadata-adjusted byte accounting. An audit
-  found that the first array version advanced the FineWeb offset by treatment,
-  so it is excluded from between-group conclusions. The corrected prompt-paired
-  rerun is `13249`--`13251`; a strict meta-aggregate verifies identical offsets,
-  full rows, and exact target outputs before computing paired intervals.
+  with three disjoint seeds, 96 paired prompts per group, and metadata-adjusted
+  byte accounting, is complete. The strict aggregate passes prompt-pairing,
+  full-run, evaluator-version, and exact-target gates. Mild `K8V4 - K4V8` is
+  unresolved at every group size. Aggressive `K4V2 - K2V4` is **-5.83 points**
+  at group 16, CI **[-8.49, -3.31]**, then weakens to **-2.94**, **-1.57**, and
+  **-1.87 points** at groups 32, 64, and 128, with those intervals crossing
+  zero. Fine grouping therefore makes the value-precision preference strongest;
+  K/V allocation and key-group geometry must be selected jointly.
 - Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
   to separate low-bit compression from the protection of recent context. Its
   corrected prompt-paired chain is `13252`--`13254` and uses the same strict
@@ -212,8 +215,9 @@ so it is not yet an end-to-end speed claim.
   tokens, `K4V4` saves **66.59%** of standalone-cache bytes and retains
   **25.10%** of exact BF16 tokens. The separate three-seed
   SmolLM2/OLMo2/Llama replication is also complete.
-- Powered cross-family ARC-Challenge/HellaSwag task checks. Llama-3.2-3B
-  is complete across six disjoint task shards with no underfilled runs.
+- Powered cross-family ARC-Challenge/HellaSwag task checks. Llama-3.2-3B and
+  OLMo2-1B are complete across twelve disjoint task shards with no missing or
+  underfilled runs.
   HellaSwag covers 576 examples:
   `K8V4 - K4V8` changes normalized accuracy by **-0.35 points**, CI
   **[-1.04, +0.35]**, while `K4V4` saves **58.60%** of standalone-cache bytes
@@ -221,8 +225,11 @@ so it is not yet an end-to-end speed claim.
   free-running token divergence does not directly imply downstream task loss.
   ARC-Challenge covers 297 examples: `K8V4 - K4V8` is **-0.67 points**, CI
   **[-2.02, +0.67]**; `K4V4` saves **53.89%** and changes accuracy by
-  **+0.67 points**, CI **[-0.67, +2.02]**. OLMo2 and SmolLM2 task shards are
-  running.
+  **+0.67 points**, CI **[-0.67, +2.02]**. For OLMo2, `K8V4 - K4V8` is
+  **0.00 points**, CI **[-1.01, +1.01]**, on 297 ARC examples and **+0.17
+  points**, CI **[-0.52, +1.04]**, on 576 HellaSwag examples. OLMo `K4V4`
+  is within paired uncertainty of BF16 on both tasks while saving **53.91%**
+  and **58.59%** of standalone cache bytes. SmolLM2 task shards are running.
 - The first synthetic passkey retrieval sweep is complete across 4K, 8K, and
   16K contexts, three seeds, and 72 examples per context. BF16 and every tested
   3/4/8-bit allocation achieve 100% accuracy, including keys placed at 10%,
