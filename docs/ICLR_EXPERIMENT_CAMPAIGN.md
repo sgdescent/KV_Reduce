@@ -91,11 +91,16 @@ gated 9B checkpoint.
     extends beyond the 128-token BF16 residual window. The evaluator reports raw
     and length-normalized accuracy, paired BF16 agreement, and equal-memory
     K8V4-versus-K4V8 confidence intervals.
-18. `passkey_retrieval`: place a synthetic six-digit passkey at 10%, 50%, or
-    90% depth in exact 4K, 8K, and 16K prefixes. Three disjoint seeds compare
-    BF16, K8V4, K4V8, K4V4, K3V4, and K4V3 using four-way retrieval accuracy.
-    This tests whether low teacher-forced KL translates into preserved
-    long-context retrieval rather than only local next-token fidelity.
+18. `passkey_retrieval`: the initial random-choice passkey sweeps are retained
+    only as ceiling controls because BF16 and every quantized policy reached
+    100% accuracy. The confirmatory task uses exact 8K, 16K, and 32K prefixes,
+    three disjoint seeds, and target records at 10%, 50%, or 90% depth. Each
+    archive contains 16 record IDs and 16 six-digit codes; every wrong code is
+    a one-digit mutation of the target, and all distractor codes occur in the
+    archive. Choice scoring is length-normalized to prevent tokenizer-dependent
+    sequence length from deciding the answer. Aggregation requires 9/9 runs,
+    generator `synthetic_associative_passkey_v3`, variant
+    `confusable_records`, and the normalized-accuracy primary metric.
 19. `cross_family_multiple_choice`: after the powered Qwen task suite, run
     HellaSwag and ARC-Challenge on Llama-3.2-3B, OLMo-2-1B, and SmolLM2-360M.
     Two disjoint 128-example shards per task provide a breadth screen under the
@@ -193,6 +198,13 @@ task suite:
 
 ```bash
 DEPENDENCY=<dependency-job> bash scripts/submit_kivi_passkey.sh
+```
+
+The stricter associative-retrieval control can be queued independently:
+
+```bash
+DEPENDENCY=<dependency-job> WANDB_PROJECT=kv-reduce \
+  bash scripts/submit_kivi_passkey_confusable.sh
 ```
 
 The two-seed cross-family target-quality grid is serialized to one GPU and may
