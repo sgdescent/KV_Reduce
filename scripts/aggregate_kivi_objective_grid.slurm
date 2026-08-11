@@ -18,11 +18,13 @@ fi
 
 root="${ROOT:-outputs/kivi_objective_grid/qwen25_3b_15b}"
 configs="${QUANT_CONFIGS:-none;k16v8;k16v4;k16v3;k16v2;k8v8;k8v4;k8v3;k8v2;k4v8;k4v4;k4v3;k4v2;k3v8;k3v4;k3v3;k3v2;k2v8;k2v4;k2v3;k2v2}"
+expected_contexts="${EXPECTED_CONTEXTS:-1024,4096}"
+expected_seeds="${EXPECTED_SEEDS:-0,1,2}"
 python3 -u aggregate_value_precision_sweep.py \
   --sweep_dir "$root/spec" \
   --out_dir "$root/spec_aggregate" \
-  --expected_contexts 1024,4096 \
-  --expected_seeds 0,1,2 \
+  --expected_contexts "$expected_contexts" \
+  --expected_seeds "$expected_seeds" \
   --expected_configs "$configs" \
   --require_complete \
   --require_full_runs \
