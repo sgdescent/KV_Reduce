@@ -142,6 +142,8 @@ so it is not yet an end-to-end speed claim.
   ordinary 256-token free-generation control on Llama, OLMo, and SmolLM.
 - Exact key-quantization group-size sweep over 16, 32, 64, and 128 channels,
   with three disjoint seeds and metadata-adjusted byte accounting.
+- Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
+  to separate low-bit compression from the protection of recent context.
 - Exact 4K/8K/16K speculative long-context replication.
 - Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; the 256-token
   SmolLM2/OLMo2/Llama replication is complete.
