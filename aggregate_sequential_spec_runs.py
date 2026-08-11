@@ -131,6 +131,61 @@ def bootstrap_paired_ratio_difference(
     return estimate, percentile(draws, 0.025), percentile(draws, 0.975)
 
 
+def bootstrap_macro_ratio(
+    groups: Sequence[Sequence[Tuple[float, float]]],
+    *,
+    rng: random.Random,
+    samples: int,
+) -> Tuple[float, float, float]:
+    """Bootstrap an equal-model-weight macro average with prompt resampling."""
+    if not groups or any(not group for group in groups):
+        raise ValueError("Macro bootstrap groups must be non-empty.")
+    estimate = sum(ratio(*zip(*group)) for group in groups) / len(groups)
+    if samples <= 0:
+        return estimate, estimate, estimate
+    draws: List[float] = []
+    for _ in range(samples):
+        pair_estimates: List[float] = []
+        for _ in groups:
+            group = groups[rng.randrange(len(groups))]
+            indices = [rng.randrange(len(group)) for _ in group]
+            sampled = [group[index] for index in indices]
+            pair_estimates.append(ratio(*zip(*sampled)))
+        draws.append(sum(pair_estimates) / len(pair_estimates))
+    return estimate, percentile(draws, 0.025), percentile(draws, 0.975)
+
+
+def bootstrap_macro_paired_ratio_difference(
+    groups: Sequence[
+        Tuple[Sequence[Tuple[float, float]], Sequence[Tuple[float, float]]]
+    ],
+    *,
+    rng: random.Random,
+    samples: int,
+) -> Tuple[float, float, float]:
+    """Hierarchically bootstrap an equal-model-weight paired contrast."""
+    if not groups or any(not left or len(left) != len(right) for left, right in groups):
+        raise ValueError("Macro paired groups must be non-empty and aligned.")
+    estimate = sum(
+        ratio(*zip(*left)) - ratio(*zip(*right)) for left, right in groups
+    ) / len(groups)
+    if samples <= 0:
+        return estimate, estimate, estimate
+    draws: List[float] = []
+    for _ in range(samples):
+        pair_estimates: List[float] = []
+        for _ in groups:
+            left, right = groups[rng.randrange(len(groups))]
+            indices = [rng.randrange(len(left)) for _ in left]
+            sampled_left = [left[index] for index in indices]
+            sampled_right = [right[index] for index in indices]
+            pair_estimates.append(
+                ratio(*zip(*sampled_left)) - ratio(*zip(*sampled_right))
+            )
+        draws.append(sum(pair_estimates) / len(pair_estimates))
+    return estimate, percentile(draws, 0.025), percentile(draws, 0.975)
+
+
 def load_runs(patterns: Iterable[str]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     paths = sorted({path for pattern in patterns for path in glob.glob(pattern, recursive=True)})
     if not paths:
@@ -193,7 +248,12 @@ def load_runs(patterns: Iterable[str]) -> Tuple[List[Dict[str, Any]], List[Dict[
 
 def aggregate(
     rows: Sequence[Dict[str, Any]], *, bootstrap_samples: int, seed: int
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> Tuple[
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+]:
     grouped: Dict[Tuple[str, str, int, int, int, str], List[Dict[str, Any]]] = defaultdict(list)
     paired: Dict[Tuple[str, str, int, int, int], Dict[str, Dict[str, Dict[str, Any]]]] = defaultdict(
         lambda: defaultdict(dict)
@@ -273,7 +333,110 @@ def aggregate(
                     "ci_high": high,
                 }
             )
-    return summaries, contrasts
+    macro_groups: Dict[
+        Tuple[int, int, int],
+        Dict[Tuple[str, str], Dict[str, Dict[str, Dict[str, Any]]]],
+    ] = defaultdict(dict)
+    for (big_model, small_model, prompt_len, max_new_tokens, draft_steps), prompt_rows in paired.items():
+        macro_groups[(prompt_len, max_new_tokens, draft_steps)][
+            (big_model, small_model)
+        ] = prompt_rows
+
+    macro_summaries: List[Dict[str, Any]] = []
+    macro_contrasts: List[Dict[str, Any]] = []
+    for (prompt_len, max_new_tokens, draft_steps), pair_rows in sorted(macro_groups.items()):
+        config_sets = [
+            {config for configs in prompts.values() for config in configs}
+            for prompts in pair_rows.values()
+        ]
+        configs = sorted(set.intersection(*config_sets)) if config_sets else []
+        for config in configs:
+            groups: List[List[Tuple[float, float]]] = []
+            draft_savings: List[float] = []
+            total_savings: List[float] = []
+            for prompts in pair_rows.values():
+                items = [prompt[config] for prompt in prompts.values() if config in prompt]
+                if not items:
+                    continue
+                groups.append(
+                    [
+                        (float(item["accepted_tokens"]), float(item["proposed_tokens"]))
+                        for item in items
+                    ]
+                )
+                draft_savings.append(
+                    sum(float(item["draft_cache_saved_fraction"]) for item in items)
+                    / len(items)
+                )
+                total_savings.append(
+                    sum(float(item["total_cache_saved_fraction"]) for item in items)
+                    / len(items)
+                )
+            mean, low, high = bootstrap_macro_ratio(
+                groups, rng=rng, samples=bootstrap_samples
+            )
+            macro_summaries.append(
+                {
+                    "prompt_len": prompt_len,
+                    "max_new_tokens": max_new_tokens,
+                    "draft_steps": draft_steps,
+                    "config": config,
+                    "num_model_pairs": len(groups),
+                    "num_prompt_occurrences": sum(len(group) for group in groups),
+                    "acceptance_rate": mean,
+                    "acceptance_ci_low": low,
+                    "acceptance_ci_high": high,
+                    "draft_cache_saved_fraction": sum(draft_savings) / len(draft_savings),
+                    "total_cache_saved_fraction": sum(total_savings) / len(total_savings),
+                    "exact_target_match_fraction": 1.0,
+                }
+            )
+
+        for left_name, right_name in CONTRASTS:
+            groups = []
+            for prompts in pair_rows.values():
+                common = [
+                    configs
+                    for configs in prompts.values()
+                    if left_name in configs and right_name in configs
+                ]
+                if not common:
+                    continue
+                left = [
+                    (
+                        float(item[left_name]["accepted_tokens"]),
+                        float(item[left_name]["proposed_tokens"]),
+                    )
+                    for item in common
+                ]
+                right = [
+                    (
+                        float(item[right_name]["accepted_tokens"]),
+                        float(item[right_name]["proposed_tokens"]),
+                    )
+                    for item in common
+                ]
+                groups.append((left, right))
+            if not groups:
+                continue
+            mean, low, high = bootstrap_macro_paired_ratio_difference(
+                groups, rng=rng, samples=bootstrap_samples
+            )
+            macro_contrasts.append(
+                {
+                    "prompt_len": prompt_len,
+                    "max_new_tokens": max_new_tokens,
+                    "draft_steps": draft_steps,
+                    "left_config": left_name,
+                    "right_config": right_name,
+                    "num_model_pairs": len(groups),
+                    "num_paired_prompts": sum(len(left) for left, _ in groups),
+                    "acceptance_difference": mean,
+                    "ci_low": low,
+                    "ci_high": high,
+                }
+            )
+    return summaries, contrasts, macro_summaries, macro_contrasts
 
 
 def write_csv(path: Path, rows: Sequence[Dict[str, Any]]) -> None:
@@ -294,11 +457,15 @@ def main() -> None:
     args = parser.parse_args()
 
     rows, runs = load_runs(parse_patterns(args.summary_glob))
-    summaries, contrasts = aggregate(rows, bootstrap_samples=args.bootstrap_samples, seed=args.seed)
+    summaries, contrasts, macro_summaries, macro_contrasts = aggregate(
+        rows, bootstrap_samples=args.bootstrap_samples, seed=args.seed
+    )
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     write_csv(out_dir / "summary.csv", summaries)
     write_csv(out_dir / "paired_contrasts.csv", contrasts)
+    write_csv(out_dir / "macro_summary.csv", macro_summaries)
+    write_csv(out_dir / "macro_contrasts.csv", macro_contrasts)
     payload = {
         "runtime": {
             "source_evaluator_version": EXPECTED_VERSION,
@@ -307,6 +474,8 @@ def main() -> None:
         "runs": runs,
         "summaries": summaries,
         "paired_contrasts": contrasts,
+        "macro_summaries": macro_summaries,
+        "macro_contrasts": macro_contrasts,
     }
     (out_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"Aggregated {len(runs)} exact runs and {len(rows)} rows into {out_dir}.")

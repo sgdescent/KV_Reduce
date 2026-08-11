@@ -47,11 +47,15 @@ class SequentialSpecAggregationTest(unittest.TestCase):
         for prompt in range(3):
             rows.append(row(prompt, "k8v4", 4, 10))
             rows.append(row(prompt, "k4v8", 6, 10))
-        summaries, contrasts = aggregate(rows, bootstrap_samples=0, seed=3)
+        summaries, contrasts, macro_summaries, macro_contrasts = aggregate(
+            rows, bootstrap_samples=0, seed=3
+        )
         self.assertEqual(len(summaries), 2)
         self.assertEqual(len(contrasts), 1)
         self.assertAlmostEqual(contrasts[0]["acceptance_difference"], -0.2)
         self.assertEqual(contrasts[0]["num_paired_prompts"], 3)
+        self.assertEqual(len(macro_summaries), 2)
+        self.assertAlmostEqual(macro_contrasts[0]["acceptance_difference"], -0.2)
 
     def test_aggregate_does_not_pool_proposal_lengths(self):
         rows = []
@@ -61,7 +65,9 @@ class SequentialSpecAggregationTest(unittest.TestCase):
             left["draft_steps"] = draft_steps
             right["draft_steps"] = draft_steps
             rows.extend((left, right))
-        summaries, contrasts = aggregate(rows, bootstrap_samples=0, seed=4)
+        summaries, contrasts, macro_summaries, macro_contrasts = aggregate(
+            rows, bootstrap_samples=0, seed=4
+        )
         self.assertEqual({item["draft_steps"] for item in summaries}, {2, 8})
         self.assertEqual(len(contrasts), 2)
         differences = {
@@ -69,6 +75,21 @@ class SequentialSpecAggregationTest(unittest.TestCase):
         }
         self.assertAlmostEqual(differences[2], -0.6)
         self.assertAlmostEqual(differences[8], 0.6)
+        self.assertEqual({item["draft_steps"] for item in macro_summaries}, {2, 8})
+        self.assertEqual(len(macro_contrasts), 2)
+
+    def test_macro_average_weights_model_pairs_equally(self):
+        first = row(0, "k4v4", 0, 10)
+        first["big_model"] = "target-a"
+        first["small_model"] = "draft-a"
+        second = row(0, "k4v4", 90, 90)
+        second["big_model"] = "target-b"
+        second["small_model"] = "draft-b"
+        _, _, macro_summaries, _ = aggregate(
+            [first, second], bootstrap_samples=0, seed=5
+        )
+        self.assertEqual(len(macro_summaries), 1)
+        self.assertAlmostEqual(macro_summaries[0]["acceptance_rate"], 0.5)
 
 
 if __name__ == "__main__":
