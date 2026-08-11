@@ -17,6 +17,9 @@ from spec_kv_statistics import bootstrap_acceptance_contrast
 from aggregate_value_precision_sweep import parse_seed_filter, underfilled_run_record
 
 
+REQUIRED_SPEC_EVALUATOR_VERSION = "cached_dynamic_v6_sequential_target"
+
+
 def read_json(path: Path) -> Dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -84,7 +87,7 @@ def load_spec_rows(
         if not summary_path.exists() or not rows_path.exists():
             continue
         summary = read_json(summary_path)
-        if summary.get("runtime", {}).get("evaluator_version") != "cached_dynamic_v4":
+        if summary.get("runtime", {}).get("evaluator_version") != REQUIRED_SPEC_EVALUATOR_VERSION:
             raise ValueError(f"Stale speculative evaluator in {summary_path}")
         context = int(summary["config"]["prompt_len"])
         seed = int(summary["config"]["seed"])

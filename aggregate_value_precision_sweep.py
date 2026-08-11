@@ -26,6 +26,31 @@ MATCHED_BIT_PAIRS = (
     ("k4v2", "k2v4", "K4V2 - K2V4"),
 )
 
+REQUIRED_EVALUATOR_VERSION = "cached_dynamic_v6_sequential_target"
+DEFAULT_EXPECTED_CONFIGS = (
+    "none",
+    "k16v8",
+    "k16v4",
+    "k16v3",
+    "k16v2",
+    "k8v8",
+    "k8v4",
+    "k8v3",
+    "k8v2",
+    "k4v8",
+    "k4v4",
+    "k4v3",
+    "k4v2",
+    "k3v8",
+    "k3v4",
+    "k3v3",
+    "k3v2",
+    "k2v8",
+    "k2v4",
+    "k2v3",
+    "k2v2",
+)
+
 
 def read_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
@@ -196,6 +221,36 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out_dir", required=True, type=Path)
     parser.add_argument("--exactness_tie_margin", type=float, default=1e-3)
     parser.add_argument(
+        "--expected_contexts",
+        default="",
+        help="Comma-separated contexts required by the strict completion gate.",
+    )
+    parser.add_argument(
+        "--expected_seeds",
+        default="",
+        help="Comma-separated seeds required for every expected context.",
+    )
+    parser.add_argument(
+        "--expected_configs",
+        default=";".join(DEFAULT_EXPECTED_CONFIGS),
+        help="Semicolon-separated policy names required in every run.",
+    )
+    parser.add_argument(
+        "--require_complete",
+        action="store_true",
+        help="Reject missing context/seed runs or incomplete policy coverage.",
+    )
+    parser.add_argument(
+        "--require_full_runs",
+        action="store_true",
+        help="Reject runs that contain fewer prompts than requested.",
+    )
+    parser.add_argument(
+        "--require_exact_target",
+        action="store_true",
+        help="Reject any target mismatch that is not a numerical tie.",
+    )
+    parser.add_argument(
         "--seeds",
         default="",
         help="Optional comma-separated seed allowlist for provenance-safe partial aggregation.",
@@ -206,6 +261,29 @@ def build_parser() -> argparse.ArgumentParser:
 def parse_seed_filter(value: str) -> set[int] | None:
     seeds = {int(item.strip()) for item in value.split(",") if item.strip()}
     return seeds or None
+
+
+def parse_int_set(value: str) -> set[int]:
+    return {int(item.strip()) for item in value.split(",") if item.strip()}
+
+
+def parse_config_set(value: str) -> set[str]:
+    return {item.strip() for item in value.split(";") if item.strip()}
+
+
+def validate_prompt_config_coverage(
+    rows: Iterable[Dict[str, str]], expected_configs: set[str]
+) -> List[str]:
+    """Return prompt IDs that do not contain exactly the requested policies."""
+
+    by_prompt: Dict[str, Counter[str]] = defaultdict(Counter)
+    for row in rows:
+        by_prompt[str(row["prompt_idx"])][str(row["config"])] += 1
+    return sorted(
+        prompt
+        for prompt, counts in by_prompt.items()
+        if set(counts) != expected_configs or any(count != 1 for count in counts.values())
+    )
 
 
 def underfilled_run_record(
@@ -235,6 +313,11 @@ def main() -> None:
     args = build_parser().parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     selected_seeds = parse_seed_filter(args.seeds)
+    expected_contexts = parse_int_set(args.expected_contexts)
+    expected_seeds = parse_int_set(args.expected_seeds)
+    expected_configs = parse_config_set(args.expected_configs)
+    if "none" not in expected_configs:
+        raise ValueError("Expected configs must include the full-precision 'none' baseline.")
     run_rows: List[Dict[str, Any]] = []
     prompt_effects: Dict[
         Tuple[int, str], List[Tuple[Dict[str, str], Dict[str, str]]]
@@ -246,6 +329,8 @@ def main() -> None:
     invalid_prompts = 0
     missing = []
     underfilled_runs: List[Dict[str, Any]] = []
+    incomplete_config_runs: List[Dict[str, Any]] = []
+    complete_run_keys: set[Tuple[int, int]] = set()
 
     for seed_dir in sorted(args.sweep_dir.glob("ctx_*/seed_*")):
         seed_hint = int(seed_dir.name.removeprefix("seed_"))
@@ -258,15 +343,35 @@ def main() -> None:
             continue
         summary = read_json(summary_path)
         version = summary.get("runtime", {}).get("evaluator_version")
-        if version != "cached_dynamic_v4":
+        if version != REQUIRED_EVALUATOR_VERSION:
             raise ValueError(f"Stale evaluator {version!r} in {summary_path}")
         config = summary["config"]
         context = int(config["prompt_len"])
         seed = int(config["seed"])
         if selected_seeds is not None and seed not in selected_seeds:
             continue
-        names = [name for name in summary["quant_configs"] if name != "none"]
+        run_configs = {str(name) for name in summary["quant_configs"]}
+        if run_configs != expected_configs:
+            incomplete_config_runs.append(
+                {
+                    "run_dir": str(seed_dir),
+                    "missing_configs": sorted(expected_configs - run_configs),
+                    "unexpected_configs": sorted(run_configs - expected_configs),
+                }
+            )
+        names = sorted(run_configs - {"none"})
         benchmark_rows = read_csv(benchmark_path)
+        incomplete_prompts = validate_prompt_config_coverage(
+            benchmark_rows, expected_configs
+        )
+        if incomplete_prompts:
+            incomplete_config_runs.append(
+                {
+                    "run_dir": str(seed_dir),
+                    "incomplete_prompt_count": len(incomplete_prompts),
+                    "example_prompt_ids": incomplete_prompts[:5],
+                }
+            )
         actual_prompts = len({row["prompt_idx"] for row in benchmark_rows})
         underfilled = underfilled_run_record(
             run_dir=seed_dir,
@@ -285,6 +390,7 @@ def main() -> None:
         )
         exactness.update(counts)
         invalid_prompts += invalid
+        complete_run_keys.add((context, seed))
         for name, values in effects.items():
             prompt_effects[(context, name)].extend(values)
         for config_a, config_b, _ in MATCHED_BIT_PAIRS:
@@ -310,6 +416,26 @@ def main() -> None:
                     "total_cache_saved_fraction": metrics["total_cache_saved_fraction"],
                 }
             )
+
+    expected_run_keys = {
+        (context, seed) for context in expected_contexts for seed in expected_seeds
+    }
+    missing_expected_runs = sorted(expected_run_keys - complete_run_keys)
+    strict_issues = []
+    if args.require_complete and (missing or missing_expected_runs):
+        strict_issues.append(
+            f"missing runs: discovered={missing}, expected={missing_expected_runs}"
+        )
+    if args.require_complete and incomplete_config_runs:
+        strict_issues.append(f"incomplete config coverage: {incomplete_config_runs}")
+    if args.require_full_runs and underfilled_runs:
+        strict_issues.append(f"underfilled runs: {underfilled_runs}")
+    if args.require_exact_target and exactness["non_tie_or_unknown"]:
+        strict_issues.append(
+            f"non-tie target mismatches: {exactness['non_tie_or_unknown']}"
+        )
+    if strict_issues:
+        raise ValueError("Strict sweep gates failed: " + "; ".join(strict_issues))
 
     grouped: List[Dict[str, Any]] = []
     by_config: Dict[Tuple[int, str], List[Dict[str, Any]]] = defaultdict(list)
@@ -368,13 +494,30 @@ def main() -> None:
     write_csv(args.out_dir / "grouped_results.csv", grouped)
     write_csv(args.out_dir / "paired_precision_contrasts.csv", paired_comparisons)
     payload = {
+        "runtime": {
+            "source_evaluator_version": REQUIRED_EVALUATOR_VERSION,
+            "strict_completion_gate": args.require_complete,
+            "strict_full_run_gate": args.require_full_runs,
+            "strict_exact_target_gate": args.require_exact_target,
+        },
         "num_complete_runs": len({(row["context"], row["seed"]) for row in run_rows}),
         "missing_runs": missing,
+        "missing_expected_runs": [list(item) for item in missing_expected_runs],
+        "incomplete_config_runs": incomplete_config_runs,
         "underfilled_runs": underfilled_runs,
         "selected_seeds": sorted(selected_seeds) if selected_seeds is not None else None,
+        "expected_contexts": sorted(expected_contexts),
+        "expected_seeds": sorted(expected_seeds),
+        "expected_configs": sorted(expected_configs),
         "exactness_tie_margin": args.exactness_tie_margin,
         "exactness": dict(exactness),
         "invalid_prompt_occurrences": invalid_prompts,
+        "integrity_gates": {
+            "complete": not missing and not missing_expected_runs,
+            "config_coverage": not incomplete_config_runs,
+            "full_runs": not underfilled_runs,
+            "exact_target": exactness["non_tie_or_unknown"] == 0,
+        },
         "grouped": grouped,
         "paired_precision_contrasts": paired_comparisons,
         "plots": make_plot(grouped, args.out_dir),

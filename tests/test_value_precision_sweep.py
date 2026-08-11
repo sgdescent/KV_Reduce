@@ -5,7 +5,10 @@ from pathlib import Path
 from aggregate_value_precision_sweep import (
     aggregate_prompt_effects,
     parse_config_bits,
+    parse_config_set,
+    parse_int_set,
     underfilled_run_record,
+    validate_prompt_config_coverage,
 )
 
 
@@ -52,6 +55,23 @@ class ValuePrecisionSweepTest(unittest.TestCase):
                 context=1024,
                 seed=1,
             )
+        )
+
+    def test_strict_argument_parsers(self):
+        self.assertEqual(parse_int_set("1024, 4096"), {1024, 4096})
+        self.assertEqual(
+            parse_config_set("none;k8v4;k4v8"), {"none", "k8v4", "k4v8"}
+        )
+
+    def test_prompt_config_coverage_is_fail_closed(self):
+        rows = [
+            {"prompt_idx": "0", "config": "none"},
+            {"prompt_idx": "0", "config": "k8v4"},
+            {"prompt_idx": "1", "config": "none"},
+        ]
+        self.assertEqual(
+            validate_prompt_config_coverage(rows, {"none", "k8v4"}),
+            ["1"],
         )
 
 

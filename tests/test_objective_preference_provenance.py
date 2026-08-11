@@ -25,7 +25,9 @@ class ObjectivePreferenceProvenanceTest(unittest.TestCase):
             (spec / "summary.json").write_text(
                 json.dumps(
                     {
-                        "runtime": {"evaluator_version": "cached_dynamic_v4"},
+                        "runtime": {
+                            "evaluator_version": "cached_dynamic_v6_sequential_target"
+                        },
                         "config": {"prompt_len": 1024, "seed": 0, "num_prompts": 2},
                         "summaries": {"none": {"total_cache_saved_fraction": 0.0}},
                     }

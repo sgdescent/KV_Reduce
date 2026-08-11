@@ -60,6 +60,7 @@ cmd=(
   --warmup_prompts "$warmup_prompts"
   --skip_prompts "$skip_prompts"
   --draft_steps 4
+  --target_verification_mode sequential
   --max_new_tokens 16
   --seed "$seed"
   --quant_configs "$configs"
