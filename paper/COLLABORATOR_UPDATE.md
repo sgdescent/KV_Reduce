@@ -287,7 +287,32 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   cross-objective acceptance and KL effects are exactly zero. Against native
   draft KV, the selected policies change acceptance by **-0.91 points**, CI
   **[-2.22, +0.48]**, and **-0.88 points**, CI **[-2.17, +0.43]**, respectively.
-  SmolLM2 aggressive profiling is now running.
+  SmolLM2 aggressive is now complete with all **24/24** matrix tasks, no
+  rejected pairs, and **3,840/3,840** exact target outcomes. At budget three,
+  acceptance profiling improves acceptance over quality profiling by only
+  **+0.11 points**, hierarchical CI **[-0.53, +0.77]**, while increasing
+  quality KL by **+0.00275**, CI **[+0.00248, +0.00310]**, and delta NLL by
+  **+0.00325**, CI **[+0.00107, +0.00548]**. At budget five, both objectives
+  select the same policy. Across the three aggressive families, the model-
+  weighted budget-three acceptance effect is **-0.17 points**, interval
+  **[-0.61, +0.11]**. The current additive objective-aware allocator therefore
+  has no resolved acceptance advantage.
+  A strict all-layer SmolLM pilot directly compares seven uniform policies on
+  32 held-out prompts/sequences and passes **224/224** target-exactness checks.
+  At matched memory, `K4V2 - K2V4` is **+2.39 acceptance points**, CI
+  **[-1.75, +6.73]**, but ordinary quality significantly favors `K2V4`: the
+  `K4V2 - K2V4` KL contrast is **+0.03721**, CI
+  **[+0.02255, +0.05279]**, and the delta-NLL contrast is **+0.05423**, CI
+  **[+0.02223, +0.08759]**. These policies save roughly **71%** of draft KV and
+  **12.3%** of total target-plus-draft KV. This is a promising raw preference
+  reversal, not yet a resolved speculative result; powered 1K/4K, three-seed
+  SmolLM, Qwen, and OLMo grids are queued as jobs `13506`--`13514`.
+  The confusable 16-way passkey calibration also passed its difficulty gate.
+  Across all three completed 8K seeds (48 examples), BF16 scores **45/48
+  (93.8%)**, `K4V2` **47/48 (97.9%)**, and equal-budget `K2V4` **42/48
+  (87.5%)**, while both asymmetric policies save about **76.7%** of standalone
+  KV. The paired aggregate and 16K/32K cells are still pending, so this remains
+  preliminary retrieval evidence rather than a final claim.
   To separate model-family effects from budget effects, dependency-gated mild
   replications are also queued for OLMo2 (`13386`--`13390`) and SmolLM2
   (`13391`--`13395`). Each adds 24 strict held-out cells over 1K/4K contexts

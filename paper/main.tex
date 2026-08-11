@@ -753,6 +753,28 @@ points (95\% CI $[-2.22,+0.48]$), while K2V8 changes it by $-0.88$ points
 calibration differences are neither reliably beneficial nor consistent across
 model families.
 
+A strict SmolLM2-1.7B/360M replication provides the third aggressive family and
+passes 3,840/3,840 target-exactness checks. At the three-bit budget, the
+acceptance-profiled allocation improves acceptance over the quality allocation
+by only $0.11$ points (95\% CI $[-0.53,+0.77]$), while increasing quality KL by
+$0.00275$ (CI $[+0.00248,+0.00310]$) and delta NLL by $0.00325$
+(CI $[+0.00107,+0.00548]$). At five bits, the policies are identical. The
+three-family macro acceptance effect at budget three is $-0.17$ points, with a
+model-bootstrap interval of $[-0.61,+0.11]$. Thus, the additive sensitivity
+allocator does not establish a downstream-objective benefit.
+
+We therefore add a direct all-layer equal-memory control that avoids the
+additive allocator. In a 32-prompt SmolLM pilot with 224/224 exact target
+checks, K4V2 exceeds K2V4 by $2.39$ speculative-acceptance points, although its
+CI remains unresolved at $[-1.75,+6.73]$. Ordinary quality shows the opposite,
+resolved preference: K4V2 minus K2V4 is $+0.03721$ KL
+(CI $[+0.02255,+0.05279]$) and $+0.05423$ delta NLL
+(CI $[+0.02223,+0.08759]$), where lower is better. Both policies remove about
+71\% of draft-cache bytes and 12.3\% of total target-plus-draft KV. We treat
+this as a pilot preference reversal and pre-register powered 1K/4K,
+three-seed replications on SmolLM2, Qwen2.5, and OLMo2 before making a main
+claim.
+
 \subsection{Finite-precision verification audit}
 
 In all draft-only experiments, the target cache and weights remain BF16; joint
