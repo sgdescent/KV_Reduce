@@ -12,6 +12,11 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
+try:
+    import numpy as np
+except ImportError:  # Keep the report aggregator usable in minimal environments.
+    np = None
+
 
 EXPECTED_VERSION = "free_running_cached_v1"
 METRICS = (
@@ -50,10 +55,22 @@ def bootstrap_mean_ci(
     mean = sum(values) / len(values)
     if len(values) == 1 or samples <= 0:
         return mean, mean, mean
-    draws = []
-    for _ in range(samples):
-        draws.append(sum(values[rng.randrange(len(values))] for _ in values) / len(values))
-    return mean, percentile(draws, 0.025), percentile(draws, 0.975)
+    if np is None:
+        draws = [
+            sum(values[rng.randrange(len(values))] for _ in values) / len(values)
+            for _ in range(samples)
+        ]
+        return mean, percentile(draws, 0.025), percentile(draws, 0.975)
+    array = np.asarray(values, dtype=np.float64)
+    generator = np.random.default_rng(rng.getrandbits(64))
+    draws = np.empty(samples, dtype=np.float64)
+    chunk_size = min(samples, 4096)
+    for start in range(0, samples, chunk_size):
+        stop = min(samples, start + chunk_size)
+        indices = generator.integers(0, len(array), size=(stop - start, len(array)))
+        draws[start:stop] = array[indices].mean(axis=1)
+    low, high = np.quantile(draws, (0.025, 0.975))
+    return mean, float(low), float(high)
 
 
 def write_csv(path: Path, rows: Sequence[Dict[str, Any]]) -> None:

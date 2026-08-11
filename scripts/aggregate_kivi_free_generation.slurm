@@ -6,6 +6,7 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --time=01:00:00
+#SBATCH --exclude=catalyst-0-[9,15]
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 
