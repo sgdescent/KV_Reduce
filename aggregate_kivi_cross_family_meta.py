@@ -74,21 +74,33 @@ def collect_pair_rows(
     *,
     aggregate_name: str = "aggregate",
     comparison_name: str = "",
+    layout: str = "cross_family",
+    require_integrity: bool = False,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     matched: List[Dict[str, Any]] = []
     preferences: List[Dict[str, Any]] = []
     exactness = Counter()
     missing = []
+    integrity_failures = []
     run_counts: Dict[str, Dict[str, int]] = {}
     for pair in expected_pairs:
-        comparison_dir = root / "comparison" / pair
+        if layout == "per_pair":
+            pair_root = root / pair
+            comparison_dir = pair_root / "objective_comparison"
+            spec_summary_path = pair_root / "spec_aggregate" / "summary.json"
+            quality_summary_path = pair_root / "quality_aggregate" / "summary.json"
+        else:
+            comparison_dir = root / "comparison" / pair
+            spec_summary_path = root / "spec" / pair / aggregate_name / "summary.json"
+            quality_summary_path = root / "quality" / pair / aggregate_name / "summary.json"
         if comparison_name:
             comparison_dir = comparison_dir / comparison_name
-        spec_summary_path = root / "spec" / pair / aggregate_name / "summary.json"
-        quality_summary_path = root / "quality" / pair / aggregate_name / "summary.json"
         matched_path = comparison_dir / "matched_objectives.csv"
         preference_path = comparison_dir / "paired_preferences.csv"
-        required = (spec_summary_path, quality_summary_path, matched_path, preference_path)
+        preference_summary_path = comparison_dir / "preference_summary.json"
+        required = [spec_summary_path, quality_summary_path, matched_path, preference_path]
+        if require_integrity:
+            required.append(preference_summary_path)
         absent = [str(path) for path in required if not path.exists()]
         if absent:
             missing.extend(absent)
@@ -96,6 +108,26 @@ def collect_pair_rows(
 
         spec_summary = read_json(spec_summary_path)
         quality_summary = read_json(quality_summary_path)
+        if require_integrity:
+            spec_gates = spec_summary.get("integrity_gates", {})
+            failed_spec_gates = sorted(
+                gate
+                for gate in ("complete", "config_coverage", "full_runs", "exact_target")
+                if spec_gates.get(gate) is not True
+            )
+            preference_summary = read_json(preference_summary_path)
+            failures = []
+            if failed_spec_gates:
+                failures.append("spec:" + ",".join(failed_spec_gates))
+            if quality_summary.get("full_run_gate") is not True:
+                failures.append("quality:full_runs")
+            if preference_summary.get("all_runs_filled") is not True:
+                failures.append("preferences:full_runs")
+            if int(spec_summary.get("invalid_prompt_occurrences", 0)) != 0:
+                failures.append("spec:invalid_prompts")
+            if failures:
+                integrity_failures.append({"pair": pair, "failures": failures})
+                continue
         run_counts[pair] = {
             "spec": int(spec_summary.get("num_complete_runs", 0)),
             "quality": int(quality_summary.get("num_complete_runs", 0)),
@@ -112,6 +144,7 @@ def collect_pair_rows(
         "expected_pairs": list(expected_pairs),
         "complete_pairs": sorted({str(row["pair"]) for row in matched}),
         "missing_artifacts": missing,
+        "integrity_failures": integrity_failures,
         "run_counts": run_counts,
         "exactness": dict(exactness),
     }
@@ -288,6 +321,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional subdirectory below comparison/<pair>.",
     )
+    parser.add_argument(
+        "--layout",
+        choices=("cross_family", "per_pair"),
+        default="cross_family",
+        help="Artifact layout: legacy cross-family directories or one complete root per pair.",
+    )
+    parser.add_argument(
+        "--require_integrity",
+        action="store_true",
+        help="Require strict completeness, exact-target, quality, and preference gates.",
+    )
     parser.add_argument("--acceptance_drop_budget", type=float, default=0.02)
     parser.add_argument("--quality_kl_budget", type=float, default=0.01)
     parser.add_argument("--allow_incomplete", action="store_true")
@@ -303,11 +347,16 @@ def main() -> None:
         expected,
         aggregate_name=args.aggregate_name,
         comparison_name=args.comparison_name,
+        layout=args.layout,
+        require_integrity=args.require_integrity,
     )
-    if audit["missing_artifacts"] and not args.allow_incomplete:
-        raise ValueError(
-            "Missing cross-family artifacts:\n" + "\n".join(audit["missing_artifacts"])
-        )
+    audit_errors = list(audit["missing_artifacts"])
+    audit_errors.extend(
+        f"{item['pair']}: {','.join(item['failures'])}"
+        for item in audit["integrity_failures"]
+    )
+    if audit_errors and not args.allow_incomplete:
+        raise ValueError("Invalid cross-family artifacts:\n" + "\n".join(audit_errors))
     if not matched:
         raise ValueError("No complete cross-family matched-objective rows were found.")
     grouped = aggregate_configs(
