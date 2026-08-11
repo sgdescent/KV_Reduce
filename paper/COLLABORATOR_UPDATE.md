@@ -195,6 +195,13 @@ so it is not yet an end-to-end speed claim.
   **[-2.02, +0.67]**; `K4V4` saves **53.89%** and changes accuracy by
   **+0.67 points**, CI **[-0.67, +2.02]**. OLMo2 and SmolLM2 task shards are
   running.
+- The first synthetic passkey retrieval sweep is complete across 4K, 8K, and
+  16K contexts, three seeds, and 72 examples per context. BF16 and every tested
+  3/4/8-bit allocation achieve 100% accuracy, including keys placed at 10%,
+  50%, and 90% depth. This is a ceiling result, not evidence that the policies
+  are equivalent. A stricter replacement (`13242`--`13243`) evaluates
+  `K4V2`, `K2V4`, and `K2V2` at 8K/16K/32K with three disjoint seeds and a
+  completeness gate that rejects missing or underfilled runs.
 - Exact quality-optimized versus acceptance-optimized allocation matrix at
   matched bytes: two budgets, 1K/4K contexts, three held-out seeds, and 24
   ordinary/speculative cross-evaluation cells. The mild Qwen 4/8-bit matrix is
