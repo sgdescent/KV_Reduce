@@ -24,4 +24,5 @@ root="${OUT_ROOT:-outputs/key_residual_geometry_v1/qwen25_3b_15b}"
 python3 -u aggregate_sequential_spec_runs.py \
   --summary_glob "$root/residual_${residual_length}/seed_*/summary.json" \
   --out_dir "$root/residual_${residual_length}/aggregate" \
-  --bootstrap_samples "${BOOTSTRAP_SAMPLES:-30000}"
+  --bootstrap_samples "${BOOTSTRAP_SAMPLES:-30000}" \
+  --require_full_runs

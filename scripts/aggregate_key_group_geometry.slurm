@@ -24,4 +24,5 @@ root="${OUT_ROOT:-outputs/key_group_geometry_v1/qwen25_3b_15b}"
 python3 -u aggregate_sequential_spec_runs.py \
   --summary_glob "$root/group_${group_size}/seed_*/summary.json" \
   --out_dir "$root/group_${group_size}/aggregate" \
-  --bootstrap_samples "${BOOTSTRAP_SAMPLES:-30000}"
+  --bootstrap_samples "${BOOTSTRAP_SAMPLES:-30000}" \
+  --require_full_runs
