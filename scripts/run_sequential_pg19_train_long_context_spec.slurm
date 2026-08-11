@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=kv_seq_32k
+#SBATCH --job-name=kv_seq_pg19
 #SBATCH --partition=general
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -19,13 +19,19 @@ if [[ -f .venv/bin/activate ]]; then
   source .venv/bin/activate
 fi
 
-seed="${SLURM_ARRAY_TASK_ID:-0}"
-total_context=32768
+task_id="${SLURM_ARRAY_TASK_ID:-0}"
+contexts=(16384 32768)
+seed=$((task_id / ${#contexts[@]}))
+total_context="${contexts[$((task_id % ${#contexts[@]}))]}"
 max_new_tokens=16
 prompt_len=$((total_context - max_new_tokens))
-num_prompts="${NUM_PROMPTS_32K:-6}"
-skip_prompts=$(( ${SKIP_BASE:-384} + seed * (num_prompts + 4) ))
-root="${OUT_ROOT:-outputs/sequential_long_context_v1/qwen25_3b_15b}"
+case "$total_context" in
+  16384) num_prompts="${NUM_PROMPTS_16K:-12}"; context_skip=1024 ;;
+  32768) num_prompts="${NUM_PROMPTS_32K:-8}"; context_skip=2048 ;;
+  *) echo "Unsupported context length $total_context" >&2; exit 2 ;;
+esac
+skip_prompts=$(( ${SKIP_BASE:-0} + context_skip + seed * (num_prompts + 4) ))
+root="${OUT_ROOT:-outputs/sequential_long_context_v2_pg19_train/qwen25_3b_15b}"
 out_dir="$root/ctx_${total_context}/seed_${seed}"
 
 export TOKENIZERS_PARALLELISM=false
@@ -40,7 +46,7 @@ python3 -u benchmark_spec_kv_quantization.py \
   --attn_implementation sdpa \
   --dataset_name emozilla/pg19 \
   --dataset_config default \
-  --eval_split validation \
+  --eval_split train \
   --stream_eval \
   --prompt_len "$prompt_len" \
   --num_prompts "$num_prompts" \
@@ -58,5 +64,5 @@ python3 -u benchmark_spec_kv_quantization.py \
   --out_dir "$out_dir" \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
-  --wandb_group "${WANDB_GROUP:-sequential-long-context}" \
-  --wandb_run_name "qwen25_3b_15b_seq_ctx${total_context}_s${seed}"
+  --wandb_group "${WANDB_GROUP:-sequential-pg19-train-long-context}" \
+  --wandb_run_name "qwen25_3b_15b_pg19_train_ctx${total_context}_s${seed}"
