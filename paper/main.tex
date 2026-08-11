@@ -421,15 +421,18 @@ generation; it does not by itself establish the speculative-acceptance ranking.
   \label{fig:free-generation}
 \end{figure*}
 
-An exploratory six-pair audit suggests that this geometry effect may generalize
-beyond Qwen, but it is not yet part of our confirmatory evidence.
-The raw speculative macro estimates move from a naive K8V4--K4V8 contrast of
-$+10.87$ acceptance points to a KIVI contrast of
-$-0.25$ points. A subsequent exactness audit found non-tie verifier mismatches
-in five of the six KIVI model pairs, so we do not use their confidence intervals
-or macro difference to support the main claim. Backend and sequential-shadow
-verifier matrices are running for each affected family; the controlled Qwen
-factorial above remains the confirmatory geometry result.
+A confirmatory sequential-verifier study covers six target--draft pairs from
+Qwen2.5, Qwen3, Llama~3, OLMo~2, and SmolLM2. Across 18 runs and 576 paired
+prompts, every quantized trajectory matches an independent tokenwise BF16 target.
+At the mild budget, K4V4 saves 66.13\% of draft-cache bytes and 22.64\% of
+combined target--draft KV, with a model-weighted acceptance change of $-0.79$
+points (95\% hierarchical-bootstrap CI $[-1.63,0.04]$). The equal-mean-bit
+K8V4--K4V8 contrast is $-0.05$ points (CI $[-0.76,0.63]$), so mild K/V
+allocation is unresolved. At the aggressive budget, the K4V2--K2V4 contrast is
+$-1.94$ points (CI $[-3.50,-0.40]$), significantly favoring preservation of
+value precision under grouped per-channel key quantization. This cross-family
+result and the controlled axis reversal above jointly rule out a universal
+bit-width-only K/V sensitivity claim.
 
 A fixed-key value-precision sweep identifies a sharp knee below four bits. Across
 three 1K-context seeds, K8V4 saves $27.00\%$ of total target-plus-draft KV memory
@@ -441,22 +444,19 @@ The same knee holds across three 4K-context seeds: K8V4 changes acceptance by
 $-0.34$ points (CI $[-1.95,1.21]$), K8V3 drops $2.28$ points
 (CI $[-4.25,-0.35]$), and K8V2 drops $24.09$ points.
 
-The asymmetry persists when the speculative proposal length changes. At
-$\gamma=2$, three disjoint seeds provide 191 valid paired prompts. K4V2, which
-reduces value precision, loses $5.43$ acceptance points relative to BF16
-(CI $[-7.32,-3.58]$), whereas K2V4, which reduces key precision, loses $1.43$
-points (CI $[-2.58,-0.31]$). The direct paired K4V2--K2V4 contrast is $-4.01$
-points (CI $[-5.82,-2.15]$). Both policies use the same nominal mean bit-width;
+The aggressive asymmetry persists when the speculative proposal length changes.
+For each $\gamma\in\{2,4,8\}$, three disjoint seeds provide 144 paired prompts,
+and every quantized trajectory matches independent BF16 target-greedy output.
+The K4V2--K2V4 acceptance contrasts are $-5.04$ points at $\gamma=2$
+(CI $[-7.60,-2.50]$), $-4.80$ at $\gamma=4$
+(CI $[-7.30,-2.35]$), and $-3.55$ at $\gamma=8$
+(CI $[-5.92,-1.29]$). Both policies use the same nominal mean bit-width;
 because key metadata is asymmetric, their total-cache savings are near rather
-than exactly equal (31.76\% versus 31.38\%). Under the deployed KIVI geometry,
-aggressive value quantization is therefore significantly more harmful than
-aggressive key quantization in this setting. The result replicates at
-$\gamma=4$ across 189 paired prompts: K4V2 loses $6.48$ points
-(CI $[-8.39,-4.61]$), K2V4 loses $2.41$ points
-(CI $[-3.83,-0.98]$), and their direct contrast is $-4.07$ points
-(CI $[-5.95,-2.26]$). At $\gamma=8$, the direct contrast remains
-$-3.08$ points across 191 paired prompts (CI $[-4.70,-1.48]$). Thus, the
-deployed-geometry conclusion is stable over proposal lengths 2, 4, and 8.
+than exactly equal (31.76\% versus 31.38\%). The mild K8V4--K4V8 contrast is
+unresolved at $\gamma=2$ and $4$, but becomes $+1.42$ points at $\gamma=8$
+(CI $[0.37,2.51]$). Thus, proposal length changes effect size and can resolve a
+mild preference, while the aggressive value-precision preference remains stable
+across all three proposal lengths under the deployed KIVI geometry.
 
 The same KIVI geometry remains viable at long prefix lengths. On PG19 at 16K,
 K4V4 saves 70.79\% of draft-cache bytes and 30.97\% of combined target--draft

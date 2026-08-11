@@ -34,6 +34,12 @@ CI **[-1.63, +0.04]**. The equal-mean-bit comparison `K8V4 - K4V8` is
 is statistically unresolved across these six pairs; we should not claim that
 keys universally require more bits.
 
+The aggressive equal-mean-bit control is now complete across the same six
+families and three seeds per pair. Over 576 paired prompts, `K4V2 - K2V4`
+changes acceptance by **-1.94 points**, CI **[-3.50, -0.40]**. Thus, under
+KIVI-style grouped per-channel key quantization, allocating the extra two bits
+to values is significantly better at this aggressive budget.
+
 The most novel completed mechanism result is a controlled geometry reversal.
 With per-token key quantization, `K8V4 - K4V8` changes acceptance by
 **+28.70 points**; changing only the key quantization axis to KIVI-style grouped
@@ -144,13 +150,12 @@ so it is not yet an end-to-end speed claim.
   `K8V4 - K4V8` contrast is unresolved at gamma 2 and 4 but is **+1.42
   points**, CI **[+0.35, +2.52]**, at gamma 8.
 - Six-pair exact `K4V2` versus `K2V4` cross-family replication, paired with an
-  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. Fifteen
-  exact runs are complete: three seeds each for Qwen2.5-3B/1.5B, OLMo2-7B/1B,
-  and SmolLM2-1.7B/360M, with six of nine larger-pair cells complete. Across all
-  six pairs, `K4V2 - K2V4` is **-1.78 acceptance points**, CI
-  **[-3.37, -0.18]**. The model-weighted
-  direction now significantly favors preserving values under the tested KIVI
-  geometry; remaining larger-pair seeds are running.
+  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. All 18
+  exact runs are complete: three seeds for each of six target/draft pairs, 576
+  paired prompts, and 1,728 quantized trajectories. Across the six pairs,
+  `K4V2 - K2V4` is **-1.94 acceptance points**, CI **[-3.50, -0.40]**.
+  The model-weighted direction significantly favors preserving values under the
+  tested KIVI geometry.
 - Exact key-quantization group-size sweep over 16, 32, 64, and 128 channels,
   with three disjoint seeds and metadata-adjusted byte accounting.
 - Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
@@ -165,21 +170,26 @@ so it is not yet an end-to-end speed claim.
   yielded only 5 of 8 requested prompts, so it is excluded from paper-grade
   evidence. The replacement sweep uses three seeds and a strict aggregation
   gate that rejects every underfilled run.
-- Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; ten of twelve
-  cells are complete. The 64-token sweep is complete across three seeds per
+- Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; all twelve cells
+  are complete. The 64-token sweep covers three seeds per
   model: `K8V4 - K4V8` changes exact-token retention by **-5.12 points**, CI
-  **[-11.21, +0.84]**, while the retained-prefix contrast is **-8.23 points**,
-  CI **[-15.22, -1.31]**. Across the currently complete 256-token cells, the
-  exact-token contrast is **-7.26 points**, CI **[-17.39, +1.06]**. The
-  remaining third-seed cells are running. The separate
-  three-seed SmolLM2/OLMo2/Llama replication is complete.
+  **[-11.22, +0.77]**, while the retained-prefix contrast is **-8.23 points**,
+  CI **[-15.22, -1.31]**. The 256-token sweep gives an
+  exact-token contrast is **-7.52 points**, CI **[-17.85, +1.39]**. At 256
+  tokens, `K4V4` saves **66.59%** of standalone-cache bytes and retains
+  **25.10%** of exact BF16 tokens. The separate three-seed
+  SmolLM2/OLMo2/Llama replication is also complete.
 - Powered cross-family ARC-Challenge/HellaSwag task checks. Llama-3.2-3B
-  HellaSwag is complete across three disjoint shards and 576 examples:
+  is complete across six disjoint task shards with no underfilled runs.
+  HellaSwag covers 576 examples:
   `K8V4 - K4V8` changes normalized accuracy by **-0.35 points**, CI
   **[-1.04, +0.35]**, while `K4V4` saves **58.60%** of standalone-cache bytes
   and changes accuracy by **+0.87 points**, CI **[0.00, +1.74]**. Thus, strict
   free-running token divergence does not directly imply downstream task loss.
-  Llama ARC-Challenge and the OLMo2/SmolLM2 task shards are running.
+  ARC-Challenge covers 297 examples: `K8V4 - K4V8` is **-0.67 points**, CI
+  **[-2.02, +0.67]**; `K4V4` saves **53.89%** and changes accuracy by
+  **+0.67 points**, CI **[-0.67, +2.02]**. OLMo2 and SmolLM2 task shards are
+  running.
 - Exact quality-optimized versus acceptance-optimized allocation matrix at
   matched bytes: two budgets, 1K/4K contexts, three held-out seeds, and 24
   ordinary/speculative cross-evaluation cells. The mild Qwen 4/8-bit matrix is
