@@ -2,6 +2,9 @@
 set -euo pipefail
 
 dependency="${DEPENDENCY:-}"
+out_root="${OUT_ROOT:-outputs/kivi_passkey_aggressive_v2/qwen25_15b}"
+num_choices="${PASSKEY_NUM_CHOICES:-16}"
+generator_version="${PASSKEY_GENERATOR_VERSION:-synthetic_passkey_16way_v2}"
 dependency_args=()
 if [[ -n "$dependency" ]]; then
   dependency_args+=(--dependency="afterok:${dependency}")
@@ -11,13 +14,14 @@ array_job=$(sbatch --parsable \
   "${dependency_args[@]}" \
   --array=0-8%1 \
   --exclude=catalyst-0-9,catalyst-0-15 \
-  --export="ALL,WANDB_PROJECT=${WANDB_PROJECT:-kv-reduce},PASSKEY_EXAMPLES=${PASSKEY_EXAMPLES:-16}" \
+  --export="ALL,WANDB_PROJECT=${WANDB_PROJECT:-kv-reduce},PASSKEY_EXAMPLES=${PASSKEY_EXAMPLES:-16},PASSKEY_NUM_CHOICES=$num_choices,OUT_ROOT=$out_root" \
   scripts/run_kivi_passkey_aggressive.slurm)
 aggregate_job=$(sbatch --parsable \
   --dependency="afterok:${array_job}" \
   --exclude=catalyst-0-9,catalyst-0-15 \
-  --export="ALL,PASSKEY_EXAMPLES=${PASSKEY_EXAMPLES:-16}" \
+  --export="ALL,PASSKEY_EXAMPLES=${PASSKEY_EXAMPLES:-16},PASSKEY_NUM_CHOICES=$num_choices,PASSKEY_GENERATOR_VERSION=$generator_version,OUT_ROOT=$out_root" \
   scripts/aggregate_kivi_passkey_aggressive.slurm)
 
 printf 'passkey_aggressive_job=%s\n' "$array_job"
 printf 'passkey_aggressive_aggregate_job=%s\n' "$aggregate_job"
+printf 'passkey_aggressive_output=%s\n' "$out_root"
