@@ -315,8 +315,13 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   **[+2.08, +25.00]**. At 16K, BF16 and `K4V2` score **47/48**, versus
   **37/48** for `K2V4`; at 32K the scores are **44/48**, **47/48**, and
   **41/48**, respectively. Both asymmetric policies save about **77%** of
-  standalone KV. This is synthetic draft-only retrieval-quality evidence, not
-  speculative acceptance. A matched strict Llama-3.2-3B replication reverses
+  standalone KV. A powered 16K replication over **192 disjoint examples**
+  confirms the Qwen result: `K4V2` scores **189/192 (98.44%)** versus
+  **158/192 (82.29%)** for `K2V4`, a **+16.15-point** paired difference, CI
+  **[+10.42, +21.88]**. BF16 scores **186/192**; the two asymmetric policies
+  still save **77.06%** and **77.01%** of standalone KV. This is synthetic
+  draft-only retrieval-quality evidence, not speculative acceptance. A matched
+  strict Llama-3.2-3B replication reverses
   the resolved 32K preference: `K4V2 - K2V4` is **-10.42 points**, CI
   **[-18.75, -2.08]**, with **42/48** versus **47/48** correct. Its 8K and
   16K contrasts are unresolved. Thus, even for the same task and quantizer,
