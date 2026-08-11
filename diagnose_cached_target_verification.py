@@ -9,6 +9,7 @@ checking batched logits, suffix invariance, and cache crop/commit behavior.
 
 import argparse
 import copy
+import itertools
 import json
 import math
 import os
@@ -447,6 +448,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset_config", type=str, default="wikitext-2-raw-v1")
     parser.add_argument("--eval_split", type=str, default="validation")
     parser.add_argument("--eval_split_fallbacks", type=str, default="test,train")
+    parser.add_argument("--stream_eval", action="store_true")
     parser.add_argument("--shuffle_eval", action="store_true")
     parser.add_argument("--prompt_len", type=int, default=1024)
     parser.add_argument("--num_prompts", type=int, default=2)
@@ -472,22 +474,22 @@ def main() -> None:
         dtype_name=args.dtype,
         attn_implementation=args.attn_implementation,
     )
-    all_prompts = [
+    block_iterator = iter_token_blocks(
+        tokenizer=tokenizer,
+        seq_len=args.prompt_len,
+        max_blocks=args.skip_prompts + args.num_prompts,
+        dataset_name=args.dataset_name,
+        dataset_config=args.dataset_config,
+        split=args.eval_split,
+        split_fallbacks=parse_csv_items(args.eval_split_fallbacks),
+        shuffle=args.shuffle_eval,
+        seed=args.seed,
+        streaming=args.stream_eval,
+    )
+    prompts = [
         block.unsqueeze(0)
-        for block in iter_token_blocks(
-            tokenizer=tokenizer,
-            seq_len=args.prompt_len,
-            max_blocks=args.skip_prompts + args.num_prompts,
-            dataset_name=args.dataset_name,
-            dataset_config=args.dataset_config,
-            split=args.eval_split,
-            split_fallbacks=parse_csv_items(args.eval_split_fallbacks),
-            shuffle=args.shuffle_eval,
-            seed=args.seed,
-            streaming=False,
-        )
+        for block in itertools.islice(block_iterator, args.skip_prompts, None)
     ]
-    prompts = all_prompts[args.skip_prompts :]
     audits = [] if args.skip_unit_audit else [
         audit_prompt(
             model=model,

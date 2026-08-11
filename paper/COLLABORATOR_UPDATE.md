@@ -108,6 +108,16 @@ the negative Qwen held-out allocator, it shows why the paper must distinguish
 "objectives rank local perturbations differently" from the stronger claim that
 an acceptance-trained allocation generalizes better.
 
+The first OLMo held-out cross-evaluation is provisional for the same reason. The
+acceptance-optimized policy trails the quality-optimized policy by 0.67
+acceptance points (95% CI: -1.69 to +0.17) at a matched eight-bit mean budget.
+However, the exactness audit found 17 non-tie target mismatches on five of 64
+prompts, shared across quantization conditions. We exclude those prompts from
+the paired interval and do not treat the OLMo run as paper-ready. A BF16
+SDPA-versus-eager verifier matrix, with sequential-shadow reset controls, is
+queued to determine whether the discrepancy comes from kernel-shape numerical
+drift or cache rollback/commit behavior.
+
 ## Copy-Paste Message
 
 The cache-quantization pivot is promising, but cache quantization alone is not
