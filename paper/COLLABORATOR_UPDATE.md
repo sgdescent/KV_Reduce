@@ -80,6 +80,15 @@ K8V4 under grouped per-channel key quantization. These verifier-free runs
 measure exact sequence retention, token agreement, first divergence, and
 long-horizon error accumulation outside speculative decoding.
 
+The three-seed Qwen long-generation extension strengthens that ordinary-decoding
+result. With 1K-token prefixes and 256-token continuations, K4V8 retains 33.16%
+of BF16 tokens versus 23.57% for K8V4. The paired K8V4-minus-K4V8 difference is
+-9.59 points (95% CI: -18.98 to -0.47). K4V8 also doubles exact-continuation
+retention, 16.67% versus 8.33%, although this endpoint has only 48 paired
+prompts. With 4K-token prefixes and 64-token continuations, the token-retention
+contrast remains K4V8-favorable at -2.67 points, but its CI [-12.08, +6.09] is
+unresolved. Cross-family 256-token continuation replications are queued.
+
 The powered Qwen2.5-7B/3B allocator evaluation used 128 quality sequences and
 128 held-out acceptance prompts. Uniform K8V8 has the best KL (0.00083) while
 saving 43.06% of draft KV. Acceptance-oriented policies preserve or slightly
