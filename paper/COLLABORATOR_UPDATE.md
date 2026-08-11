@@ -148,11 +148,14 @@ A credible main-track submission should contain:
 - Packed/fused kernels with real cache storage, no full dequantization workspace,
   and measured long-context throughput or batch-capacity gains.
 
-The packed prototype already demonstrates feasibility: a Qwen2.5-1.5B-shaped
-`K4V4` cache at 32K drops from 896 MiB to 260.2 MiB (**70.96% saved**), and the
-direct Triton path is 2.05x faster than materialize-then-attend while using only
-0.38 MiB of temporary memory. It is still 6.88x slower than native BF16 SDPA,
-so it is not yet an end-to-end speed claim.
+The packed prototype now has a complete systems matrix: six draft-model shapes,
+batch sizes 1/4/16, contexts 1K--32K, three K/V policies, 18 source runs, and
+1,512 kernel measurements. `K4V4` saves **69.26%** of cache bytes on average
+and the direct Triton path is geometrically **3.43x** faster than
+materialize-then-attend; `K4V8` and `K8V4` are **3.90x** and **3.61x** faster.
+However, no cell beats native BF16 SDPA: geometric native-relative speeds are
+0.223x, 0.315x, and 0.294x. This demonstrates real packed storage and removes
+full dequantization workspace, but is not yet an end-to-end speed claim.
 
 ## Work In Progress
 
