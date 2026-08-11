@@ -19,6 +19,12 @@ EXPECTED_VERSION = "free_running_cached_v1"
 CONFIGS = ("k4v8", "k8v4")
 CONFIG_LABELS = {"k4v8": "K4V8", "k8v4": "K8V4"}
 COLORS = {"k4v8": "#D1495B", "k8v4": "#17324D"}
+SHORT_LABELS = {
+    "Qwen2.5-1.5B": "Qwen2.5",
+    "Llama-3.2-3B": "Llama3.2",
+    "OLMo-2-1B": "OLMo2",
+    "SmolLM2-360M": "SmolLM2",
+}
 METRICS = (
     ("exact_sequence_match", "Exact sequence"),
     ("token_match_fraction", "Token agreement"),
@@ -148,7 +154,7 @@ def plot(out_dir: Path, summaries: Sequence[Dict[str, Any]], contrasts: Sequence
     }
     positions = list(range(len(models)))
     width = 0.34
-    fig, axes = plt.subplots(1, 2, figsize=(7.1, 2.65), gridspec_kw={"width_ratios": [1.15, 1.0]})
+    fig, axes = plt.subplots(1, 2, figsize=(7.8, 2.65), gridspec_kw={"width_ratios": [1.15, 1.0]})
 
     for offset, config in ((-width / 2, "k4v8"), (width / 2, "k8v4")):
         values = [100 * summary_map[(model, config)]["token_match_fraction"] for model in models]
@@ -159,7 +165,7 @@ def plot(out_dir: Path, summaries: Sequence[Dict[str, Any]], contrasts: Sequence
             color=COLORS[config],
             label=CONFIG_LABELS[config],
         )
-    axes[0].set_xticks(positions, models)
+    axes[0].set_xticks(positions, [SHORT_LABELS.get(model, model) for model in models])
     axes[0].set_ylabel("BF16 token agreement (%)")
     axes[0].set_ylim(0, 78)
     axes[0].set_title("Free-running continuation retention", fontweight="bold")
