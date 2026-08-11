@@ -73,6 +73,30 @@ def bootstrap_mean_ci(
     return mean, float(low), float(high)
 
 
+def bootstrap_macro_mean_ci(
+    groups: Sequence[Sequence[float]],
+    *,
+    rng: random.Random,
+    samples: int,
+) -> Tuple[float, float, float]:
+    """Hierarchically bootstrap an equal-model-weight macro mean."""
+    if not groups or any(not group for group in groups):
+        raise ValueError("Macro bootstrap groups must be non-empty.")
+    mean = sum(sum(group) / len(group) for group in groups) / len(groups)
+    if samples <= 0:
+        return mean, mean, mean
+    draws: List[float] = []
+    for _ in range(samples):
+        model_means: List[float] = []
+        for _ in groups:
+            group = groups[rng.randrange(len(groups))]
+            model_means.append(
+                sum(group[rng.randrange(len(group))] for _ in group) / len(group)
+            )
+        draws.append(sum(model_means) / len(model_means))
+    return mean, percentile(draws, 0.025), percentile(draws, 0.975)
+
+
 def write_csv(path: Path, rows: Sequence[Dict[str, Any]]) -> None:
     fields: List[str] = []
     for row in rows:
@@ -137,7 +161,12 @@ def aggregate(
     *,
     bootstrap_samples: int,
     seed: int,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> Tuple[
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+    List[Dict[str, Any]],
+]:
     grouped: Dict[Tuple[str, int, int, str], List[Dict[str, Any]]] = defaultdict(list)
     paired: Dict[Tuple[str, int, int], Dict[str, Dict[str, Dict[str, Any]]]] = defaultdict(
         lambda: defaultdict(dict)
@@ -212,7 +241,94 @@ def aggregate(
                         "ci_high": high,
                     }
                 )
-    return summaries, contrasts
+    macro_groups: Dict[
+        Tuple[int, int],
+        Dict[str, Dict[str, Dict[str, Dict[str, Any]]]],
+    ] = defaultdict(dict)
+    for (model, prompt_len, max_new_tokens), prompt_rows in paired.items():
+        macro_groups[(prompt_len, max_new_tokens)][model] = prompt_rows
+
+    macro_summaries: List[Dict[str, Any]] = []
+    macro_contrasts: List[Dict[str, Any]] = []
+    for (prompt_len, max_new_tokens), model_rows in sorted(macro_groups.items()):
+        config_sets = [
+            {config for configs in prompts.values() for config in configs}
+            for prompts in model_rows.values()
+        ]
+        configs = sorted(set.intersection(*config_sets)) if config_sets else []
+        for config in configs:
+            model_items = [
+                [configs[config] for configs in prompts.values() if config in configs]
+                for prompts in model_rows.values()
+            ]
+            model_items = [items for items in model_items if items]
+            output: Dict[str, Any] = {
+                "prompt_len": prompt_len,
+                "max_new_tokens": max_new_tokens,
+                "config": config,
+                "num_models": len(model_items),
+                "num_prompt_occurrences": sum(len(items) for items in model_items),
+                "cache_saved_fraction": sum(
+                    sum(float(item["cache_saved_fraction"]) for item in items) / len(items)
+                    for items in model_items
+                )
+                / len(model_items),
+            }
+            for metric in METRICS:
+                groups = [
+                    [float(item[metric]) for item in items] for items in model_items
+                ]
+                mean, low, high = bootstrap_macro_mean_ci(
+                    groups,
+                    rng=rng,
+                    samples=bootstrap_samples,
+                )
+                output[metric] = mean
+                output[f"{metric}_ci_low"] = low
+                output[f"{metric}_ci_high"] = high
+            macro_summaries.append(output)
+
+        for left, right in CONTRASTS:
+            common_by_model = [
+                [
+                    configs
+                    for configs in prompts.values()
+                    if left in configs and right in configs
+                ]
+                for prompts in model_rows.values()
+            ]
+            common_by_model = [common for common in common_by_model if common]
+            if not common_by_model:
+                continue
+            for metric in METRICS[:3]:
+                groups = [
+                    [
+                        float(configs[left][metric])
+                        - float(configs[right][metric])
+                        for configs in common
+                    ]
+                    for common in common_by_model
+                ]
+                mean, low, high = bootstrap_macro_mean_ci(
+                    groups,
+                    rng=rng,
+                    samples=bootstrap_samples,
+                )
+                macro_contrasts.append(
+                    {
+                        "prompt_len": prompt_len,
+                        "max_new_tokens": max_new_tokens,
+                        "left_config": left,
+                        "right_config": right,
+                        "metric": metric,
+                        "num_models": len(groups),
+                        "num_paired_prompts": sum(len(group) for group in groups),
+                        "difference": mean,
+                        "ci_low": low,
+                        "ci_high": high,
+                    }
+                )
+    return summaries, contrasts, macro_summaries, macro_contrasts
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -227,7 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     rows, runs = load_runs(args.summary_glob)
-    summaries, contrasts = aggregate(
+    summaries, contrasts, macro_summaries, macro_contrasts = aggregate(
         rows,
         bootstrap_samples=args.bootstrap_samples,
         seed=args.seed,
@@ -236,11 +352,15 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     write_csv(out_dir / "generation_summary.csv", summaries)
     write_csv(out_dir / "paired_contrasts.csv", contrasts)
+    write_csv(out_dir / "macro_generation_summary.csv", macro_summaries)
+    write_csv(out_dir / "macro_paired_contrasts.csv", macro_contrasts)
     payload = {
         "runtime": {"source_evaluator_version": EXPECTED_VERSION},
         "runs": runs,
         "summaries": summaries,
         "paired_contrasts": contrasts,
+        "macro_summaries": macro_summaries,
+        "macro_paired_contrasts": macro_contrasts,
     }
     (out_dir / "summary.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(f"Aggregated {len(runs)} runs and {len(rows)} rows into {out_dir}.")
