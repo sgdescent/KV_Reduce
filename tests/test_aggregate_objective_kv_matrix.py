@@ -192,6 +192,96 @@ class ObjectiveMatrixAggregationTest(unittest.TestCase):
         self.assertEqual(allocation["k_bits"], [8])
         self.assertEqual(allocation["v_bits"], [4])
 
+    @unittest.skipUnless(
+        importlib.util.find_spec("transformers") is not None,
+        "preparation invokes the experiment dependency stack",
+    )
+    def test_aggressive_preparation_matches_bytes_end_to_end(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            quality_profile = root / "quality.csv"
+            acceptance_profile = root / "acceptance.csv"
+            out_dir = root / "matrix"
+            rows = []
+            saved_bytes = {
+                ("k", 8): 80,
+                ("k", 4): 120,
+                ("k", 2): 140,
+                ("v", 8): 70,
+                ("v", 4): 110,
+                ("v", 2): 130,
+            }
+            for (component, bits), saved in saved_bytes.items():
+                rows.append(
+                    {
+                        "candidate": f"layer0_{component}{bits}",
+                        "layer": 0,
+                        "component": component,
+                        "bits": bits,
+                        "quality_risk": (16 - bits) * (1.0 if component == "k" else 0.5),
+                        "acceptance_risk": (16 - bits) * (0.5 if component == "k" else 1.0),
+                        "cache_mib_saved": saved / 1024.0**2,
+                    }
+                )
+            for path in (quality_profile, acceptance_profile):
+                with path.open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+                    writer.writeheader()
+                    writer.writerows(rows)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "prepare_objective_kv_matrix.py"),
+                    "--quality_profile_csv",
+                    str(quality_profile),
+                    "--acceptance_profile_csv",
+                    str(acceptance_profile),
+                    "--quality_risk_field",
+                    "quality_risk",
+                    "--acceptance_risk_field",
+                    "acceptance_risk",
+                    "--num_layers",
+                    "1",
+                    "--budgets",
+                    "3,5",
+                    "--contexts",
+                    "128",
+                    "--seeds",
+                    "0",
+                    "--num_eval",
+                    "1",
+                    "--allowed_bits",
+                    "2,4,8",
+                    "--out_dir",
+                    str(out_dir),
+                ],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for budget in (3, 5):
+                budget_root = out_dir / f"budget_{budget}"
+                quality = json.loads(
+                    (budget_root / "quality_allocation" / "allocation.json").read_text()
+                )
+                acceptance = json.loads(
+                    (budget_root / "acceptance_allocation" / "allocation.json").read_text()
+                )
+                self.assertEqual(
+                    quality["achieved_profiled_saved_bytes"],
+                    acceptance["achieved_profiled_saved_bytes"],
+                )
+                self.assertIn(2, quality["allowed_bits"])
+            manifest_rows = list(
+                csv.DictReader(
+                    (out_dir / "manifest.tsv").open(encoding="utf-8"),
+                    delimiter="\t",
+                )
+            )
+
+        self.assertEqual(len(manifest_rows), 4)
+
 
 if __name__ == "__main__":
     unittest.main()
