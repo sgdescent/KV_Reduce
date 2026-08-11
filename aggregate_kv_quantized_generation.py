@@ -109,7 +109,25 @@ def write_csv(path: Path, rows: Sequence[Dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def load_runs(pattern: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def validate_prompt_count(
+    payload: Dict[str, Any], *, path: Path, require_full_runs: bool
+) -> Tuple[int, int]:
+    requested = int(payload.get("config", {}).get("num_prompts", 0))
+    observed = int(payload.get("observed_prompts", 0))
+    if requested <= 0 or observed <= 0:
+        raise ValueError(
+            f"{path} has invalid prompt counts: requested {requested}, observed {observed}."
+        )
+    if require_full_runs and observed < requested:
+        raise ValueError(
+            f"{path} is underfilled: requested {requested}, observed {observed} prompts."
+        )
+    return requested, observed
+
+
+def load_runs(
+    pattern: str, *, require_full_runs: bool = False
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     rows: List[Dict[str, Any]] = []
     runs: List[Dict[str, Any]] = []
     summary_names = sorted(
@@ -132,14 +150,20 @@ def load_runs(pattern: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]
         run_id = str(summary_path.parent)
         with row_path.open("r", encoding="utf-8", newline="") as handle:
             run_rows = list(csv.DictReader(handle))
-        observed = int(payload.get("observed_prompts", 0))
-        if observed <= 0 or not run_rows:
+        requested, observed = validate_prompt_count(
+            payload,
+            path=summary_path,
+            require_full_runs=require_full_runs,
+        )
+        if not run_rows:
             raise ValueError(f"{summary_path} contains no observed prompts.")
         runs.append(
             {
                 "run_id": run_id,
                 "summary_path": str(summary_path),
+                "requested_prompts": requested,
                 "observed_prompts": observed,
+                "underfilled_by": max(0, requested - observed),
                 "model": payload.get("config", {}).get("model"),
                 "prompt_len": payload.get("config", {}).get("prompt_len"),
                 "max_new_tokens": payload.get("config", {}).get("max_new_tokens"),
@@ -337,12 +361,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out_dir", required=True)
     parser.add_argument("--bootstrap_samples", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=8675309)
+    parser.add_argument(
+        "--require_full_runs",
+        action="store_true",
+        help="Reject summaries that contain fewer prompts than requested.",
+    )
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
-    rows, runs = load_runs(args.summary_glob)
+    rows, runs = load_runs(
+        args.summary_glob,
+        require_full_runs=args.require_full_runs,
+    )
     summaries, contrasts, macro_summaries, macro_contrasts = aggregate(
         rows,
         bootstrap_samples=args.bootstrap_samples,
@@ -355,7 +387,10 @@ def main() -> None:
     write_csv(out_dir / "macro_generation_summary.csv", macro_summaries)
     write_csv(out_dir / "macro_paired_contrasts.csv", macro_contrasts)
     payload = {
-        "runtime": {"source_evaluator_version": EXPECTED_VERSION},
+        "runtime": {
+            "source_evaluator_version": EXPECTED_VERSION,
+            "full_run_gate": args.require_full_runs,
+        },
         "runs": runs,
         "summaries": summaries,
         "paired_contrasts": contrasts,

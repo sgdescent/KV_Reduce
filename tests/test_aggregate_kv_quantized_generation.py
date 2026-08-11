@@ -1,10 +1,12 @@
 import random
 import unittest
+from pathlib import Path
 
 from aggregate_kv_quantized_generation import (
     aggregate,
     bootstrap_macro_mean_ci,
     bootstrap_mean_ci,
+    validate_prompt_count,
 )
 
 
@@ -25,6 +27,23 @@ def make_row(prompt, config, exact, token_match):
 
 
 class QuantizedGenerationAggregationTest(unittest.TestCase):
+    def test_full_run_gate_rejects_underfilled_summary(self) -> None:
+        payload = {"config": {"num_prompts": 16}, "observed_prompts": 11}
+        with self.assertRaisesRegex(ValueError, "requested 16, observed 11"):
+            validate_prompt_count(
+                payload,
+                path=Path("summary.json"),
+                require_full_runs=True,
+            )
+        self.assertEqual(
+            validate_prompt_count(
+                payload,
+                path=Path("summary.json"),
+                require_full_runs=False,
+            ),
+            (16, 11),
+        )
+
     def test_bootstrap_single_value_is_degenerate(self) -> None:
         self.assertEqual(
             bootstrap_mean_ci([0.25], rng=random.Random(1), samples=100),

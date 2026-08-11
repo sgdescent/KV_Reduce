@@ -15,7 +15,13 @@ set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
 source .venv/bin/activate
 
+full_run_args=()
+if [[ "${REQUIRE_FULL_RUNS:-1}" == "1" ]]; then
+  full_run_args+=(--require_full_runs)
+fi
+
 python3 -u aggregate_kv_quantized_generation.py \
   --summary_glob "${SUMMARY_GLOB:?Set SUMMARY_GLOB}" \
   --out_dir "${OUT_DIR:?Set OUT_DIR}" \
-  --bootstrap_samples "${BOOTSTRAP_SAMPLES:-10000}"
+  --bootstrap_samples "${BOOTSTRAP_SAMPLES:-10000}" \
+  "${full_run_args[@]}"
