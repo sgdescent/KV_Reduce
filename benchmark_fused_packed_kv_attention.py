@@ -39,6 +39,23 @@ def write_csv(path: Path, rows: Sequence[Dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def parse_kernel_grid(
+    *,
+    block_tokens: int,
+    split_tokens: int,
+    block_tokens_list: str,
+    split_tokens_list: str,
+) -> List[tuple[int, int]]:
+    blocks = parse_int_list(block_tokens_list) if block_tokens_list.strip() else [block_tokens]
+    splits = parse_int_list(split_tokens_list) if split_tokens_list.strip() else [split_tokens]
+    invalid_blocks = [value for value in blocks if value not in {16, 32, 64}]
+    if invalid_blocks:
+        raise ValueError(f"block_tokens values must be in {{16, 32, 64}}: {invalid_blocks}")
+    if any(value < 0 for value in splits):
+        raise ValueError("split_tokens values must be non-negative.")
+    return [(block, split) for block in blocks for split in splits]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", default="cuda:0")
@@ -54,10 +71,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--residual_length", type=int, default=128)
     parser.add_argument("--block_tokens", type=int, default=32, choices=[16, 32, 64])
     parser.add_argument(
+        "--block_tokens_list",
+        default="",
+        help="Optional semicolon-separated block-token sweep; overrides --block_tokens.",
+    )
+    parser.add_argument(
         "--split_tokens",
         type=int,
         default=512,
         help="Tokens handled by each first-stage program; <=0 disables split-K reduction.",
+    )
+    parser.add_argument(
+        "--split_tokens_list",
+        default="",
+        help="Optional semicolon-separated split-token sweep; overrides --split_tokens.",
     )
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--iterations", type=int, default=50)
@@ -79,6 +106,12 @@ def main() -> None:
     if args.query_heads % args.kv_heads != 0:
         raise ValueError("query_heads must be divisible by kv_heads.")
     configs = parse_configs(args.configs)
+    kernel_grid = parse_kernel_grid(
+        block_tokens=args.block_tokens,
+        split_tokens=args.split_tokens,
+        block_tokens_list=args.block_tokens_list,
+        split_tokens_list=args.split_tokens_list,
+    )
     for name, k_bits, v_bits in configs:
         if name == "none" or k_bits not in {4, 8} or v_bits not in {4, 8}:
             raise ValueError("Fused benchmark configs currently require K/V bits in {4, 8}.")
@@ -132,75 +165,92 @@ def main() -> None:
             def unpacked_operation() -> torch.Tensor:
                 return gqa_attention(query, packed_keys.unpack(), packed_values.unpack())
 
-            def fused_operation() -> torch.Tensor:
-                return packed_kv_decode_attention(
-                    query,
-                    packed_keys,
-                    packed_values,
-                    block_tokens=args.block_tokens,
-                    split_tokens=args.split_tokens,
-                )
-
             unpacked_output = unpacked_operation()
-            fused_output = fused_operation()
             torch.cuda.synchronize(device)
             unpacked_timing = cuda_time(
                 unpacked_operation,
                 warmup=args.warmup,
                 iterations=args.iterations,
             )
-            fused_timing = cuda_time(
-                fused_operation,
-                warmup=args.warmup,
-                iterations=args.iterations,
-            )
+            unpacked_peak = peak_delta_bytes(unpacked_operation, device)
             persistent_bytes = packed_keys.storage_bytes + packed_values.storage_bytes
-            row = {
-                "context": context,
-                "config": name,
-                "k_bits": k_bits,
-                "v_bits": v_bits,
-                "block_tokens": args.block_tokens,
-                "split_tokens": args.split_tokens,
-                "native_cache_bytes_one_layer": native_bytes,
-                "packed_cache_bytes_one_layer": persistent_bytes,
-                "cache_saved_fraction": 1.0 - persistent_bytes / native_bytes,
-                "native_cache_bytes_model": native_bytes * args.num_layers,
-                "packed_cache_bytes_model": persistent_bytes * args.num_layers,
-                "key_payload_bytes": packed_keys.payload_bytes,
-                "key_metadata_bytes": packed_keys.metadata_bytes,
-                "value_payload_bytes": packed_values.payload_bytes,
-                "value_metadata_bytes": packed_values.metadata_bytes,
-                "native_decode_median_ms": native_timing["median_ms"],
-                "unfused_decode_median_ms": unpacked_timing["median_ms"],
-                "fused_decode_mean_ms": fused_timing["mean_ms"],
-                "fused_decode_median_ms": fused_timing["median_ms"],
-                "fused_decode_p95_ms": fused_timing["p95_ms"],
-                "fused_speedup_vs_unfused": unpacked_timing["median_ms"] / fused_timing["median_ms"],
-                "fused_speedup_vs_native": native_timing["median_ms"] / fused_timing["median_ms"],
-                "native_effective_cache_gbps": native_bytes / (native_timing["median_ms"] * 1e6),
-                "fused_effective_cache_gbps": persistent_bytes / (fused_timing["median_ms"] * 1e6),
-                "attention_flops": theoretical_attention_flops(query, context),
-                "unfused_transient_peak_delta_bytes": peak_delta_bytes(unpacked_operation, device),
-                "fused_transient_peak_delta_bytes": peak_delta_bytes(fused_operation, device),
-                **{
-                    f"native_{key}": value
-                    for key, value in output_error(native_output, fused_output).items()
-                },
-                **{
-                    f"kernel_{key}": value
-                    for key, value in output_error(unpacked_output, fused_output).items()
-                },
-            }
-            rows.append(row)
-            step += 1
-            print(json.dumps(row, sort_keys=True))
-            if wandb_run is not None:
-                wandb_run.log(
-                    {f"fused_packed/{key}": value for key, value in row.items() if not isinstance(value, str)},
-                    step=step,
+            for block_tokens, split_tokens in kernel_grid:
+                def fused_operation(
+                    block: int = block_tokens,
+                    split: int = split_tokens,
+                ) -> torch.Tensor:
+                    return packed_kv_decode_attention(
+                        query,
+                        packed_keys,
+                        packed_values,
+                        block_tokens=block,
+                        split_tokens=split,
+                    )
+
+                fused_output = fused_operation()
+                torch.cuda.synchronize(device)
+                fused_timing = cuda_time(
+                    fused_operation,
+                    warmup=args.warmup,
+                    iterations=args.iterations,
                 )
-            del packed_keys, packed_values, unpacked_output, fused_output
+                row = {
+                    "context": context,
+                    "config": name,
+                    "k_bits": k_bits,
+                    "v_bits": v_bits,
+                    "block_tokens": block_tokens,
+                    "split_tokens": split_tokens,
+                    "native_cache_bytes_one_layer": native_bytes,
+                    "packed_cache_bytes_one_layer": persistent_bytes,
+                    "cache_saved_fraction": 1.0 - persistent_bytes / native_bytes,
+                    "native_cache_bytes_model": native_bytes * args.num_layers,
+                    "packed_cache_bytes_model": persistent_bytes * args.num_layers,
+                    "key_payload_bytes": packed_keys.payload_bytes,
+                    "key_metadata_bytes": packed_keys.metadata_bytes,
+                    "value_payload_bytes": packed_values.payload_bytes,
+                    "value_metadata_bytes": packed_values.metadata_bytes,
+                    "native_decode_median_ms": native_timing["median_ms"],
+                    "unfused_decode_median_ms": unpacked_timing["median_ms"],
+                    "fused_decode_mean_ms": fused_timing["mean_ms"],
+                    "fused_decode_median_ms": fused_timing["median_ms"],
+                    "fused_decode_p95_ms": fused_timing["p95_ms"],
+                    "fused_speedup_vs_unfused": unpacked_timing["median_ms"]
+                    / fused_timing["median_ms"],
+                    "fused_speedup_vs_native": native_timing["median_ms"]
+                    / fused_timing["median_ms"],
+                    "native_effective_cache_gbps": native_bytes
+                    / (native_timing["median_ms"] * 1e6),
+                    "fused_effective_cache_gbps": persistent_bytes
+                    / (fused_timing["median_ms"] * 1e6),
+                    "attention_flops": theoretical_attention_flops(query, context),
+                    "unfused_transient_peak_delta_bytes": unpacked_peak,
+                    "fused_transient_peak_delta_bytes": peak_delta_bytes(
+                        fused_operation, device
+                    ),
+                    **{
+                        f"native_{key}": value
+                        for key, value in output_error(native_output, fused_output).items()
+                    },
+                    **{
+                        f"kernel_{key}": value
+                        for key, value in output_error(unpacked_output, fused_output).items()
+                    },
+                }
+                rows.append(row)
+                step += 1
+                print(json.dumps(row, sort_keys=True))
+                if wandb_run is not None:
+                    wandb_run.log(
+                        {
+                            f"fused_packed/{key}": value
+                            for key, value in row.items()
+                            if not isinstance(value, str)
+                        },
+                        step=step,
+                    )
+                del fused_output
+            del packed_keys, packed_values, unpacked_output
             torch.cuda.empty_cache()
         del keys, values, query, native_output
         torch.cuda.empty_cache()

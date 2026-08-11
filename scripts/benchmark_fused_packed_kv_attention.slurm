@@ -33,6 +33,12 @@ cmd=(
   --iterations "${ITERATIONS:-50}"
   --out_dir "${OUT_DIR:-outputs/fused_packed_kv_attention/qwen25_15b}"
 )
+if [[ -n "${BLOCK_TOKENS_LIST:-}" ]]; then
+  cmd+=(--block_tokens_list "$BLOCK_TOKENS_LIST")
+fi
+if [[ -n "${SPLIT_TOKENS_LIST:-}" ]]; then
+  cmd+=(--split_tokens_list "$SPLIT_TOKENS_LIST")
+fi
 if [[ "${ENABLE_WANDB:-1}" == "1" ]]; then
   cmd+=(
     --wandb
