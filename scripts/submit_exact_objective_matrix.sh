@@ -28,9 +28,23 @@ run_tag="${RUN_TAG:-qwen25_exact}"
 profile_wandb_group="${PROFILE_WANDB_GROUP:-exact-objective-profile}"
 matrix_wandb_group="${MATRIX_WANDB_GROUP:-exact-objective-matrix}"
 matrix_throttle="${MATRIX_THROTTLE:-1}"
+spec_gpus="${SPEC_GPUS:-1}"
+matrix_gpus="${MATRIX_GPUS:-$spec_gpus}"
+big_device="${BIG_DEVICE:-cuda:0}"
+small_device="${SMALL_DEVICE:-cuda:0}"
 
 if ! [[ "$matrix_throttle" =~ ^[1-9][0-9]*$ ]]; then
   echo "MATRIX_THROTTLE must be a positive integer, got: $matrix_throttle" >&2
+  exit 1
+fi
+for gpu_count in "$spec_gpus" "$matrix_gpus"; do
+  if ! [[ "$gpu_count" =~ ^[1-9][0-9]*$ ]]; then
+    echo "SPEC_GPUS and MATRIX_GPUS must be positive integers." >&2
+    exit 1
+  fi
+done
+if [[ "$small_device" == "cuda:1" && ( "$spec_gpus" -lt 2 || "$matrix_gpus" -lt 2 ) ]]; then
+  echo "SMALL_DEVICE=cuda:1 requires at least two GPUs for profiling and matrix evaluation." >&2
   exit 1
 fi
 
@@ -54,8 +68,8 @@ quality_job=$(sbatch --parsable --exclude="$exclude" "${dependency_args[@]}" \
   scripts/profile_kv_quality_sensitivity.slurm)
 
 # Serialize every GPU stage so this campaign consumes at most one cluster GPU.
-acceptance_job=$(sbatch --parsable --exclude="$exclude" --dependency="afterok:$quality_job" \
-  --export=ALL,BIG_MODEL="$big_model",SMALL_MODEL="$small_model",DATASET_NAME="$dataset_name",DATASET_CONFIG="$dataset_config",EVAL_SPLIT=train,STREAM_EVAL=1,PROMPT_LEN=1024,NUM_PROMPTS="$num_profile",WARMUP_PROMPTS=0,SKIP_PROMPTS="$((profile_skip + num_profile + 128))",DRAFT_STEPS=4,MAX_NEW_TOKENS="$profile_max_new_tokens",LAYERS="$layers",BITS="$bits",TARGET_VERIFICATION_MODE=sequential,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=32,KEY_RESIDUAL_LENGTH=128,VALUE_QUANT_SCHEME=affine,OUT_DIR="$acceptance_profile",ENABLE_WANDB=1,WANDB_PROJECT=kv-reduce,WANDB_GROUP="$profile_wandb_group",WANDB_RUN_NAME="${run_tag}_acceptance_profile" \
+acceptance_job=$(sbatch --parsable --exclude="$exclude" --gres="gpu:$spec_gpus" --dependency="afterok:$quality_job" \
+  --export=ALL,BIG_MODEL="$big_model",SMALL_MODEL="$small_model",BIG_DEVICE="$big_device",SMALL_DEVICE="$small_device",DATASET_NAME="$dataset_name",DATASET_CONFIG="$dataset_config",EVAL_SPLIT=train,STREAM_EVAL=1,PROMPT_LEN=1024,NUM_PROMPTS="$num_profile",WARMUP_PROMPTS=0,SKIP_PROMPTS="$((profile_skip + num_profile + 128))",DRAFT_STEPS=4,MAX_NEW_TOKENS="$profile_max_new_tokens",LAYERS="$layers",BITS="$bits",TARGET_VERIFICATION_MODE=sequential,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=32,KEY_RESIDUAL_LENGTH=128,VALUE_QUANT_SCHEME=affine,OUT_DIR="$acceptance_profile",ENABLE_WANDB=1,WANDB_PROJECT=kv-reduce,WANDB_GROUP="$profile_wandb_group",WANDB_RUN_NAME="${run_tag}_acceptance_profile" \
   scripts/profile_spec_kv_sensitivity.slurm)
 
 prepare_job=$(sbatch --parsable --exclude="$exclude" --dependency="afterok:$acceptance_job" \
@@ -68,9 +82,9 @@ count_items() {
 }
 num_tasks=$((2 * $(count_items "$budgets") * $(count_items "$contexts") * $(count_items "$seeds")))
 
-matrix_job=$(sbatch --parsable --exclude="$exclude" --dependency="afterok:$prepare_job" \
+matrix_job=$(sbatch --parsable --exclude="$exclude" --gres="gpu:$matrix_gpus" --dependency="afterok:$prepare_job" \
   --array="0-$((num_tasks - 1))%$matrix_throttle" \
-  --export=ALL,MANIFEST="$matrix_root/manifest.tsv",BIG_MODEL="$big_model",SMALL_MODEL="$small_model",DATASET_NAME="$dataset_name",DATASET_CONFIG="$dataset_config",EVAL_SPLIT=train,STREAM_EVAL=1,CONTINUATION_LEN=32,DRAFT_STEPS=4,MAX_NEW_TOKENS=16,TARGET_VERIFICATION_MODE=sequential,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=32,KEY_RESIDUAL_LENGTH=128,VALUE_QUANT_SCHEME=affine,ENABLE_WANDB=1,WANDB_PROJECT=kv-reduce,WANDB_GROUP="$matrix_wandb_group" \
+  --export=ALL,MANIFEST="$matrix_root/manifest.tsv",BIG_MODEL="$big_model",SMALL_MODEL="$small_model",BIG_DEVICE="$big_device",SMALL_DEVICE="$small_device",DATASET_NAME="$dataset_name",DATASET_CONFIG="$dataset_config",EVAL_SPLIT=train,STREAM_EVAL=1,CONTINUATION_LEN=32,DRAFT_STEPS=4,MAX_NEW_TOKENS=16,TARGET_VERIFICATION_MODE=sequential,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=32,KEY_RESIDUAL_LENGTH=128,VALUE_QUANT_SCHEME=affine,ENABLE_WANDB=1,WANDB_PROJECT=kv-reduce,WANDB_GROUP="$matrix_wandb_group" \
   scripts/eval_objective_kv_matrix.slurm)
 
 aggregate_job=$(sbatch --parsable --exclude="$exclude" --dependency="afterok:$matrix_job" \
@@ -82,7 +96,7 @@ Submitted exact objective-aware KV matrix
   quality profile:    $quality_job
   acceptance profile: $acceptance_job
   prepare:            $prepare_job
-  matrix ($num_tasks, max $matrix_throttle concurrent): $matrix_job
+  matrix ($num_tasks, max $matrix_throttle concurrent, $matrix_gpus GPU/task): $matrix_job
   aggregate:          $aggregate_job
   output:             $root
 EOF

@@ -32,6 +32,8 @@ fi
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 BIG_MODEL="${BIG_MODEL:-Qwen/Qwen2.5-3B}"
 SMALL_MODEL="${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}"
+BIG_DEVICE="${BIG_DEVICE:-cuda:0}"
+SMALL_DEVICE="${SMALL_DEVICE:-cuda:0}"
 DATASET_NAME="${DATASET_NAME:-wikitext}"
 DATASET_CONFIG="${DATASET_CONFIG:-wikitext-2-raw-v1}"
 EVAL_SPLIT="${EVAL_SPLIT:-validation}"
@@ -58,8 +60,8 @@ cmd=(
   "$PYTHON_BIN" -u profile_spec_kv_sensitivity.py
   --big_model "$BIG_MODEL"
   --small_model "$SMALL_MODEL"
-  --big_device cuda:0
-  --small_device cuda:0
+  --big_device "$BIG_DEVICE"
+  --small_device "$SMALL_DEVICE"
   --dataset_name "$DATASET_NAME"
   --dataset_config "$DATASET_CONFIG"
   --eval_split "$EVAL_SPLIT"
