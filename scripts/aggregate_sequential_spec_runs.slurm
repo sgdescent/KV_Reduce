@@ -18,7 +18,7 @@ if [[ -f .venv/bin/activate ]]; then
 fi
 
 full_run_args=()
-if [[ "${REQUIRE_FULL_RUNS:-0}" == "1" ]]; then
+if [[ "${REQUIRE_FULL_RUNS:-1}" == "1" ]]; then
   full_run_args+=(--require_full_runs)
 fi
 
