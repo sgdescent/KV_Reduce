@@ -12,6 +12,9 @@ from statistics import mean, stdev
 from typing import Any, Dict, List, Tuple
 
 
+EXACT_ACCEPTANCE_EVALUATOR_VERSION = "cached_dynamic_v6_sequential_target"
+
+
 def read_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -75,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1e-3,
         help="Maximum target top-1 margin treated as a finite-precision numerical tie.",
+    )
+    parser.add_argument(
+        "--acceptance_evaluator_version",
+        default=EXACT_ACCEPTANCE_EVALUATOR_VERSION,
+        help="Only aggregate acceptance artifacts produced by this evaluator.",
     )
     return parser
 
@@ -181,7 +189,10 @@ def main() -> None:
                 acceptance_eval = read_json(acceptance_path)
                 quality_version = quality_eval.get("runtime", {}).get("evaluator_version")
                 acceptance_version = acceptance_eval.get("runtime", {}).get("evaluator_version")
-                if quality_version != "teacher_forced_cached_v1" or acceptance_version != "cached_dynamic_v4":
+                if (
+                    quality_version != "teacher_forced_cached_v1"
+                    or acceptance_version != args.acceptance_evaluator_version
+                ):
                     rejected.append(
                         {
                             "path": str(seed_dir),
@@ -553,6 +564,10 @@ def main() -> None:
     write_csv(native_cross_context_rows, out_dir / "native_acceptance_cross_context_effects.csv")
     write_csv(exactness_rows, out_dir / "exactness_audit.csv")
     payload = {
+        "required_evaluator_versions": {
+            "quality": "teacher_forced_cached_v1",
+            "acceptance": args.acceptance_evaluator_version,
+        },
         "num_complete_rows": len(rows),
         "num_missing_pairs": len(missing),
         "num_rejected_pairs": len(rejected),

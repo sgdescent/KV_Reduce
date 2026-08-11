@@ -16,6 +16,10 @@ def write_summary(root: Path, name: str, *, missing: int = 0) -> None:
     out_dir = root / name / "aggregate"
     out_dir.mkdir(parents=True)
     payload = {
+        "required_evaluator_versions": {
+            "quality": "teacher_forced_cached_v1",
+            "acceptance": "cached_dynamic_v6_sequential_target",
+        },
         "num_missing_pairs": missing,
         "num_rejected_pairs": 0,
         "grouped": [
@@ -68,7 +72,7 @@ def write_final_summary(root: Path, name: str) -> None:
     payload = {
         "evaluator_versions": {
             "quality": "teacher_forced_cached_v1",
-            "acceptance": "cached_dynamic_v4",
+            "acceptance": "cached_dynamic_v6_sequential_target",
         },
         "baseline": {"quality_nll": 2.0, "spec_accept_rate": 0.5},
         "rows": [
@@ -133,6 +137,24 @@ class ObjectiveCampaignAggregationTest(unittest.TestCase):
 
             self.assertEqual([record["matrix"] for record in records], ["complete"])
             self.assertEqual([record["matrix"] for record in rejected], ["incomplete"])
+
+    def test_rejects_legacy_nonsequential_objective_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_summary(root, "legacy")
+            summary_path = root / "legacy" / "aggregate" / "summary.json"
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+            payload["required_evaluator_versions"]["acceptance"] = "cached_dynamic_v4"
+            summary_path.write_text(json.dumps(payload), encoding="utf-8")
+
+            records, rejected = discover_aggregates(
+                root,
+                include_incomplete=False,
+                include_smoke=False,
+            )
+
+            self.assertEqual(records, [])
+            self.assertEqual([record["matrix"] for record in rejected], ["legacy"])
 
     def test_collects_effects_savings_and_exactness(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

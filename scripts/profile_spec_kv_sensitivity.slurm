@@ -68,6 +68,7 @@ cmd=(
   --warmup_prompts "$WARMUP_PROMPTS"
   --skip_prompts "$SKIP_PROMPTS"
   --draft_steps "$DRAFT_STEPS"
+  --target_verification_mode "${TARGET_VERIFICATION_MODE:-sequential}"
   --max_new_tokens "$MAX_NEW_TOKENS"
   --seed "$SEED"
   --layers "$LAYERS"

@@ -33,6 +33,8 @@ MATRIX_LABELS = {
     "olmo2_all_layers_powered_b6_v1": "OLMo / WikiText / all-layer / b6 / 384 held-out",
 }
 
+EXACT_ACCEPTANCE_EVALUATOR_VERSION = "cached_dynamic_v6_sequential_target"
+
 FINAL_LABELS = {
     "qwen25_objective_1k_v1": "Qwen / WikiText / top-8",
     "qwen25_objective_all_layers_1k_v1": "Qwen / WikiText / all-layer / 8 prompts",
@@ -91,7 +93,12 @@ def discover_aggregates(
             continue
         missing = int(summary.get("num_missing_pairs", 0))
         stale = int(summary.get("num_rejected_pairs", 0))
-        complete = missing == 0 and stale == 0
+        required_versions = summary.get("required_evaluator_versions", {})
+        valid_evaluators = (
+            required_versions.get("quality") == "teacher_forced_cached_v1"
+            and required_versions.get("acceptance") == EXACT_ACCEPTANCE_EVALUATOR_VERSION
+        )
+        complete = missing == 0 and stale == 0 and valid_evaluators
         record = {
             "matrix": matrix,
             "label": matrix_label(matrix),
@@ -99,6 +106,7 @@ def discover_aggregates(
             "complete": complete,
             "missing_pairs": missing,
             "rejected_pairs": stale,
+            "valid_evaluators": valid_evaluators,
             "summary": summary,
         }
         if complete or include_incomplete:
@@ -124,7 +132,7 @@ def discover_final_results(results_root: Path, *, include_smoke: bool) -> List[D
                 "label": FINAL_LABELS.get(campaign, matrix_label(campaign)),
                 "path": str(path),
                 "valid_evaluators": versions.get("quality") == "teacher_forced_cached_v1"
-                and versions.get("acceptance") == "cached_dynamic_v4",
+                and versions.get("acceptance") == EXACT_ACCEPTANCE_EVALUATOR_VERSION,
                 "summary": summary,
             }
         )

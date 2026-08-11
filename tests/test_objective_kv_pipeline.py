@@ -114,6 +114,7 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
         self.assertEqual(args.key_group_size, 16)
         self.assertEqual(args.key_residual_length, 32)
         self.assertEqual(args.value_quant_scheme, "affine")
+        self.assertEqual(args.target_verification_mode, "sequential")
 
     def test_spec_sensitivity_wandb_steps_are_strictly_monotonic(self) -> None:
         num_prompts = 16

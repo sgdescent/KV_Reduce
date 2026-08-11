@@ -66,6 +66,7 @@ python3 -u benchmark_spec_kv_quantization.py \
   --warmup_prompts "${WARMUP_PROMPTS:-2}" \
   --skip_prompts "${ACCEPTANCE_SKIP:-20200}" \
   --draft_steps "${DRAFT_STEPS:-4}" \
+  --target_verification_mode sequential \
   --max_new_tokens "${MAX_NEW_TOKENS:-16}" \
   --quant_configs "$configs" \
   --target_quant_configs none \
@@ -81,4 +82,3 @@ python3 -u aggregate_shrunk_allocator_eval.py \
   --quality_dir "$quality_out" \
   --acceptance_dir "$acceptance_out" \
   --out_dir "$root/final_results"
-

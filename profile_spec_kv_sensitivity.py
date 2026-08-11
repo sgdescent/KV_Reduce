@@ -17,6 +17,8 @@ import torch
 
 from acceptance_risk_statistics import paired_drop_statistics, zero_drop_statistics
 from benchmark_spec_kv_quantization import (
+    BATCHED_TARGET_VERIFICATION,
+    SEQUENTIAL_TARGET_VERIFICATION,
     estimate_total_kv_memory,
     finish_wandb,
     generate_target_reference_records,
@@ -178,6 +180,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip this many token blocks before selecting warmup and profile prompts.",
     )
     parser.add_argument("--draft_steps", type=int, default=4)
+    parser.add_argument(
+        "--target_verification_mode",
+        type=str,
+        default=SEQUENTIAL_TARGET_VERIFICATION,
+        choices=[BATCHED_TARGET_VERIFICATION, SEQUENTIAL_TARGET_VERIFICATION],
+        help="Use sequential verification for exact target-greedy calibration.",
+    )
     parser.add_argument("--max_new_tokens", type=int, default=16)
     parser.add_argument("--topk", type=int, default=5)
     parser.add_argument("--layers", type=str, default="top:8")
@@ -316,6 +325,7 @@ def main() -> None:
             value_quant_scheme=args.value_quant_scheme,
             target_token_references=warmup_target_references,
             target_margin_references=warmup_target_margins,
+            target_verification_mode=args.target_verification_mode,
         )
 
     print("Running full-precision baseline...")
@@ -344,6 +354,7 @@ def main() -> None:
         value_quant_scheme=args.value_quant_scheme,
         target_token_references=profile_target_references,
         target_margin_references=profile_target_margins,
+        target_verification_mode=args.target_verification_mode,
     )
     baseline_summary = baseline_result["summary"]
 
@@ -409,6 +420,7 @@ def main() -> None:
                     value_quant_scheme=args.value_quant_scheme,
                     target_token_references=profile_target_references,
                     target_margin_references=profile_target_margins,
+                    target_verification_mode=args.target_verification_mode,
                 )
                 raw_rows.extend(result["rows"])
                 memory = estimate_total_kv_memory(
@@ -470,8 +482,14 @@ def main() -> None:
     payload = {
         "config": vars(args),
         "runtime": {
-            "evaluator_version": "cached_dynamic_v4",
+            "evaluator_version": (
+                "cached_dynamic_v6_sequential_target"
+                if args.target_verification_mode == SEQUENTIAL_TARGET_VERIFICATION
+                else "cached_dynamic_v4"
+            ),
             "objective": "speculative_acceptance_sensitivity",
+            "target_verification_mode": args.target_verification_mode,
+            "target_quant_configs": ["none"],
             "key_quant_axis": args.key_quant_axis,
             "key_group_size": args.key_group_size,
             "key_residual_length": args.key_residual_length,
