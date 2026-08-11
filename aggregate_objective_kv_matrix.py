@@ -9,10 +9,11 @@ import random
 from collections import defaultdict
 from pathlib import Path
 from statistics import mean, stdev
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 
 EXACT_ACCEPTANCE_EVALUATOR_VERSION = "cached_dynamic_v6_sequential_target"
+QUALITY_EVALUATOR_VERSION = "teacher_forced_cached_v1"
 
 
 def read_json(path: Path) -> Dict[str, Any]:
@@ -56,6 +57,133 @@ def bootstrap_mean_ci(values: List[float], *, seed: int, samples: int = 2000) ->
     return mean(values), estimates[int(0.025 * samples)], estimates[min(samples - 1, int(0.975 * samples))]
 
 
+def hierarchical_bootstrap_mean_ci(
+    clusters: Mapping[Tuple[int, int], Sequence[float]],
+    *,
+    seed: int,
+    samples: int = 5000,
+) -> Tuple[float, float, float, int]:
+    """Bootstrap run cells first and examples second to avoid pseudoreplication."""
+    nonempty = {key: list(values) for key, values in clusters.items() if values}
+    values = [value for cluster in nonempty.values() for value in cluster]
+    if not values:
+        return float("nan"), float("nan"), float("nan"), 0
+    if len(nonempty) == 1:
+        estimate, low, high = bootstrap_mean_ci(values, seed=seed, samples=samples)
+        return estimate, low, high, 1
+    rng = random.Random(seed)
+    keys = list(nonempty)
+    estimates = []
+    for _ in range(samples):
+        sampled_values = []
+        for _ in keys:
+            cluster = nonempty[keys[rng.randrange(len(keys))]]
+            sampled_values.extend(cluster[rng.randrange(len(cluster))] for _ in cluster)
+        estimates.append(mean(sampled_values))
+    estimates.sort()
+    return (
+        mean(values),
+        estimates[int(0.025 * samples)],
+        estimates[min(samples - 1, int(0.975 * samples))],
+        len(nonempty),
+    )
+
+
+def load_manifest_cells(matrix_dir: Path) -> Dict[Tuple[int, int, int], Dict[str, Any]]:
+    """Load the matrix contract used to reject missing or underfilled cells."""
+    manifest_path = matrix_dir / "manifest.tsv"
+    if not manifest_path.exists():
+        raise ValueError(f"Strict aggregation requires {manifest_path}")
+    with manifest_path.open("r", encoding="utf-8", newline="") as handle:
+        manifest_rows = list(csv.DictReader(handle, delimiter="\t"))
+    if not manifest_rows:
+        raise ValueError(f"Manifest is empty: {manifest_path}")
+    required = {"objective", "budget", "context", "seed", "num_eval", "skip_blocks"}
+    missing_fields = required - set(manifest_rows[0])
+    if missing_fields:
+        raise ValueError(f"Manifest is missing fields: {sorted(missing_fields)}")
+
+    cells: Dict[Tuple[int, int, int], Dict[str, Any]] = {}
+    for row in manifest_rows:
+        key = (int(row["budget"]), int(row["context"]), int(row["seed"]))
+        objective = row["objective"]
+        if objective not in {"quality", "acceptance"}:
+            raise ValueError(f"Unexpected objective {objective!r} in {manifest_path}")
+        cell = cells.setdefault(
+            key,
+            {
+                "num_eval": int(row["num_eval"]),
+                "objectives": {},
+            },
+        )
+        if int(row["num_eval"]) != cell["num_eval"]:
+            raise ValueError(f"Inconsistent num_eval for matrix cell {key}")
+        if objective in cell["objectives"]:
+            raise ValueError(f"Duplicate {objective} row for matrix cell {key}")
+        cell["objectives"][objective] = row
+    incomplete = {key: sorted(set(("quality", "acceptance")) - set(cell["objectives"])) for key, cell in cells.items()}
+    incomplete = {key: objectives for key, objectives in incomplete.items() if objectives}
+    if incomplete:
+        raise ValueError(f"Manifest has incomplete objective pairs: {incomplete}")
+    return cells
+
+
+def audit_cell_coverage(
+    *,
+    quality_eval: Mapping[str, Any],
+    acceptance_eval: Mapping[str, Any],
+    quality_rows: Sequence[Mapping[str, str]],
+    acceptance_rows: Sequence[Mapping[str, str]],
+    expected_num_eval: int,
+    tracked_names: Sequence[str],
+) -> List[str]:
+    """Return integrity errors for one budget/context/seed result cell."""
+    issues = []
+    expected_names = {"none", *tracked_names}
+    if int(quality_eval.get("num_sequences", -1)) != expected_num_eval:
+        issues.append(
+            f"quality num_sequences={quality_eval.get('num_sequences')} expected={expected_num_eval}"
+        )
+    if int(acceptance_eval.get("num_prompts", -1)) != expected_num_eval:
+        issues.append(
+            f"acceptance num_prompts={acceptance_eval.get('num_prompts')} expected={expected_num_eval}"
+        )
+    quality_names = set(quality_eval.get("summaries", {}))
+    acceptance_names = set(acceptance_eval.get("summaries", {}))
+    if quality_names != expected_names:
+        issues.append(f"quality configs={sorted(quality_names)} expected={sorted(expected_names)}")
+    if acceptance_names != expected_names:
+        issues.append(f"acceptance configs={sorted(acceptance_names)} expected={sorted(expected_names)}")
+    if acceptance_eval.get("target_quant_configs") != ["none"]:
+        issues.append("acceptance target_quant_configs must be ['none']")
+
+    quality_counts: Dict[str, set[int]] = defaultdict(set)
+    for row in quality_rows:
+        quality_counts[str(row["candidate"])].add(int(row["sequence_idx"]))
+    acceptance_counts: Dict[str, set[int]] = defaultdict(set)
+    for row in acceptance_rows:
+        acceptance_counts[str(row["config"])].add(int(row["prompt_idx"]))
+    expected_indices = set(range(expected_num_eval))
+    for name in expected_names:
+        if quality_counts[name] != expected_indices:
+            issues.append(
+                f"quality rows for {name} cover {len(quality_counts[name])}/{expected_num_eval} sequences"
+            )
+        if acceptance_counts[name] != expected_indices:
+            issues.append(
+                f"acceptance rows for {name} cover {len(acceptance_counts[name])}/{expected_num_eval} prompts"
+            )
+    if len(quality_rows) != expected_num_eval * len(expected_names):
+        issues.append(
+            f"quality row count={len(quality_rows)} expected={expected_num_eval * len(expected_names)}"
+        )
+    if len(acceptance_rows) != expected_num_eval * len(expected_names):
+        issues.append(
+            f"acceptance row count={len(acceptance_rows)} expected={expected_num_eval * len(expected_names)}"
+        )
+    return issues
+
+
 def classify_exactness(row: Dict[str, str], *, tie_margin: float) -> str:
     """Classify target-output agreement without hiding finite-precision ties."""
     if float(row["matches_target_greedy"]) >= 0.5:
@@ -83,6 +211,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--acceptance_evaluator_version",
         default=EXACT_ACCEPTANCE_EVALUATOR_VERSION,
         help="Only aggregate acceptance artifacts produced by this evaluator.",
+    )
+    parser.add_argument(
+        "--require_complete",
+        action="store_true",
+        help="Fail unless every manifest cell, configuration, and example is present.",
+    )
+    parser.add_argument(
+        "--require_exact_target",
+        action="store_true",
+        help="Fail if any speculative row differs from BF16 target greedy decoding.",
     )
     return parser
 
@@ -165,6 +303,18 @@ def main() -> None:
         lambda: {"exact": 0, "numerical_tie": 0, "non_tie_or_unknown": 0, "invalid_prompts": 0}
     )
     exactness_examples: List[Dict[str, Any]] = []
+    prompt_effect_clusters: Dict[Tuple[int, str], Dict[Tuple[int, int], List[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    kv_prompt_effect_clusters: Dict[Tuple[int, str], Dict[Tuple[int, int], List[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    native_prompt_effect_clusters: Dict[Tuple[int, str], Dict[Tuple[int, int], List[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    manifest_cells = load_manifest_cells(matrix_dir) if args.require_complete else {}
+    seen_cells = set()
+    integrity_violations: List[Dict[str, Any]] = []
 
     for budget_dir in sorted(matrix_dir.glob("budget_*")):
         budget = int(budget_dir.name.split("_", 1)[1])
@@ -180,6 +330,13 @@ def main() -> None:
             context = int(context_dir.name.split("_", 1)[1])
             for seed_dir in sorted(context_dir.glob("seed_*")):
                 seed = int(seed_dir.name.split("_", 1)[1])
+                cell_key = (budget, context, seed)
+                expected_cell = manifest_cells.get(cell_key)
+                if args.require_complete and expected_cell is None:
+                    integrity_violations.append(
+                        {"path": str(seed_dir), "issues": ["cell is not declared in manifest"]}
+                    )
+                    continue
                 quality_path = seed_dir / "quality" / "summary.json"
                 acceptance_path = seed_dir / "acceptance" / "summary.json"
                 if not quality_path.exists() or not acceptance_path.exists():
@@ -190,7 +347,7 @@ def main() -> None:
                 quality_version = quality_eval.get("runtime", {}).get("evaluator_version")
                 acceptance_version = acceptance_eval.get("runtime", {}).get("evaluator_version")
                 if (
-                    quality_version != "teacher_forced_cached_v1"
+                    quality_version != QUALITY_EVALUATOR_VERSION
                     or acceptance_version != args.acceptance_evaluator_version
                 ):
                     rejected.append(
@@ -231,6 +388,22 @@ def main() -> None:
                 v_priority_name = allocation_names.get("v_priority")
                 tracked_names = set(allocation_names.values())
                 acceptance_rows = read_csv(seed_dir / "acceptance" / "benchmark_rows.csv")
+                quality_rows = read_csv(seed_dir / "quality" / "raw_sequence_rows.csv")
+                if args.require_complete:
+                    coverage_issues = audit_cell_coverage(
+                        quality_eval=quality_eval,
+                        acceptance_eval=acceptance_eval,
+                        quality_rows=quality_rows,
+                        acceptance_rows=acceptance_rows,
+                        expected_num_eval=int(expected_cell["num_eval"]),
+                        tracked_names=sorted(tracked_names),
+                    )
+                    if coverage_issues:
+                        integrity_violations.append(
+                            {"path": str(seed_dir), "issues": coverage_issues}
+                        )
+                        continue
+                seen_cells.add(cell_key)
                 acceptance_by_prompt: Dict[str, Dict[str, float]] = defaultdict(dict)
                 invalid_prompts = set()
                 for row in acceptance_rows:
@@ -263,8 +436,10 @@ def main() -> None:
                                 native_count["excluded_non_tie"] += 1
                             else:
                                 native_count["used"] += 1
-                                native_prompt_effects[(budget, context, objective)].append(
-                                    pair[name] - pair["none"]
+                                effect = pair[name] - pair["none"]
+                                native_prompt_effects[(budget, context, objective)].append(effect)
+                                native_prompt_effect_clusters[(budget, objective)][(context, seed)].append(
+                                    effect
                                 )
                     if {quality_name, acceptance_name}.issubset(pair):
                         prompt_count["candidate_pairs"] += 1
@@ -272,9 +447,9 @@ def main() -> None:
                             prompt_count["excluded_non_tie"] += 1
                         else:
                             prompt_count["used"] += 1
-                            prompt_effects[(budget, context)]["acceptance"].append(
-                                pair[acceptance_name] - pair[quality_name]
-                            )
+                            effect = pair[acceptance_name] - pair[quality_name]
+                            prompt_effects[(budget, context)]["acceptance"].append(effect)
+                            prompt_effect_clusters[(budget, "acceptance")][(context, seed)].append(effect)
                     if (
                         k_priority_name is not None
                         and v_priority_name is not None
@@ -286,11 +461,10 @@ def main() -> None:
                             kv_count["excluded_non_tie"] += 1
                         else:
                             kv_count["used"] += 1
-                            kv_prompt_effects[(budget, context)]["acceptance"].append(
-                                pair[k_priority_name] - pair[v_priority_name]
-                            )
+                            effect = pair[k_priority_name] - pair[v_priority_name]
+                            kv_prompt_effects[(budget, context)]["acceptance"].append(effect)
+                            kv_prompt_effect_clusters[(budget, "acceptance")][(context, seed)].append(effect)
 
-                quality_rows = read_csv(seed_dir / "quality" / "raw_sequence_rows.csv")
                 quality_by_sequence: Dict[str, Dict[str, Dict[str, float]]] = defaultdict(dict)
                 for row in quality_rows:
                     if row["candidate"] in tracked_names:
@@ -300,24 +474,46 @@ def main() -> None:
                         }
                 for pair in quality_by_sequence.values():
                     if {quality_name, acceptance_name}.issubset(pair):
-                        prompt_effects[(budget, context)]["quality_kl"].append(
-                            pair[acceptance_name]["kl"] - pair[quality_name]["kl"]
+                        kl_effect = pair[acceptance_name]["kl"] - pair[quality_name]["kl"]
+                        nll_effect = (
+                            pair[acceptance_name]["delta_nll"]
+                            - pair[quality_name]["delta_nll"]
                         )
-                        prompt_effects[(budget, context)]["quality_delta_nll"].append(
-                            pair[acceptance_name]["delta_nll"] - pair[quality_name]["delta_nll"]
+                        prompt_effects[(budget, context)]["quality_kl"].append(kl_effect)
+                        prompt_effects[(budget, context)]["quality_delta_nll"].append(nll_effect)
+                        prompt_effect_clusters[(budget, "quality_kl")][(context, seed)].append(
+                            kl_effect
+                        )
+                        prompt_effect_clusters[(budget, "quality_delta_nll")][(context, seed)].append(
+                            nll_effect
                         )
                     if (
                         k_priority_name is not None
                         and v_priority_name is not None
                         and {k_priority_name, v_priority_name}.issubset(pair)
                     ):
-                        kv_prompt_effects[(budget, context)]["quality_kl"].append(
-                            pair[v_priority_name]["kl"] - pair[k_priority_name]["kl"]
+                        kl_effect = pair[v_priority_name]["kl"] - pair[k_priority_name]["kl"]
+                        nll_effect = (
+                            pair[v_priority_name]["delta_nll"]
+                            - pair[k_priority_name]["delta_nll"]
                         )
-                        kv_prompt_effects[(budget, context)]["quality_delta_nll"].append(
-                            pair[v_priority_name]["delta_nll"] - pair[k_priority_name]["delta_nll"]
+                        kv_prompt_effects[(budget, context)]["quality_kl"].append(kl_effect)
+                        kv_prompt_effects[(budget, context)]["quality_delta_nll"].append(nll_effect)
+                        kv_prompt_effect_clusters[(budget, "quality_kl")][(context, seed)].append(
+                            kl_effect
+                        )
+                        kv_prompt_effect_clusters[(budget, "quality_delta_nll")][(context, seed)].append(
+                            nll_effect
                         )
 
+    if args.require_complete:
+        missing_manifest_cells = sorted(set(manifest_cells) - seen_cells)
+        if missing_manifest_cells or missing or rejected or integrity_violations:
+            raise ValueError(
+                "Objective matrix failed completeness gate: "
+                f"missing_manifest_cells={missing_manifest_cells}, missing_pairs={missing}, "
+                f"rejected_pairs={rejected}, integrity_violations={integrity_violations}"
+            )
     if not rows:
         raise ValueError("No complete matrix result pairs were found.")
 
@@ -492,12 +688,13 @@ def main() -> None:
     for budget, metrics in sorted(budget_prompt_effects.items()):
         row: Dict[str, Any] = {"budget": budget}
         for metric, values in metrics.items():
-            estimate, low, high = bootstrap_mean_ci(
-                values,
+            estimate, low, high, num_clusters = hierarchical_bootstrap_mean_ci(
+                prompt_effect_clusters[(budget, metric)],
                 seed=budget * 1000000 + len(metric),
                 samples=5000,
             )
             row[f"paired_{metric}_n"] = len(values)
+            row[f"paired_{metric}_clusters"] = num_clusters
             row[f"paired_{metric}_mean"] = estimate
             row[f"paired_{metric}_ci_low"] = low
             row[f"paired_{metric}_ci_high"] = high
@@ -513,12 +710,13 @@ def main() -> None:
     for budget, metrics in sorted(kv_budget_prompt_effects.items()):
         row = {"budget": budget}
         for metric, values in metrics.items():
-            estimate, low, high = bootstrap_mean_ci(
-                values,
+            estimate, low, high, num_clusters = hierarchical_bootstrap_mean_ci(
+                kv_prompt_effect_clusters[(budget, metric)],
                 seed=budget * 2000000 + len(metric),
                 samples=5000,
             )
             row[f"paired_{metric}_n"] = len(values)
+            row[f"paired_{metric}_clusters"] = num_clusters
             row[f"paired_{metric}_mean"] = estimate
             row[f"paired_{metric}_ci_low"] = low
             row[f"paired_{metric}_ci_high"] = high
@@ -529,8 +727,8 @@ def main() -> None:
         native_budget_prompt_effects[(budget, objective)].extend(values)
     native_cross_context_rows = []
     for (budget, objective), values in sorted(native_budget_prompt_effects.items()):
-        estimate, low, high = bootstrap_mean_ci(
-            values,
+        estimate, low, high, num_clusters = hierarchical_bootstrap_mean_ci(
+            native_prompt_effect_clusters[(budget, objective)],
             seed=budget * 3000000 + len(objective),
             samples=5000,
         )
@@ -539,6 +737,7 @@ def main() -> None:
                 "budget": budget,
                 "allocation_objective": objective,
                 "paired_acceptance_n": len(values),
+                "paired_acceptance_clusters": num_clusters,
                 "paired_acceptance_mean": estimate,
                 "paired_acceptance_ci_low": low,
                 "paired_acceptance_ci_high": high,
@@ -552,6 +751,15 @@ def main() -> None:
         key: sum(row[key] for row in exactness_rows)
         for key in ("exact", "numerical_tie", "non_tie_or_unknown", "invalid_prompts")
     }
+    if args.require_exact_target and (
+        exactness_totals["numerical_tie"] > 0
+        or exactness_totals["non_tie_or_unknown"] > 0
+    ):
+        raise ValueError(
+            "Objective matrix failed exact-target gate: "
+            f"numerical_ties={exactness_totals['numerical_tie']}, "
+            f"non_tie_or_unknown={exactness_totals['non_tie_or_unknown']}"
+        )
 
     write_csv(rows, out_dir / "matrix_rows.csv")
     write_csv(grouped_rows, out_dir / "matrix_grouped.csv")
@@ -565,8 +773,19 @@ def main() -> None:
     write_csv(exactness_rows, out_dir / "exactness_audit.csv")
     payload = {
         "required_evaluator_versions": {
-            "quality": "teacher_forced_cached_v1",
+            "quality": QUALITY_EVALUATOR_VERSION,
             "acceptance": args.acceptance_evaluator_version,
+        },
+        "integrity_gates": {
+            "require_complete": args.require_complete,
+            "complete_matrix_gate": not missing and not rejected and not integrity_violations,
+            "require_exact_target": args.require_exact_target,
+            "exact_target_gate": (
+                exactness_totals["numerical_tie"] == 0
+                and exactness_totals["non_tie_or_unknown"] == 0
+            ),
+            "paired_within_objective_gate": True,
+            "cross_context_ci": "hierarchical_cell_then_example_bootstrap",
         },
         "num_complete_rows": len(rows),
         "num_missing_pairs": len(missing),

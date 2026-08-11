@@ -18,6 +18,10 @@ the target output distribution.
 Quantization alone is not enough novelty for a main-track paper. KIVI already
 establishes asymmetric K/V quantization, KV-AdaQuant allocates different K/V
 precision, and QuantSpec applies quantized KV caches to speculative decoding.
+The August 2026 NVIDIA work on cross-model KV transfer also substantially
+occupies our earlier closed-form cache-mapping direction. That paper does not,
+however, study byte-matched precision allocation under ordinary-quality versus
+speculative-acceptance objectives.
 Our possible main-track contribution is narrower and more controlled:
 
 > Quantizer geometry, model architecture, and downstream decoding objective
@@ -214,7 +218,10 @@ so it is not yet an end-to-end speed claim.
   queued as SLURM jobs `13168` through `13172`. Complementary aggressive
   2/4/8-bit matrices at mean 3- and 5-bit budgets are serialized behind it for
   Qwen (`13183`--`13187`), OLMo2 (`13190`--`13194`), and SmolLM2
-  (`13195`--`13199`).
+  (`13195`--`13199`). The final aggregator now fails closed on missing or
+  underfilled cells, wrong evaluator versions, non-exact target trajectories,
+  or incomplete policy coverage; cross-context confidence intervals use a
+  hierarchical run-cell-then-example bootstrap.
 - Model-weighted paper tables and objective-comparison figures.
 - Packed-kernel optimization and a serving-capacity benchmark.
 

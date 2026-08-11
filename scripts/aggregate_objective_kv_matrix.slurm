@@ -17,4 +17,6 @@ if [[ -f .venv/bin/activate ]]; then
 fi
 python3 -u aggregate_objective_kv_matrix.py \
   --matrix_dir "${MATRIX_DIR:?Set MATRIX_DIR}" \
-  --out_dir "${OUT_DIR:?Set OUT_DIR}"
+  --out_dir "${OUT_DIR:?Set OUT_DIR}" \
+  --require_complete \
+  --require_exact_target
