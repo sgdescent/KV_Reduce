@@ -322,11 +322,18 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   16K contrasts are unresolved. Thus, even for the same task and quantizer,
   retrieval precision preference is model-dependent; Qwen3 and powered 16K
   replications are running before we promote a cross-family macro claim.
-  To separate model-family effects from budget effects, dependency-gated mild
-  replications are also queued for OLMo2 (`13386`--`13390`) and SmolLM2
-  (`13391`--`13395`). Each adds 24 strict held-out cells over 1K/4K contexts
-  and three seeds, and starts only after the current objective, systems, and
-  aggressive passkey chains finish.
+  The OLMo2 mild replication (`13386`--`13390`) is now complete with all
+  **24/24** held-out cells, exact allocation-byte matching, and **3,840/3,840**
+  exact target outcomes. Quality and acceptance profiling choose the same
+  top-eight `K4V8` layout at budget six and `K8V8` at budget eight, making all
+  cross-objective acceptance/KL/NLL contrasts exactly zero. Against native KV,
+  the selected policies change acceptance by only **+0.06 points**, hierarchical
+  CI **[-0.32, +0.47]**, and **+0.11 points**, CI **[-0.20, +0.43]**. The
+  cross-context `K8V4 - K4V8` heuristic contrast is **-0.41 acceptance points**,
+  CI **[-1.01, +0.16]**, while `K8V4` incurs **+0.00140 KL**, CI
+  **[+0.00092, +0.00214]**. This is a clean mild-budget null/control rather than
+  evidence for a universal K-first policy. The SmolLM2 mild chain
+  (`13391`--`13395`) is now running with the same 24-cell strict design.
 - Larger-pair exact-byte replications are dependency-queued after those stages.
   Qwen2.5-7B/3B aggressive (`13398`--`13402`) and mild
   (`13403`--`13407`) matrices are followed by Llama-3.1-8B/3.2-3B aggressive

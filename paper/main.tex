@@ -768,6 +768,19 @@ points (95\% CI $[-2.22,+0.48]$), while K2V8 changes it by $-0.88$ points
 calibration differences are neither reliably beneficial nor consistent across
 model families.
 
+The matched OLMo mild-budget control is also complete: all 24 held-out cells
+pass evaluator, byte-matching, and 3,840/3,840 target-exactness gates. Quality
+and acceptance profiling select the same top-eight K4V8 layout at budget six
+and the same K8V8 layout at budget eight, so their paired acceptance, KL, and
+NLL contrasts are identically zero. Relative to native draft KV, the selected
+budget-six policy changes acceptance by $+0.06$ points (hierarchical 95\% CI
+$[-0.32,+0.47]$), while budget eight changes it by $+0.11$ points (CI
+$[-0.20,+0.43]$). A cross-context K8V4 heuristic control is $0.41$ acceptance
+points below K4V8 (CI $[-1.01,+0.16]$) and incurs $+0.00140$ ordinary-quality
+KL (CI $[+0.00092,+0.00214]$). The mild control therefore preserves behavior
+but neither separates the downstream objectives nor supports a universal
+K-first allocation rule.
+
 A strict SmolLM2-1.7B/360M replication provides the third aggressive family and
 passes 3,840/3,840 target-exactness checks. At the three-bit budget, the
 acceptance-profiled allocation improves acceptance over the quality allocation
