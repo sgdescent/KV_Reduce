@@ -156,7 +156,7 @@ so it is not yet an end-to-end speed claim.
 - Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
   to separate low-bit compression from the protection of recent context.
 - Exact 4K/8K/16K speculative long-context validation, followed by a
-  dependency-chained paper-grade 16K/32K PG19-train extension (`13216`--`13217`). The
+  dependency-chained paper-grade 16K/32K PG19-train extension (`13218`--`13219`). The
   first 4K and 8K seeds are exact. `K4V2 - K2V4` is **-5.48 points**, CI
   **[-11.45, -0.18]**, at 4K and **-7.44 points**, CI **[-17.24, +1.74]**, at
   8K. At 4K, `K4V4` saves **30.63%** of combined target-plus-draft KV with a
