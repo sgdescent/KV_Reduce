@@ -144,31 +144,33 @@ so it is not yet an end-to-end speed claim.
   `K8V4 - K4V8` contrast is unresolved at gamma 2 and 4 but is **+1.42
   points**, CI **[+0.35, +2.52]**, at gamma 8.
 - Six-pair exact `K4V2` versus `K2V4` cross-family replication, paired with an
-  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. Fourteen
+  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. Fifteen
   exact runs are complete: three seeds each for Qwen2.5-3B/1.5B, OLMo2-7B/1B,
-  and SmolLM2-1.7B/360M, two seeds each for Qwen2.5-7B/3B and Qwen3-8B/4B,
-  plus the first Llama-3.1-8B/3.2-3B seed. Across all six pairs,
-  `K4V2 - K2V4` is
-  **-2.19 acceptance points**, CI **[-4.43, -0.29]**. The model-weighted
+  and SmolLM2-1.7B/360M, with six of nine larger-pair cells complete. Across all
+  six pairs, `K4V2 - K2V4` is **-1.78 acceptance points**, CI
+  **[-3.37, -0.18]**. The model-weighted
   direction now significantly favors preserving values under the tested KIVI
   geometry; remaining larger-pair seeds are running.
 - Exact key-quantization group-size sweep over 16, 32, 64, and 128 channels,
   with three disjoint seeds and metadata-adjusted byte accounting.
 - Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
   to separate low-bit compression from the protection of recent context.
-- Exact 4K/8K/16K speculative long-context replication, followed by a
-  dependency-chained three-seed 32K PG19 extension (`13203`--`13204`). The
+- Exact 4K/8K/16K speculative long-context validation, followed by a
+  dependency-chained paper-grade 16K/32K PG19-train extension (`13216`--`13217`). The
   first 4K and 8K seeds are exact. `K4V2 - K2V4` is **-5.48 points**, CI
   **[-11.45, -0.18]**, at 4K and **-7.44 points**, CI **[-17.24, +1.74]**, at
   8K. At 4K, `K4V4` saves **30.63%** of combined target-plus-draft KV with a
   provisional **+1.84-point** acceptance change. These sparse-seed values are
-  directional, not final context-length estimates.
-- Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; eight of twelve
-  cells are complete. Across two seeds per model at 64 generated tokens,
-  `K8V4 - K4V8` changes exact-token retention by **-5.29 points**, CI
-  **[-12.83, +2.56]**, while the retained-prefix contrast is **-10.27 points**,
-  CI **[-18.86, -1.67]**. Across two seeds per model at 256 tokens, the
-  exact-token contrast is **-7.26 points**, CI **[-17.18, +1.23]**. The
+  directional, not final context-length estimates. One validation 16K cell
+  yielded only 5 of 8 requested prompts, so it is excluded from paper-grade
+  evidence. The replacement sweep uses three seeds and a strict aggregation
+  gate that rejects every underfilled run.
+- Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; ten of twelve
+  cells are complete. The 64-token sweep is complete across three seeds per
+  model: `K8V4 - K4V8` changes exact-token retention by **-5.12 points**, CI
+  **[-11.21, +0.84]**, while the retained-prefix contrast is **-8.23 points**,
+  CI **[-15.22, -1.31]**. Across the currently complete 256-token cells, the
+  exact-token contrast is **-7.26 points**, CI **[-17.39, +1.06]**. The
   remaining third-seed cells are running. The separate
   three-seed SmolLM2/OLMo2/Llama replication is complete.
 - Powered cross-family ARC-Challenge/HellaSwag task checks. Llama-3.2-3B
