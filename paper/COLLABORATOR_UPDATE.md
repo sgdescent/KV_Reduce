@@ -320,8 +320,16 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   the resolved 32K preference: `K4V2 - K2V4` is **-10.42 points**, CI
   **[-18.75, -2.08]**, with **42/48** versus **47/48** correct. Its 8K and
   16K contrasts are unresolved. Thus, even for the same task and quantizer,
-  retrieval precision preference is model-dependent; Qwen3 and powered 16K
-  replications are running before we promote a cross-family macro claim.
+  retrieval precision preference is model-dependent. Qwen3-4B is now complete
+  across all nine strict runs: every policy scores **48/48** at 8K and 16K; at
+  32K, `K4V2` scores **47/48** and `K2V4` **48/48**, an unresolved **-2.08
+  point** contrast, CI **[-6.25, 0.00]**. Across Qwen2.5, Llama 3, and Qwen3,
+  model-bootstrap macro `K4V2 - K2V4` effects are **+4.86 points** at 8K, CI
+  **[0.00, +10.42]**; **+6.25 points** at 16K, CI **[-2.08, +20.83]**; and
+  exactly **0.00 points** at 32K, CI **[-10.42, +12.50]**. The cross-family
+  aggregate therefore rejects a universal K-first or V-first retrieval policy;
+  key/value allocation must be model- and context-aware. The quantizer-axis
+  ablation (`13538`--`13540`) is now running.
   The OLMo2 mild replication (`13386`--`13390`) is now complete with all
   **24/24** held-out cells, exact allocation-byte matching, and **3,840/3,840**
   exact target outcomes. Quality and acceptance profiling choose the same
