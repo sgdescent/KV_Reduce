@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=kv_fused_packed
 #SBATCH --partition=general
+#SBATCH --exclude=catalyst-0-[9,15]
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
