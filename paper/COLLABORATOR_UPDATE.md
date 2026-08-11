@@ -307,12 +307,14 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   **12.3%** of total target-plus-draft KV. This is a promising raw preference
   reversal, not yet a resolved speculative result; powered 1K/4K, three-seed
   SmolLM, Qwen, and OLMo grids are queued as jobs `13506`--`13514`.
-  The confusable 16-way passkey calibration also passed its difficulty gate.
-  Across all three completed 8K seeds (48 examples), BF16 scores **45/48
-  (93.8%)**, `K4V2` **47/48 (97.9%)**, and equal-budget `K2V4` **42/48
-  (87.5%)**, while both asymmetric policies save about **76.7%** of standalone
-  KV. The paired aggregate and 16K/32K cells are still pending, so this remains
-  preliminary retrieval evidence rather than a final claim.
+  The confusable 16-way passkey control now has a strict partial aggregate over
+  all three 8K and all three 16K seeds, with 48 paired examples per context and
+  no missing or underfilled runs. At 8K, equal-memory `K4V2 - K2V4` is **+10.42
+  accuracy points**, CI **[0.00, +20.83]**. At 16K it grows to a resolved
+  **+20.83 points**, CI **[+8.33, +33.33]**: BF16 and `K4V2` both score
+  **47/48 (97.9%)**, while `K2V4` scores **37/48 (77.1%)**. The asymmetric
+  policies save about **77%** of standalone KV. This is retrieval-quality
+  evidence, not speculative acceptance; the three 32K cells remain active.
   To separate model-family effects from budget effects, dependency-gated mild
   replications are also queued for OLMo2 (`13386`--`13390`) and SmolLM2
   (`13391`--`13395`). Each adds 24 strict held-out cells over 1K/4K contexts
@@ -324,6 +326,10 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   (`13408`--`13412`) and mild (`13413`--`13417`) matrices. Target and draft
   occupy separate GPUs; each 24-cell array is capped at two concurrent
   two-GPU tasks, preserving the four-GPU campaign ceiling.
+- Direct all-layer replications are also dependency-queued for SmolLM2, Qwen2.5,
+  OLMo2, and Llama (`13506`--`13517`). A strict four-family meta-analysis
+  (`13518`) will run only after all four aggregates pass completeness, evaluator,
+  and target-exactness gates.
 - Model-weighted paper tables and objective-comparison figures.
 - Packed-kernel optimization and a serving-capacity benchmark.
 

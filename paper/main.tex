@@ -530,6 +530,18 @@ harm and quality KL is 0.60 at 16K and 0.80 at 32K. Teacher-forced KL is
 therefore a useful screening objective in this setting, though acceptance
 remains the final serving metric.
 
+A complementary confusable 16-way associative-passkey control reveals that the
+preferred asymmetry can change again for retrieval. The strict partial aggregate
+contains all three 8K and all three 16K seeds, 48 paired examples per context,
+and no missing or underfilled runs. At 8K, K4V2 exceeds equal-memory K2V4 by
+$10.42$ accuracy points (95\% CI $[0.00,20.83]$). At 16K, the contrast grows to
+$20.83$ points (CI $[8.33,33.33]$): BF16 and K4V2 each retrieve 47/48 passkeys,
+whereas K2V4 retrieves 37/48. K4V2 and K2V4 save 77.06\% and 77.01\% of the
+standalone cache at 16K, respectively. This draft-only result measures retrieval
+quality rather than speculative acceptance, but it provides a resolved example
+where preserving key precision is preferable under essentially matched memory.
+The 32K cells remain in progress and are excluded from this partial aggregate.
+
 \subsection{Actual packed storage realizes the estimated savings}
 
 Figure~\ref{fig:packed-memory} replaces the analytical payload with real
