@@ -329,7 +329,15 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   exactly **0.00 points** at 32K, CI **[-10.42, +12.50]**. The cross-family
   aggregate therefore rejects a universal K-first or V-first retrieval policy;
   key/value allocation must be model- and context-aware. The quantizer-axis
-  ablation (`13538`--`13540`) is now running.
+  ablation (`13538`--`13540`) is now complete and resolved. On the same 48
+  Qwen2.5 16K examples, per-channel keys yield a `K4V2 - K2V4` contrast of
+  **+20.83 points**, CI **[+8.33, +33.33]**, while per-token keys yield
+  **+75.00 points**, CI **[+62.50, +87.50]**. The axis-by-allocation interaction
+  is **-54.17 points** for per-channel minus per-token, CI
+  **[-72.92, -35.42]**. Per-token `K2V4` retrieves only **4/48**, versus
+  **40/48** for `K4V2`. This shows that K/V sensitivity must be reported jointly
+  with quantizer geometry; per-channel KIVI-style keys preserve critical
+  channel-wise outliers that per-token keys destroy.
   The OLMo2 mild replication (`13386`--`13390`) is now complete with all
   **24/24** held-out cells, exact allocation-byte matching, and **3,840/3,840**
   exact target outcomes. Quality and acceptance profiling choose the same

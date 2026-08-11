@@ -551,6 +551,27 @@ measure retrieval quality rather than speculative acceptance. Together they
 show that even within one task and quantizer geometry, K/V precision preference
 is model-dependent rather than universally K-first or V-first.
 
+Quantizer geometry amplifies this asymmetry (Figure~\ref{fig:passkey-axis}). On
+the same 48 Qwen2.5 16K examples, per-channel keys give a K4V2--K2V4 contrast
+of $+20.83$ points (CI $[+8.33,+33.33]$), whereas per-token keys give
+$+75.00$ points (CI $[+62.50,+87.50]$). The resolved axis-by-allocation
+interaction is $-54.17$ points for per-channel minus per-token contrasts
+(CI $[-72.92,-35.42]$). Per-token K2V4 retrieves only 4/48 examples, versus
+40/48 for per-token K4V2. Thus key fragility is not merely a consequence of
+using fewer bits: preserving the channel-wise outlier structure identified by
+KIVI is essential, and bit allocation must be specified jointly with quantizer
+geometry.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.68\linewidth]{campaign_artifacts/passkey_axis_interaction.pdf}
+  \caption{Qwen2.5-1.5B associative-passkey retrieval at 16K over 48 paired
+  examples. Per-token key quantization sharply magnifies the cost of reducing
+  key precision relative to per-channel KIVI-style keys. Error bars are paired
+  bootstrap 95\% confidence intervals.}
+  \label{fig:passkey-axis}
+\end{figure}
+
 \subsection{Actual packed storage realizes the estimated savings}
 
 Figure~\ref{fig:packed-memory} replaces the analytical payload with real
