@@ -155,7 +155,12 @@ so it is not yet an end-to-end speed claim.
   with three disjoint seeds and metadata-adjusted byte accounting.
 - Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
   to separate low-bit compression from the protection of recent context.
-- Exact 4K/8K/16K speculative long-context replication.
+- Exact 4K/8K/16K speculative long-context replication, followed by a
+  dependency-chained three-seed 32K PG19 extension (`13203`--`13204`). The
+  first 4K seed is exact: `K4V4` saves **30.63%** of combined target-plus-draft
+  KV with a provisional **+1.84-point** acceptance change, while
+  `K4V2 - K2V4` is **-5.48 points**. These single-seed values are directional,
+  not final estimates.
 - Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; eight of twelve
   cells are complete. Across two seeds per model at 64 generated tokens,
   `K8V4 - K4V8` changes exact-token retention by **-5.29 points**, CI
