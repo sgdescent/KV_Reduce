@@ -297,6 +297,10 @@ def main() -> None:
     write_csv(args.out_dir / "grouped_results.csv", grouped)
     write_csv(args.out_dir / "paired_precision_contrasts.csv", paired_comparisons)
     payload = {
+        "runtime": {
+            "source_evaluator_version": "teacher_forced_cached_v1",
+            "full_run_gate": args.require_full_runs,
+        },
         "num_complete_runs": len({(row["context"], row["seed"]) for row in run_rows}),
         "missing_runs": missing,
         "underfilled_runs": underfilled_runs,
