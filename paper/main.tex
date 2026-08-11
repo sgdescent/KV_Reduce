@@ -545,7 +545,9 @@ difference (95\% CI $[+10.42,+21.88]$). BF16 retrieves 186/192, while K4V2
 and K2V4 save 77.06\% and 77.01\% of standalone KV, respectively. A strict Llama-3.2-3B
 replication reverses the resolved 32K preference: K4V2 trails K2V4 by $10.42$
 points (CI $[-18.75,-2.08]$), scoring 42/48 versus 47/48; its 8K and 16K
-contrasts remain unresolved. Qwen3-4B is saturated at 48/48 for every policy at
+contrasts remain unresolved. A powered Llama 16K replication remains unresolved:
+K4V2 scores 185/192 versus 183/192 for K2V4, a $+1.04$-point difference
+(CI $[-1.56,+4.17]$). Qwen3-4B is saturated at 48/48 for every policy at
 8K and 16K; at 32K, K4V2 scores 47/48 and K2V4 scores 48/48, an unresolved
 $-2.08$-point contrast (CI $[-6.25,0.00]$). A strict model-level bootstrap over
 Qwen2.5, Llama~3, and Qwen3 gives macro K4V2--K2V4 effects of $+4.86$ points at
@@ -674,6 +676,15 @@ sequences, K4V3-minus-K3V4 KL is $+0.00848$ (CI
 $[+0.00777,+0.00927]$), again favoring K3V4. The powered test therefore rejects
 both the exploratory objective reversal and a geometry-independent rule that
 keys inherently require more precision than values.
+
+An all-layer SmolLM2-360M replication provides a direct aggressive-budget
+stress test. Across 288 prompts and 2,016 exact target trajectories at 1K and
+4K, the equal-memory K4V2--K2V4 acceptance contrast is unresolved: $-1.34$
+points at 1K (CI $[-3.24,+0.54]$) and $+0.63$ points at 4K
+(CI $[-1.15,+2.49]$). Ordinary-quality KL nevertheless favors K2V4 at both
+contexts by $0.03128$ (CI $[+0.02541,+0.03767]$) and $0.04353$
+(CI $[+0.03154,+0.05935]$), respectively. The 4K means reverse direction, but
+the acceptance interval rules out a resolved objective-specific allocation.
 
 This agreement is useful operationally. Across 48 model-pair/configuration cells,
 ordinary-quality KL and speculative-acceptance harm have Spearman correlation

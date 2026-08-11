@@ -324,7 +324,9 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   strict Llama-3.2-3B replication reverses
   the resolved 32K preference: `K4V2 - K2V4` is **-10.42 points**, CI
   **[-18.75, -2.08]**, with **42/48** versus **47/48** correct. Its 8K and
-  16K contrasts are unresolved. Thus, even for the same task and quantizer,
+  16K contrasts are unresolved. A powered Llama 16K replication is also
+  unresolved: `K4V2` scores **185/192** versus **183/192** for `K2V4`, a
+  **+1.04-point** contrast, CI **[-1.56, +4.17]**. Thus, even for the same task and quantizer,
   retrieval precision preference is model-dependent. Qwen3-4B is now complete
   across all nine strict runs: every policy scores **48/48** at 8K and 16K; at
   32K, `K4V2` scores **47/48** and `K2V4` **48/48**, an unresolved **-2.08
@@ -361,7 +363,15 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   (`13408`--`13412`) and mild (`13413`--`13417`) matrices. Target and draft
   occupy separate GPUs; each 24-cell array is capped at two concurrent
   two-GPU tasks, preserving the four-GPU campaign ceiling.
-- Direct all-layer replications are also dependency-queued for SmolLM2, Qwen2.5,
+- The powered all-layer SmolLM2 replication is complete across 1K and 4K,
+  three seeds per context, **288 prompts**, and **2,016/2,016** exact target
+  trajectories. Equal-memory `K4V2 - K2V4` acceptance is **-1.34 points** at
+  1K, CI **[-3.24, +0.54]**, and **+0.63 points** at 4K, CI
+  **[-1.15, +2.49]**. Ordinary-quality KL decisively favors `K2V4`: the same
+  contrast is **+0.03128** at 1K, CI **[+0.02541, +0.03767]**, and
+  **+0.04353** at 4K, CI **[+0.03154, +0.05935]**. The 4K means reverse, but
+  acceptance remains unresolved after powering the test.
+- Direct all-layer replications remain dependency-queued for Qwen2.5,
   OLMo2, and Llama (`13506`--`13517`). A strict four-family meta-analysis
   (`13518`) will run only after all four aggregates pass completeness, evaluator,
   and target-exactness gates.
