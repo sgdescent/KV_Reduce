@@ -24,20 +24,23 @@ examples="${LONGBENCH_EXAMPLES:-24}"
 skip=$((seed * examples))
 root="${OUT_ROOT:-outputs/kivi_longbench_passage_retrieval_v1/qwen25_15b}"
 out_dir="$root/longbench_passage_retrieval/seed_${seed}"
+model="${MODEL:-Qwen/Qwen2.5-1.5B}"
+model_label="${MODEL_LABEL:-qwen25_15b}"
+max_prompt_tokens="${MAX_PROMPT_TOKENS:-32752}"
 
 export TOKENIZERS_PARALLELISM=false
 export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
 export PYTORCH_ALLOC_CONF="${PYTORCH_ALLOC_CONF:-expandable_segments:True}"
 
 python3 -u eval_kv_quantized_multiple_choice.py \
-  --model Qwen/Qwen2.5-1.5B \
+  --model "$model" \
   --device cuda:0 \
   --attn_implementation sdpa \
   --task longbench_passage_retrieval \
   --num_examples "$examples" \
   --skip_examples "$skip" \
   --num_fewshot 0 \
-  --max_prompt_tokens 32752 \
+  --max_prompt_tokens "$max_prompt_tokens" \
   --max_choice_tokens 8 \
   --seed "$seed" \
   --quant_configs "${QUANT_CONFIGS:-none;k8v4;k4v8;k4v4;k4v2;k2v4;k2v2}" \
@@ -49,4 +52,4 @@ python3 -u eval_kv_quantized_multiple_choice.py \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
   --wandb_group kivi-longbench-retrieval \
-  --wandb_run_name "qwen25_15b_longbench_retrieval_s${seed}"
+  --wandb_run_name "${model_label}_longbench_retrieval_s${seed}"
