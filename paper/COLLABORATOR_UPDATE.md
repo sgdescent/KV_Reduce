@@ -137,15 +137,18 @@ so it is not yet an end-to-end speed claim.
 ## Work In Progress
 
 - Exact proposal-length sweep at `gamma = 2, 4, 8`, including aggressive
-  `K4V2` and `K2V4` controls. Two of three seeds are complete at every gamma.
-  `K4V2 - K2V4` is provisionally **-4.08**, **-5.93**, and **-3.50**
-  acceptance points at gamma 2, 4, and 8, respectively; all three confidence
-  intervals exclude zero. The mild `K8V4 - K4V8` contrast is unresolved at
-  gamma 2 and 4 but is **+1.64 points**, CI **[+0.40, +2.97]**, at gamma 8.
+  `K4V2` and `K2V4` controls. Gamma 2 is complete across three seeds; gamma 4
+  and 8 have two of three seeds. `K4V2 - K2V4` is provisionally **-5.04**,
+  **-5.93**, and **-3.50** acceptance points at gamma 2, 4, and 8,
+  respectively; all three confidence intervals exclude zero. The mild
+  `K8V4 - K4V8` contrast is unresolved at gamma 2 and 4 but is **+1.64
+  points**, CI **[+0.40, +2.97]**, at gamma 8.
 - Six-pair exact `K4V2` versus `K2V4` cross-family replication, paired with an
-  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. Seven
-  exact runs are complete for the first three families; the provisional macro
-  `K4V2 - K2V4` is **-2.53 acceptance points**, CI **[-4.73, -0.23]**.
+  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. The
+  first three families are complete across nine exact runs; their macro
+  `K4V2 - K2V4` is **-2.10 acceptance points**, CI **[-4.24, -0.009]**. This
+  interval only narrowly excludes zero: Qwen is individually resolved, while
+  OLMo2 and SmolLM2 are not. Larger two-GPU model pairs are now running.
 - Exact key-quantization group-size sweep over 16, 32, 64, and 128 channels,
   with three disjoint seeds and metadata-adjusted byte accounting.
 - Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
