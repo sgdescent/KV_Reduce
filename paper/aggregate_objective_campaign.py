@@ -7,9 +7,10 @@ import argparse
 import csv
 import json
 import math
+import random
 from pathlib import Path
 from statistics import mean
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 
 MATRIX_LABELS = {
@@ -89,6 +90,27 @@ def finite(value: Any) -> bool:
         return math.isfinite(float(value))
     except (TypeError, ValueError):
         return False
+
+
+def bootstrap_macro_mean_ci(
+    values: Sequence[float], *, samples: int, seed: int
+) -> Tuple[float, float, float]:
+    """Bootstrap model-level effects without treating prompts as independent models."""
+    if not values:
+        return float("nan"), float("nan"), float("nan")
+    estimate = mean(values)
+    if len(values) == 1 or samples <= 0:
+        return estimate, estimate, estimate
+    rng = random.Random(seed)
+    draws = sorted(
+        mean(values[rng.randrange(len(values))] for _ in values)
+        for _ in range(samples)
+    )
+    return (
+        estimate,
+        draws[int(0.025 * samples)],
+        draws[min(samples - 1, int(0.975 * samples))],
+    )
 
 
 def matrix_label(name: str) -> str:
@@ -262,6 +284,47 @@ def collect_rows(records: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]
         "native": native_rows,
         "exactness": exactness_rows,
     }
+
+
+def collect_meta_rows(
+    objective_rows: Sequence[Dict[str, Any]], *, bootstrap_samples: int, seed: int
+) -> List[Dict[str, Any]]:
+    """Macro-average strict cross-objective effects by budget regime."""
+    groups: Dict[Tuple[str, int], List[Dict[str, Any]]] = {}
+    for row in objective_rows:
+        regime = "aggressive" if "aggressive" in str(row["matrix"]).lower() else "mild"
+        groups.setdefault((regime, int(row["budget"])), []).append(row)
+
+    meta_rows = []
+    metrics = ("acceptance", "quality_kl", "quality_delta_nll")
+    for group_index, ((regime, budget), rows) in enumerate(sorted(groups.items())):
+        result: Dict[str, Any] = {
+            "regime": regime,
+            "budget": budget,
+            "num_matrices": len(rows),
+            "matrices": ";".join(sorted(str(row["matrix"]) for row in rows)),
+            "num_nonzero_objective_effects": sum(
+                abs(float(row.get("paired_acceptance_mean", 0.0))) > 1e-12
+                or abs(float(row.get("paired_quality_kl_mean", 0.0))) > 1e-12
+                for row in rows
+            ),
+        }
+        for metric_index, metric in enumerate(metrics):
+            values = [
+                float(row[f"paired_{metric}_mean"])
+                for row in rows
+                if finite(row.get(f"paired_{metric}_mean"))
+            ]
+            estimate, low, high = bootstrap_macro_mean_ci(
+                values,
+                samples=bootstrap_samples,
+                seed=seed + 100 * group_index + metric_index,
+            )
+            result[f"{metric}_macro_mean"] = estimate
+            result[f"{metric}_macro_ci_low"] = low
+            result[f"{metric}_macro_ci_high"] = high
+        meta_rows.append(result)
+    return meta_rows
 
 
 def collect_final_rows(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -582,6 +645,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out_dir", type=Path, default=Path("paper/objective_campaign_artifacts"))
     parser.add_argument("--include_incomplete", action="store_true")
     parser.add_argument("--include_smoke", action="store_true")
+    parser.add_argument("--bootstrap_samples", type=int, default=5000)
+    parser.add_argument("--seed", type=int, default=1729)
     parser.add_argument(
         "--allow_legacy_integrity",
         action="store_true",
@@ -601,10 +666,16 @@ def main() -> None:
     )
     final_records = discover_final_results(args.results_root, include_smoke=args.include_smoke)
     rows = collect_rows(records)
+    meta_rows = collect_meta_rows(
+        rows["objective"],
+        bootstrap_samples=args.bootstrap_samples,
+        seed=args.seed,
+    )
     final_rows = collect_final_rows(final_records)
     for name, values in rows.items():
         write_csv(args.out_dir / f"objective_campaign_{name}.csv", values)
     write_csv(args.out_dir / "objective_campaign_final_results.csv", final_rows)
+    write_csv(args.out_dir / "objective_campaign_meta.csv", meta_rows)
     write_csv(args.out_dir / "objective_campaign_rejected.csv", rejected)
 
     plots = []
@@ -630,6 +701,8 @@ def main() -> None:
             for record in final_records
         ],
         "row_counts": {name: len(values) for name, values in rows.items()},
+        "num_meta_rows": len(meta_rows),
+        "meta_rows": meta_rows,
         "num_final_result_rows": len(final_rows),
         "plots": plots,
         "tables": tables,

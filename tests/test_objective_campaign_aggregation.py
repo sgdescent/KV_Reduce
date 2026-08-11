@@ -4,7 +4,9 @@ import unittest
 from pathlib import Path
 
 from paper.aggregate_objective_campaign import (
+    bootstrap_macro_mean_ci,
     collect_final_rows,
+    collect_meta_rows,
     collect_rows,
     discover_aggregates,
     discover_final_results,
@@ -111,6 +113,49 @@ def write_final_summary(root: Path, name: str) -> None:
 
 
 class ObjectiveCampaignAggregationTest(unittest.TestCase):
+    def test_model_macro_bootstrap_uses_matrix_as_the_unit(self) -> None:
+        estimate, low, high = bootstrap_macro_mean_ci(
+            [0.01, -0.03],
+            samples=2000,
+            seed=7,
+        )
+
+        self.assertAlmostEqual(estimate, -0.01)
+        self.assertLessEqual(low, estimate)
+        self.assertGreaterEqual(high, estimate)
+
+    def test_collects_regime_level_objective_meta_rows(self) -> None:
+        rows = [
+            {
+                "matrix": "qwen_exact_aggressive",
+                "budget": 3,
+                "paired_acceptance_mean": -0.01,
+                "paired_quality_kl_mean": 0.02,
+                "paired_quality_delta_nll_mean": 0.03,
+            },
+            {
+                "matrix": "olmo_exact_aggressive",
+                "budget": 3,
+                "paired_acceptance_mean": 0.0,
+                "paired_quality_kl_mean": 0.0,
+                "paired_quality_delta_nll_mean": 0.0,
+            },
+            {
+                "matrix": "qwen_exact_mild",
+                "budget": 6,
+                "paired_acceptance_mean": 0.0,
+                "paired_quality_kl_mean": 0.0,
+                "paired_quality_delta_nll_mean": 0.0,
+            },
+        ]
+
+        meta = collect_meta_rows(rows, bootstrap_samples=100, seed=3)
+        aggressive = next(row for row in meta if row["regime"] == "aggressive")
+
+        self.assertEqual(aggressive["num_matrices"], 2)
+        self.assertEqual(aggressive["num_nonzero_objective_effects"], 1)
+        self.assertAlmostEqual(aggressive["acceptance_macro_mean"], -0.005)
+
     def test_long_context_matrix_labels_identify_dataset(self) -> None:
         self.assertEqual(
             matrix_label("qwen25_all_layers_long_context_v1"),
