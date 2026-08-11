@@ -268,12 +268,24 @@ so it is not yet an end-to-end speed claim.
   profiled saved bytes as quality-selected `K2V4`, but is **-0.61 acceptance
   points** worse on held-out data, CI **[-1.98, +0.60]**, and has KL higher by
   **0.01485**, CI **[+0.01120, +0.02060]**. At five bits both select `K2V8`.
-  OLMo2 aggressive is in its final matrix wave; SmolLM2 aggressive follows.
+  OLMo2 aggressive is now also complete with **48/48 cells**, exact byte
+  matching, and **3,840/3,840** exact target outcomes. At budget three, both
+  objectives select top-eight `K2V4`; at budget five, both select `K2V8`, so
+  cross-objective acceptance and KL effects are exactly zero. Against native
+  draft KV, the selected policies change acceptance by **-0.91 points**, CI
+  **[-2.22, +0.48]**, and **-0.88 points**, CI **[-2.17, +0.43]**, respectively.
+  SmolLM2 aggressive profiling is now running.
   To separate model-family effects from budget effects, dependency-gated mild
   replications are also queued for OLMo2 (`13386`--`13390`) and SmolLM2
   (`13391`--`13395`). Each adds 24 strict held-out cells over 1K/4K contexts
   and three seeds, and starts only after the current objective, systems, and
   aggressive passkey chains finish.
+- Larger-pair exact-byte replications are dependency-queued after those stages.
+  Qwen2.5-7B/3B aggressive (`13398`--`13402`) and mild
+  (`13403`--`13407`) matrices are followed by Llama-3.1-8B/3.2-3B aggressive
+  (`13408`--`13412`) and mild (`13413`--`13417`) matrices. Target and draft
+  occupy separate GPUs; each 24-cell array is capped at two concurrent
+  two-GPU tasks, preserving the four-GPU campaign ceiling.
 - Model-weighted paper tables and objective-comparison figures.
 - Packed-kernel optimization and a serving-capacity benchmark.
 

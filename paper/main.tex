@@ -730,6 +730,16 @@ Thus, whenever the objectives disagree here, the acceptance profile does not
 deliver a resolved held-out acceptance benefit and substantially worsens
 ordinary quality.
 
+An OLMo-2-7B/1B replication passes the same 48/48-cell, exact-byte, and
+3,840/3,840 target-exactness gates. At the three-bit budget, both objectives
+select K2V4 in all eight profiled layers; at five bits, both select K2V8.
+Consequently, the cross-objective acceptance and KL effects are exactly zero at
+both budgets. Relative to native draft KV, K2V4 changes acceptance by $-0.91$
+points (95\% CI $[-2.22,+0.48]$), while K2V8 changes it by $-0.88$ points
+(CI $[-2.17,+0.43]$). Together with Qwen, this shows that objective-specific
+calibration differences are neither reliably beneficial nor consistent across
+model families.
+
 \subsection{Finite-precision verification audit}
 
 In all draft-only experiments, the target cache and weights remain BF16; joint
