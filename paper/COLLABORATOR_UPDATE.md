@@ -70,6 +70,14 @@ standalone-cache bytes and retains 28.68% of exact BF16 tokens over 256-token
 continuations. Token retention is a strict trajectory-drift diagnostic, not a
 semantic-quality score; downstream tasks remain necessary.
 
+The aggressive 256-token replication is also complete for Llama, OLMo, and
+SmolLM: 9 full runs and 144 paired prompts. `K4V2 - K2V4` changes the retained
+BF16-prefix fraction by **-2.74 points**, CI **[-6.02, -0.94]**, significantly
+favoring value precision. The full-continuation token-agreement contrast is
+**-1.71 points**, CI **[-4.47, +0.49]**, and remains unresolved. In this
+aggressive sweep, `K4V4` saves **66.56%** of standalone-cache bytes and retains
+**24.67%** exact BF16 tokens over 256-token continuations.
+
 This is promising but not yet sufficient for a main-track method paper. The
 remaining gates are a held-out geometry- and objective-aware allocator that
 beats uniform/asymmetric baselines at equal actual bytes, and a packed attention
