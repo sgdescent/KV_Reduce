@@ -24,4 +24,5 @@ python3 -u aggregate_kv_passkey_cross_family.py \
   --source "Qwen3-4B=$root/qwen3_4b/aggregate/summary.json" \
   --out_dir "$root/cross_family" \
   --expected_contexts 16384 \
-  --expected_seeds 0,1,2
+  --expected_seeds 0,1,2 \
+  --expected_examples_per_run "${PASSKEY_EXAMPLES:-64}"

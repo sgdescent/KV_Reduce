@@ -37,7 +37,7 @@ submit_model Qwen/Qwen3-4B qwen3_4b
 meta_job=$(sbatch --parsable \
   --dependency="afterok:${dependency}" \
   --exclude=catalyst-0-9,catalyst-0-15 \
-  --export="ALL,ROOT=$root" \
+  --export="ALL,ROOT=$root,PASSKEY_EXAMPLES=$examples" \
   scripts/aggregate_kivi_passkey_powered16k.slurm)
 
 printf 'passkey_powered16k_final_model_aggregate=%s\n' "$dependency"

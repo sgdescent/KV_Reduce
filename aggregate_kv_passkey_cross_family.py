@@ -71,6 +71,7 @@ def validate_summary(
     path: Path,
     expected_contexts: Sequence[int],
     expected_runs: int,
+    expected_examples_per_run: int = 0,
 ) -> None:
     failures = []
     if summary.get("evaluator_version") != EVALUATOR_VERSION:
@@ -87,6 +88,12 @@ def validate_summary(
         failures.append("contexts")
     if int(summary.get("num_complete_runs", -1)) != expected_runs:
         failures.append("run_count")
+    if (
+        expected_examples_per_run > 0
+        and int(summary.get("expected_examples_per_run", -1))
+        != expected_examples_per_run
+    ):
+        failures.append("examples_per_run")
     if summary.get("complete_run_gate") is not True:
         failures.append("complete")
     if summary.get("missing_runs"):
@@ -102,6 +109,7 @@ def collect_rows(
     *,
     expected_contexts: Sequence[int],
     expected_runs: int,
+    expected_examples_per_run: int = 0,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     accuracy_rows: List[Dict[str, Any]] = []
     contrast_rows: List[Dict[str, Any]] = []
@@ -112,6 +120,7 @@ def collect_rows(
             path=path,
             expected_contexts=expected_contexts,
             expected_runs=expected_runs,
+            expected_examples_per_run=expected_examples_per_run,
         )
         for row in summary["grouped"]:
             if row["depth"] != "all":
@@ -221,6 +230,7 @@ def main() -> None:
     parser.add_argument("--out_dir", type=Path, required=True)
     parser.add_argument("--expected_contexts", default="8192,16384,32768")
     parser.add_argument("--expected_seeds", default="0,1,2")
+    parser.add_argument("--expected_examples_per_run", type=int, default=0)
     parser.add_argument("--bootstrap_samples", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=2026)
     args = parser.parse_args()
@@ -233,6 +243,7 @@ def main() -> None:
         sources,
         expected_contexts=expected_contexts,
         expected_runs=expected_runs,
+        expected_examples_per_run=args.expected_examples_per_run,
     )
     macro = aggregate_contrasts(
         contrast_rows,
@@ -249,6 +260,7 @@ def main() -> None:
         "task_generator_version": GENERATOR_VERSION,
         "expected_contexts": expected_contexts,
         "expected_seeds": expected_seeds,
+        "expected_examples_per_run": args.expected_examples_per_run,
         "num_models": len(sources),
         "models": sorted(sources),
         "complete_gate": True,

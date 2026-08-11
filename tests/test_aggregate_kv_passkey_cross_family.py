@@ -17,6 +17,7 @@ def make_summary(path: Path, *, complete: bool = True) -> None:
         "task_generator_version": "synthetic_associative_passkey_v3",
         "expected_contexts": [8192],
         "expected_seeds": [0],
+        "expected_examples_per_run": 16,
         "expected_num_choices": 16,
         "expected_passkey_variant": "confusable_records",
         "expected_passkey_score": "normalized",
@@ -58,6 +59,18 @@ class PasskeyCrossFamilyTest(unittest.TestCase):
             make_summary(path, complete=False)
             with self.assertRaises(ValueError):
                 collect_rows({"qwen": path}, expected_contexts=[8192], expected_runs=1)
+
+    def test_rejects_wrong_example_count(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.json"
+            make_summary(path)
+            with self.assertRaisesRegex(ValueError, "examples_per_run"):
+                collect_rows(
+                    {"qwen": path},
+                    expected_contexts=[8192],
+                    expected_runs=1,
+                    expected_examples_per_run=64,
+                )
 
     def test_macro_uses_models_as_units(self) -> None:
         rows = [
