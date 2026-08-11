@@ -268,7 +268,12 @@ so it is not yet an end-to-end speed claim.
   profiled saved bytes as quality-selected `K2V4`, but is **-0.61 acceptance
   points** worse on held-out data, CI **[-1.98, +0.60]**, and has KL higher by
   **0.01485**, CI **[+0.01120, +0.02060]**. At five bits both select `K2V8`.
-  OLMo2 is in its final matrix wave; SmolLM2 follows.
+  OLMo2 aggressive is in its final matrix wave; SmolLM2 aggressive follows.
+  To separate model-family effects from budget effects, dependency-gated mild
+  replications are also queued for OLMo2 (`13386`--`13390`) and SmolLM2
+  (`13391`--`13395`). Each adds 24 strict held-out cells over 1K/4K contexts
+  and three seeds, and starts only after the current objective, systems, and
+  aggressive passkey chains finish.
 - Model-weighted paper tables and objective-comparison figures.
 - Packed-kernel optimization and a serving-capacity benchmark.
 
