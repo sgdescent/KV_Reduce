@@ -10,6 +10,7 @@ import json
 import os
 import random
 import re
+import zipfile
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
@@ -52,6 +53,20 @@ PASSKEY_GENERATOR_V2 = "synthetic_passkey_16way_v2"
 PASSKEY_GENERATOR_V3 = "synthetic_associative_passkey_v3"
 PASSKEY_VARIANT_RANDOM = "random"
 PASSKEY_VARIANT_CONFUSABLE = "confusable_records"
+LONGBENCH_REPO = "THUDM/LongBench"
+LONGBENCH_ARCHIVE = "data.zip"
+LONGBENCH_RETRIEVAL_FILE = "data/passage_retrieval_en.jsonl"
+LONGBENCH_RETRIEVAL_PROMPT = """Here are 30 paragraphs from Wikipedia, along with an abstract. Please determine which paragraph the abstract is from.
+
+{context}
+
+The following is an abstract.
+
+{input}
+
+Please enter the number of the paragraph that the abstract is from. The answer format must be like \"Paragraph 1\", \"Paragraph 2\", etc.
+
+The answer is: """
 TASK_SPECS = {
     "hellaswag": {
         "dataset_name": "Rowan/hellaswag",
@@ -73,6 +88,13 @@ TASK_SPECS = {
         "split": "synthetic",
         "fewshot_split": "synthetic",
         "primary_metric": "raw_accuracy",
+    },
+    "longbench_passage_retrieval": {
+        "dataset_name": LONGBENCH_REPO,
+        "dataset_config": "passage_retrieval_en",
+        "split": "test",
+        "fewshot_split": None,
+        "primary_metric": "normalized_accuracy",
     },
 }
 
@@ -120,6 +142,22 @@ def format_task_example(task: str, example: Dict[str, Any]) -> Tuple[str, List[s
         prompt = "Retrieve the pass key hidden in the archive."
         choices = [" " + str(choice) for choice in example["choices"]]
         gold = int(example["gold"])
+    elif task == "longbench_passage_retrieval":
+        prompt = LONGBENCH_RETRIEVAL_PROMPT.format(
+            context=str(example["context"]),
+            input=str(example["input"]),
+        )
+        paragraph_numbers = [
+            int(value)
+            for value in re.findall(r"(?m)^Paragraph\s+(\d+):", str(example["context"]))
+        ]
+        choices = [f" Paragraph {number}" for number in paragraph_numbers]
+        answers = [str(answer).strip() for answer in example["answers"]]
+        if len(choices) != 30:
+            raise ValueError(f"Expected 30 LongBench paragraphs, found {len(choices)}.")
+        if not answers or answers[0] not in [choice.strip() for choice in choices]:
+            raise ValueError(f"Malformed LongBench retrieval answer: {answers!r}")
+        gold = [choice.strip() for choice in choices].index(answers[0])
     else:
         raise ValueError(f"Unsupported task: {task!r}")
     if not prompt or len(choices) < 2 or not 0 <= gold < len(choices):
@@ -225,6 +263,24 @@ def load_examples(
             variant=passkey_variant,
         )
 
+    if task == "longbench_passage_retrieval":
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as exc:
+            raise ImportError("huggingface_hub is required for LongBench evaluation.") from exc
+        archive_path = hf_hub_download(
+            repo_id=LONGBENCH_REPO,
+            filename=LONGBENCH_ARCHIVE,
+            repo_type="dataset",
+        )
+        with zipfile.ZipFile(archive_path) as archive:
+            with archive.open(LONGBENCH_RETRIEVAL_FILE) as handle:
+                rows = [json.loads(line) for line in handle if line.strip()]
+        indices = list(range(len(rows)))
+        random.Random(dataset_seed).shuffle(indices)
+        selected = indices[skip_examples : skip_examples + num_examples]
+        return [(source_idx, rows[source_idx]) for source_idx in selected]
+
     try:
         from datasets import load_dataset
     except ImportError as exc:
@@ -287,6 +343,40 @@ def tokenize_example(
     ]
     if prompt_ids.shape[1] == 0 or any(ids.shape[1] == 0 for ids in choice_ids):
         raise ValueError("Tokenization produced an empty prompt or answer choice.")
+    return prompt_ids, choice_ids
+
+
+def tokenize_longbench_example(
+    tokenizer,
+    prompt: str,
+    choices: Sequence[str],
+    *,
+    max_prompt_tokens: int,
+    max_choice_tokens: int,
+) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    """Apply LongBench's middle truncation while preserving prompt instructions."""
+
+    prompt_ids = tokenizer(
+        prompt,
+        add_special_tokens=True,
+        return_tensors="pt",
+    ).input_ids
+    if int(prompt_ids.shape[1]) > int(max_prompt_tokens):
+        left = int(max_prompt_tokens) // 2
+        right = int(max_prompt_tokens) - left
+        prompt_ids = torch.cat([prompt_ids[:, :left], prompt_ids[:, -right:]], dim=1)
+    choice_ids = [
+        tokenizer(
+            choice,
+            add_special_tokens=False,
+            truncation=True,
+            max_length=max_choice_tokens,
+            return_tensors="pt",
+        ).input_ids
+        for choice in choices
+    ]
+    if prompt_ids.shape[1] == 0 or any(ids.shape[1] == 0 for ids in choice_ids):
+        raise ValueError("LongBench tokenization produced an empty prompt or answer choice.")
     return prompt_ids, choice_ids
 
 
@@ -597,7 +687,7 @@ def main() -> None:
         raise ValueError("No task examples were loaded.")
     fewshot_examples = (
         []
-        if args.task == "passkey"
+        if args.task in {"passkey", "longbench_passage_retrieval"}
         else load_examples(
             task=args.task,
             split=str(TASK_SPECS[args.task]["fewshot_split"]),
@@ -613,12 +703,9 @@ def main() -> None:
         args.task,
         [example for _source_idx, example in fewshot_examples],
     )
-    primary_metric = (
-        "normalized_accuracy"
-        if args.task == "hellaswag"
-        or (args.task == "passkey" and args.passkey_score == "normalized")
-        else "raw_accuracy"
-    )
+    primary_metric = str(TASK_SPECS[args.task]["primary_metric"])
+    if args.task == "passkey":
+        primary_metric = f"{args.passkey_score}_accuracy"
 
     rows: List[Dict[str, Any]] = []
     prompt_lengths: List[int] = []
@@ -633,6 +720,14 @@ def main() -> None:
             prompt_ids, choice_ids = tokenize_passkey_example(
                 tokenizer,
                 example,
+                max_prompt_tokens=args.max_prompt_tokens,
+                max_choice_tokens=args.max_choice_tokens,
+            )
+        elif args.task == "longbench_passage_retrieval":
+            prompt_ids, choice_ids = tokenize_longbench_example(
+                tokenizer,
+                prompt,
+                choices,
                 max_prompt_tokens=args.max_prompt_tokens,
                 max_choice_tokens=args.max_choice_tokens,
             )
@@ -731,6 +826,15 @@ def main() -> None:
                         "target_tag": str(example.get("target_tag", "")),
                     }
                 )
+            elif args.task == "longbench_passage_retrieval":
+                row.update(
+                    {
+                        "answer_paragraph": gold + 1,
+                        "answer_depth": (gold + 0.5) / len(choices),
+                        "longbench_id": str(example.get("_id", "")),
+                        "longbench_length": int(example.get("length", 0)),
+                    }
+                )
             rows.append(row)
             primary_key = primary_metric.replace("accuracy", "correct")
             running_correct[name].append(float(row[primary_key]))
@@ -802,6 +906,21 @@ def main() -> None:
                 ]
                 summary[f"depth_{int(round(100 * depth))}/accuracy"] = mean(
                     row["raw_correct"] for row in depth_rows
+                )
+        elif args.task == "longbench_passage_retrieval":
+            for label, lower, upper in (
+                ("early", 0.0, 1.0 / 3.0),
+                ("middle", 1.0 / 3.0, 2.0 / 3.0),
+                ("late", 2.0 / 3.0, 1.0),
+            ):
+                depth_rows = [
+                    row
+                    for row in config_rows
+                    if lower <= float(row["answer_depth"]) < upper
+                    or (label == "late" and float(row["answer_depth"]) == upper)
+                ]
+                summary[f"depth_{label}/normalized_accuracy"] = mean(
+                    row["normalized_correct"] for row in depth_rows
                 )
         summary["primary_accuracy"] = summary[primary_metric]
         summaries[name] = summary

@@ -143,6 +143,24 @@ class MultipleChoiceFormattingTest(unittest.TestCase):
         self.assertEqual(choices, [" 123456", " 654321"])
         self.assertEqual(gold, 1)
 
+    def test_formats_longbench_passage_retrieval(self):
+        context = "\n\n".join(
+            f"Paragraph {idx}: passage {idx}." for idx in range(1, 31)
+        )
+        prompt, choices, gold = format_task_example(
+            "longbench_passage_retrieval",
+            {
+                "context": context,
+                "input": "A summary of passage 17.",
+                "answers": ["Paragraph 17"],
+            },
+        )
+        self.assertIn("Here are 30 paragraphs", prompt)
+        self.assertIn("A summary of passage 17.", prompt)
+        self.assertEqual(len(choices), 30)
+        self.assertEqual(choices[16], " Paragraph 17")
+        self.assertEqual(gold, 16)
+
     def test_builds_fewshot_prefix_with_gold_answers(self):
         prefix = build_fewshot_prefix(
             "arc_challenge",

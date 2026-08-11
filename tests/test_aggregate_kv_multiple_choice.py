@@ -1,10 +1,22 @@
 import unittest
 from pathlib import Path
 
-from aggregate_kv_multiple_choice import paired_metric_differences, underfilled_run_record
+from aggregate_kv_multiple_choice import (
+    paired_metric_differences,
+    parse_int_list,
+    parse_string_list,
+    underfilled_run_record,
+)
 
 
 class MultipleChoiceAggregationTest(unittest.TestCase):
+    def test_parses_expected_run_lists(self):
+        self.assertEqual(
+            parse_string_list("longbench_passage_retrieval, arc_challenge"),
+            ["longbench_passage_retrieval", "arc_challenge"],
+        )
+        self.assertEqual(parse_int_list("0,1, 2"), [0, 1, 2])
+
     def test_pairs_examples_within_task_and_seed(self):
         rows = [
             {"task": "arc", "seed": "0", "source_idx": "5", "config": "none", "raw_correct": "1"},

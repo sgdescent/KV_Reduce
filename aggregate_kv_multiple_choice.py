@@ -16,6 +16,14 @@ from spec_kv_statistics import bootstrap_mean_ci
 EVALUATOR_VERSION = "kv_multiple_choice_cached_v2"
 
 
+def parse_string_list(value: str) -> List[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def parse_int_list(value: str) -> List[int]:
+    return [int(item) for item in parse_string_list(value)]
+
+
 def underfilled_run_record(
     summary_path: Path,
     summary: Dict[str, Any],
@@ -105,6 +113,10 @@ def main() -> None:
     parser.add_argument("--out_dir", type=Path, required=True)
     parser.add_argument("--bootstrap_samples", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--expected_tasks", default="")
+    parser.add_argument("--expected_seeds", default="")
+    parser.add_argument("--expected_configs", default="")
+    parser.add_argument("--require_complete", action="store_true")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -112,7 +124,17 @@ def main() -> None:
     runs: List[Dict[str, Any]] = []
     missing: List[str] = []
     underfilled_runs: List[Dict[str, Any]] = []
-    for seed_dir in sorted(args.root.glob("*/seed_*")):
+    expected_tasks = parse_string_list(args.expected_tasks)
+    expected_seeds = parse_int_list(args.expected_seeds)
+    expected_configs = parse_string_list(args.expected_configs)
+    if bool(expected_tasks) != bool(expected_seeds):
+        raise ValueError("expected_tasks and expected_seeds must be provided together.")
+    seed_dirs = (
+        [args.root / task / f"seed_{seed}" for task in expected_tasks for seed in expected_seeds]
+        if expected_tasks
+        else sorted(args.root.glob("*/seed_*"))
+    )
+    for seed_dir in seed_dirs:
         summary_path = seed_dir / "summary.json"
         rows_path = seed_dir / "example_rows.csv"
         if not summary_path.exists() or not rows_path.exists():
@@ -122,6 +144,14 @@ def main() -> None:
         version = summary.get("runtime", {}).get("evaluator_version")
         if version != EVALUATOR_VERSION:
             raise ValueError(f"Unexpected evaluator {version!r} in {summary_path}")
+        if expected_tasks and str(summary.get("task")) not in expected_tasks:
+            raise ValueError(f"Unexpected task in {summary_path}")
+        if expected_configs:
+            observed_configs = list(summary.get("summaries", {}))
+            if set(observed_configs) != set(expected_configs):
+                raise ValueError(
+                    f"Config mismatch in {summary_path}: {observed_configs!r}"
+                )
         underfilled = underfilled_run_record(summary_path, summary)
         if underfilled is not None:
             underfilled_runs.append(underfilled)
@@ -137,6 +167,11 @@ def main() -> None:
         )
     if not runs:
         raise ValueError("No complete multiple-choice runs were found.")
+    if args.require_complete and (missing or underfilled_runs):
+        raise ValueError(
+            f"Multiple-choice sweep incomplete: missing={missing}, "
+            f"underfilled={underfilled_runs}"
+        )
 
     grouped: List[Dict[str, Any]] = []
     comparisons: List[Dict[str, Any]] = []
@@ -218,6 +253,10 @@ def main() -> None:
         "num_complete_runs": len(runs),
         "missing_runs": missing,
         "underfilled_runs": underfilled_runs,
+        "expected_tasks": expected_tasks,
+        "expected_seeds": expected_seeds,
+        "expected_configs": expected_configs,
+        "complete_run_gate": args.require_complete and not missing and not underfilled_runs,
         "grouped": grouped,
         "comparisons": comparisons,
         "plots": make_plot(grouped, args.out_dir),
