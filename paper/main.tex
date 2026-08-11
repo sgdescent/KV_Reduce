@@ -531,16 +531,17 @@ therefore a useful screening objective in this setting, though acceptance
 remains the final serving metric.
 
 A complementary confusable 16-way associative-passkey control reveals that the
-preferred asymmetry can change again for retrieval. The strict partial aggregate
-contains all three 8K and all three 16K seeds, 48 paired examples per context,
-and no missing or underfilled runs. At 8K, K4V2 exceeds equal-memory K2V4 by
-$10.42$ accuracy points (95\% CI $[0.00,20.83]$). At 16K, the contrast grows to
-$20.83$ points (CI $[8.33,33.33]$): BF16 and K4V2 each retrieve 47/48 passkeys,
-whereas K2V4 retrieves 37/48. K4V2 and K2V4 save 77.06\% and 77.01\% of the
-standalone cache at 16K, respectively. This draft-only result measures retrieval
-quality rather than speculative acceptance, but it provides a resolved example
-where preserving key precision is preferable under essentially matched memory.
-The 32K cells remain in progress and are excluded from this partial aggregate.
+preferred asymmetry can change again for retrieval. The strict aggregate contains
+all nine 8K, 16K, and 32K model-seed runs, 48 paired examples per context, and no
+missing or underfilled runs. K4V2 exceeds equal-memory K2V4 by $10.42$ accuracy
+points at 8K (95\% CI $[0.00,20.83]$), $20.83$ points at 16K (CI
+$[8.33,33.33]$), and $12.50$ points at 32K (CI $[2.08,25.00]$). At 16K, BF16
+and K4V2 each retrieve 47/48 passkeys, whereas K2V4 retrieves 37/48; at 32K the
+three scores are 44/48, 47/48, and 41/48, respectively. Both asymmetric policies
+save approximately 77\% of the standalone cache. This draft-only synthetic result
+measures retrieval quality rather than speculative acceptance, but it provides a
+resolved long-context example where preserving key precision is preferable under
+essentially matched memory.
 
 \subsection{Actual packed storage realizes the estimated savings}
 

@@ -307,14 +307,16 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   **12.3%** of total target-plus-draft KV. This is a promising raw preference
   reversal, not yet a resolved speculative result; powered 1K/4K, three-seed
   SmolLM, Qwen, and OLMo grids are queued as jobs `13506`--`13514`.
-  The confusable 16-way passkey control now has a strict partial aggregate over
-  all three 8K and all three 16K seeds, with 48 paired examples per context and
-  no missing or underfilled runs. At 8K, equal-memory `K4V2 - K2V4` is **+10.42
-  accuracy points**, CI **[0.00, +20.83]**. At 16K it grows to a resolved
-  **+20.83 points**, CI **[+8.33, +33.33]**: BF16 and `K4V2` both score
-  **47/48 (97.9%)**, while `K2V4` scores **37/48 (77.1%)**. The asymmetric
-  policies save about **77%** of standalone KV. This is retrieval-quality
-  evidence, not speculative acceptance; the three 32K cells remain active.
+  The confusable 16-way passkey control is complete: nine strict runs cover
+  three seeds at 8K, 16K, and 32K, with 48 paired examples per context and no
+  missing or underfilled runs. Equal-memory `K4V2 - K2V4` is **+10.42 accuracy
+  points** at 8K, CI **[0.00, +20.83]**; **+20.83 points** at 16K, CI
+  **[+8.33, +33.33]**; and **+12.50 points** at 32K, CI
+  **[+2.08, +25.00]**. At 16K, BF16 and `K4V2` score **47/48**, versus
+  **37/48** for `K2V4`; at 32K the scores are **44/48**, **47/48**, and
+  **41/48**, respectively. Both asymmetric policies save about **77%** of
+  standalone KV. This is synthetic draft-only retrieval-quality evidence, not
+  speculative acceptance.
   To separate model-family effects from budget effects, dependency-gated mild
   replications are also queued for OLMo2 (`13386`--`13390`) and SmolLM2
   (`13391`--`13395`). Each adds 24 strict held-out cells over 1K/4K contexts
