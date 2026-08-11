@@ -171,7 +171,13 @@ so it is not yet an end-to-end speed claim.
   exact-token contrast is **-7.26 points**, CI **[-17.18, +1.23]**. The
   remaining third-seed cells are running. The separate
   three-seed SmolLM2/OLMo2/Llama replication is complete.
-- Cross-family ARC-Challenge/HellaSwag task checks.
+- Powered cross-family ARC-Challenge/HellaSwag task checks. Llama-3.2-3B
+  HellaSwag is complete across three disjoint shards and 576 examples:
+  `K8V4 - K4V8` changes normalized accuracy by **-0.35 points**, CI
+  **[-1.04, +0.35]**, while `K4V4` saves **58.60%** of standalone-cache bytes
+  and changes accuracy by **+0.87 points**, CI **[0.00, +1.74]**. Thus, strict
+  free-running token divergence does not directly imply downstream task loss.
+  Llama ARC-Challenge and the OLMo2/SmolLM2 task shards are running.
 - Exact quality-optimized versus acceptance-optimized allocation matrix at
   matched bytes: two budgets, 1K/4K contexts, three held-out seeds, and 24
   ordinary/speculative cross-evaluation cells. The mild Qwen 4/8-bit matrix is
