@@ -22,6 +22,9 @@ profile_skip="${PROFILE_SKIP:-60000}"
 quality_eval_skip="${QUALITY_EVAL_SKIP:-70000}"
 acceptance_eval_skip="${ACCEPTANCE_EVAL_SKIP:-72000}"
 start_dependency="${START_DEPENDENCY:-}"
+run_tag="${RUN_TAG:-qwen25_exact}"
+profile_wandb_group="${PROFILE_WANDB_GROUP:-exact-objective-profile}"
+matrix_wandb_group="${MATRIX_WANDB_GROUP:-exact-objective-matrix}"
 
 quality_profile="$root/quality_profile"
 acceptance_profile="$root/acceptance_profile"
@@ -34,12 +37,12 @@ if [[ -n "$start_dependency" ]]; then
 fi
 
 quality_job=$(sbatch --parsable --exclude="$exclude" "${dependency_args[@]}" \
-  --export=ALL,MODEL="$small_model",DATASET_NAME="$dataset_name",DATASET_CONFIG="$dataset_config",EVAL_SPLIT=train,STREAM_EVAL=1,PROMPT_LEN=1024,CONTINUATION_LEN=32,NUM_SEQUENCES="$num_profile",SKIP_SEQUENCES="$profile_skip",LAYERS="$layers",BITS="$bits",QUALITY_RISK_METRIC=kl,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=32,KEY_RESIDUAL_LENGTH=128,VALUE_QUANT_SCHEME=affine,OUT_DIR="$quality_profile",ENABLE_WANDB=1,WANDB_PROJECT=kv-reduce,WANDB_GROUP=exact-objective-profile,WANDB_RUN_NAME=qwen25_exact_quality_profile \
+  --export=ALL,MODEL="$small_model",DATASET_NAME="$dataset_name",DATASET_CONFIG="$dataset_config",EVAL_SPLIT=train,STREAM_EVAL=1,PROMPT_LEN=1024,CONTINUATION_LEN=32,NUM_SEQUENCES="$num_profile",SKIP_SEQUENCES="$profile_skip",LAYERS="$layers",BITS="$bits",QUALITY_RISK_METRIC=kl,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=32,KEY_RESIDUAL_LENGTH=128,VALUE_QUANT_SCHEME=affine,OUT_DIR="$quality_profile",ENABLE_WANDB=1,WANDB_PROJECT=kv-reduce,WANDB_GROUP="$profile_wandb_group",WANDB_RUN_NAME="${run_tag}_quality_profile" \
   scripts/profile_kv_quality_sensitivity.slurm)
 
 # Serialize every GPU stage so this campaign consumes at most one cluster GPU.
 acceptance_job=$(sbatch --parsable --exclude="$exclude" --dependency="afterok:$quality_job" \
-  --export=ALL,BIG_MODEL="$big_model",SMALL_MODEL="$small_model",DATASET_NAME="$dataset_name",DATASET_CONFIG="$dataset_config",EVAL_SPLIT=train,STREAM_EVAL=1,PROMPT_LEN=1024,NUM_PROMPTS="$num_profile",WARMUP_PROMPTS=0,SKIP_PROMPTS="$((profile_skip + num_profile + 128))",DRAFT_STEPS=4,MAX_NEW_TOKENS=16,LAYERS="$layers",BITS="$bits",TARGET_VERIFICATION_MODE=sequential,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=32,KEY_RESIDUAL_LENGTH=128,VALUE_QUANT_SCHEME=affine,OUT_DIR="$acceptance_profile",ENABLE_WANDB=1,WANDB_PROJECT=kv-reduce,WANDB_GROUP=exact-objective-profile,WANDB_RUN_NAME=qwen25_exact_acceptance_profile \
+  --export=ALL,BIG_MODEL="$big_model",SMALL_MODEL="$small_model",DATASET_NAME="$dataset_name",DATASET_CONFIG="$dataset_config",EVAL_SPLIT=train,STREAM_EVAL=1,PROMPT_LEN=1024,NUM_PROMPTS="$num_profile",WARMUP_PROMPTS=0,SKIP_PROMPTS="$((profile_skip + num_profile + 128))",DRAFT_STEPS=4,MAX_NEW_TOKENS=16,LAYERS="$layers",BITS="$bits",TARGET_VERIFICATION_MODE=sequential,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=32,KEY_RESIDUAL_LENGTH=128,VALUE_QUANT_SCHEME=affine,OUT_DIR="$acceptance_profile",ENABLE_WANDB=1,WANDB_PROJECT=kv-reduce,WANDB_GROUP="$profile_wandb_group",WANDB_RUN_NAME="${run_tag}_acceptance_profile" \
   scripts/profile_spec_kv_sensitivity.slurm)
 
 prepare_job=$(sbatch --parsable --exclude="$exclude" --dependency="afterok:$acceptance_job" \
@@ -54,7 +57,7 @@ num_tasks=$((2 * $(count_items "$budgets") * $(count_items "$contexts") * $(coun
 
 matrix_job=$(sbatch --parsable --exclude="$exclude" --dependency="afterok:$prepare_job" \
   --array="0-$((num_tasks - 1))%1" \
-  --export=ALL,MANIFEST="$matrix_root/manifest.tsv",BIG_MODEL="$big_model",SMALL_MODEL="$small_model",DATASET_NAME="$dataset_name",DATASET_CONFIG="$dataset_config",EVAL_SPLIT=train,STREAM_EVAL=1,CONTINUATION_LEN=32,DRAFT_STEPS=4,MAX_NEW_TOKENS=16,TARGET_VERIFICATION_MODE=sequential,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=32,KEY_RESIDUAL_LENGTH=128,VALUE_QUANT_SCHEME=affine,ENABLE_WANDB=1,WANDB_PROJECT=kv-reduce,WANDB_GROUP=exact-objective-matrix \
+  --export=ALL,MANIFEST="$matrix_root/manifest.tsv",BIG_MODEL="$big_model",SMALL_MODEL="$small_model",DATASET_NAME="$dataset_name",DATASET_CONFIG="$dataset_config",EVAL_SPLIT=train,STREAM_EVAL=1,CONTINUATION_LEN=32,DRAFT_STEPS=4,MAX_NEW_TOKENS=16,TARGET_VERIFICATION_MODE=sequential,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=32,KEY_RESIDUAL_LENGTH=128,VALUE_QUANT_SCHEME=affine,ENABLE_WANDB=1,WANDB_PROJECT=kv-reduce,WANDB_GROUP="$matrix_wandb_group" \
   scripts/eval_objective_kv_matrix.slurm)
 
 aggregate_job=$(sbatch --parsable --exclude="$exclude" --dependency="afterok:$matrix_job" \

@@ -82,10 +82,11 @@ def heuristic_component_bits(budget: int, *, prioritize: str) -> tuple[int, int]
     if prioritize not in {"k", "v"}:
         raise ValueError("prioritize must be 'k' or 'v'.")
     supported = {
-        # At the minimum supported budget there is no asymmetric split, but the
-        # uniform 4-bit endpoint is still needed to complete the memory/quality
-        # Pareto curve for all-layer experiments.
+        3: (4, 2),
+        # Keep the uniform 4-bit endpoint to complete the memory/quality Pareto
+        # curve even though K- and V-priority coincide at this exact budget.
         4: (4, 4),
+        5: (8, 2),
         6: (8, 4),
         8: (8, 8),
         10: (16, 4),

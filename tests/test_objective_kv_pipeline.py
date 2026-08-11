@@ -59,8 +59,12 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
         self.assertEqual(last_token_logits_kwargs(UnsupportedModel()), {})
 
     def test_matched_memory_heuristics_prioritize_k_or_v(self) -> None:
+        self.assertEqual(heuristic_component_bits(3, prioritize="k"), (4, 2))
+        self.assertEqual(heuristic_component_bits(3, prioritize="v"), (2, 4))
         self.assertEqual(heuristic_component_bits(4, prioritize="k"), (4, 4))
         self.assertEqual(heuristic_component_bits(4, prioritize="v"), (4, 4))
+        self.assertEqual(heuristic_component_bits(5, prioritize="k"), (8, 2))
+        self.assertEqual(heuristic_component_bits(5, prioritize="v"), (2, 8))
         self.assertEqual(heuristic_component_bits(6, prioritize="k"), (8, 4))
         self.assertEqual(heuristic_component_bits(6, prioritize="v"), (4, 8))
         self.assertEqual(heuristic_component_bits(10, prioritize="k"), (16, 4))
