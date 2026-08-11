@@ -100,13 +100,18 @@ contrast is +0.98 points with CI [-0.28, +2.26]. This is evidence that the
 acceptance objective can produce safe policies, but it is not yet evidence that
 objective-specific allocation outperforms a strong quality allocator.
 
-The strict sequential-target verifier has passed both initial cross-family
-diagnostics. Every SmolLM2 and OLMo2 trajectory exactly matches an independent
-BF16 target-greedy reference. On the 32-prompt OLMo2-7B/1B diagnostic, native
-acceptance is 54.62%; K8V4 is 53.50%, K4V8 is 52.47%, and K4V4 is 52.47% while
-saving 66.33% of draft KV and 13.27% of combined target-plus-draft KV. The
-K8V4-minus-K4V8 contrast is +1.02 points with CI [-1.13, +3.31]. This is only a
-single-seed diagnostic; the three-seed cross-family campaign is now running.
+The strict sequential-target campaign is complete for the three one-GPU model
+pairs: Qwen2.5-3B/1.5B, OLMo2-7B/1B, and SmolLM2-1.7B/360M. Across nine runs,
+288 prompts, and 1,152 quantization trajectories, every result exactly matches
+an independent BF16 target-greedy reference. Equal-budget K8V4 and K4V8 are
+statistically indistinguishable in all three pairs: their acceptance contrasts
+are +0.16 points for Qwen (CI: -1.60 to +1.90), -0.19 for OLMo (CI: -1.36 to
++1.02), and +0.49 for SmolLM (CI: -0.55 to +1.63). K4V4 saves 65.55--66.33% of
+the draft cache. Its acceptance change is -0.76 points for Qwen (CI: -2.24 to
++0.67), -0.86 for OLMo (CI: -1.98 to +0.15), and -1.85 for SmolLM (CI: -3.20
+to -0.53). Combined target-plus-draft KV savings are 29.02%, 13.27%, and 11.30%
+respectively because the draft cache occupies a different fraction of each
+model pair's total cache. The three larger two-GPU model pairs are now running.
 
 The strict all-layer objective-specific allocation run is complete and should be
 treated as a negative result. Across 144 single-layer K/V perturbations, the
