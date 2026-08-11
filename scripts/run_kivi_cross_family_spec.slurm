@@ -52,6 +52,7 @@ python3 -u benchmark_spec_kv_quantization.py \
   --num_prompts "${NUM_PROMPTS:-32}" \
   --warmup_prompts 2 \
   --draft_steps 4 \
+  --target_verification_mode "${TARGET_VERIFICATION_MODE:-batched}" \
   --max_new_tokens 16 \
   --seed "$seed" \
   --shuffle_eval \

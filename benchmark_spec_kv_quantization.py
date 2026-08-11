@@ -28,6 +28,8 @@ import transformers
 
 
 _WANDB_FINISH_HANDLERS: Dict[int, Any] = {}
+BATCHED_TARGET_VERIFICATION = "batched"
+SEQUENTIAL_TARGET_VERIFICATION = "sequential"
 
 from kv_cache_quantization import (
     AFFINE_QUANT,
@@ -496,7 +498,13 @@ def greedy_speculative_decode_cached_quantized(
     key_group_size: int = 32,
     key_residual_length: int = 128,
     value_quant_scheme: str = SYMMETRIC_QUANT,
+    target_verification_mode: str = BATCHED_TARGET_VERIFICATION,
 ) -> Dict[str, Any]:
+    if target_verification_mode not in {
+        BATCHED_TARGET_VERIFICATION,
+        SEQUENTIAL_TARGET_VERIFICATION,
+    }:
+        raise ValueError(f"Unsupported target verification mode: {target_verification_mode!r}")
     if target_k_bits is None or target_v_bits is None:
         target_k_bits, target_v_bits = uniform_bit_lists(
             int(big_model.config.num_hidden_layers), 16, 16
@@ -585,29 +593,69 @@ def greedy_speculative_decode_cached_quantized(
             draft_cache_len = int(next_step["cache_len"])
 
         proposed_tokens += len(proposal)
-        verify_ids = torch.tensor([proposal], dtype=prompt_ids.dtype)
-        verify = cached_step(
-            model=big_model,
-            input_ids=verify_ids,
-            cache=target_cache,
-            cache_len=target_cache_len,
-            device=big_device,
-        )
-        target_calls += 1
-        target_verify_calls += 1
-        verify_logits = shared_token_logits(verify["logits"], shared_vocab_size)
-        target_cache = verify["cache"]
-        target_cache_len = int(verify["cache_len"])
-
         accepted_this_round = 0
         proposal_target_margins: List[float] = []
-        for idx, token in enumerate(proposal):
-            token_logits = target_logits if idx == 0 else verify_logits[:, idx - 1, :]
-            proposal_target_margins.append(top1_logit_margin(token_logits))
-            target_token = int(token_logits.argmax(dim=-1).item())
-            if target_token != token:
-                break
-            accepted_this_round += 1
+        if target_verification_mode == BATCHED_TARGET_VERIFICATION:
+            verify_ids = torch.tensor([proposal], dtype=prompt_ids.dtype)
+            verify = cached_step(
+                model=big_model,
+                input_ids=verify_ids,
+                cache=target_cache,
+                cache_len=target_cache_len,
+                device=big_device,
+            )
+            target_calls += 1
+            target_verify_calls += 1
+            verify_logits = shared_token_logits(verify["logits"], shared_vocab_size)
+            target_cache = verify["cache"]
+            target_cache_len = int(verify["cache_len"])
+
+            for idx, token in enumerate(proposal):
+                token_logits = target_logits if idx == 0 else verify_logits[:, idx - 1, :]
+                proposal_target_margins.append(top1_logit_margin(token_logits))
+                target_token = int(token_logits.argmax(dim=-1).item())
+                if target_token != token:
+                    break
+                accepted_this_round += 1
+            correction_logits = (
+                target_logits
+                if accepted_this_round == 0
+                else verify_logits[:, accepted_this_round - 1, :]
+            )
+        else:
+            for token in proposal:
+                proposal_target_margins.append(top1_logit_margin(target_logits))
+                target_token = int(target_logits.argmax(dim=-1).item())
+                if target_token != token:
+                    break
+                previous_len = target_cache_len
+                verify = cached_step(
+                    model=big_model,
+                    input_ids=torch.tensor([[token]], dtype=prompt_ids.dtype),
+                    cache=target_cache,
+                    cache_len=target_cache_len,
+                    device=big_device,
+                )
+                target_calls += 1
+                target_verify_calls += 1
+                target_logits = shared_token_logits(
+                    verify["logits"][:, -1, :], shared_vocab_size
+                )
+                target_cache = quantize_cache_for_next_step(
+                    verify["cache"],
+                    target_k_bits,
+                    target_v_bits,
+                    new_tokens=1,
+                    key_quant_axis=key_quant_axis,
+                    key_group_size=key_group_size,
+                    key_residual_length=key_residual_length,
+                    value_quant_scheme=value_quant_scheme,
+                    key_previous_quantization_seq_len=previous_len,
+                    key_quantization_seq_len=previous_len + 1,
+                )
+                target_cache_len = int(verify["cache_len"])
+                accepted_this_round += 1
+            correction_logits = target_logits
 
         accepted_tokens += accepted_this_round
         if accepted_this_round == len(proposal):
@@ -620,7 +668,6 @@ def greedy_speculative_decode_cached_quantized(
         if len(generated) >= max_new_tokens:
             break
 
-        correction_logits = target_logits if accepted_this_round == 0 else verify_logits[:, accepted_this_round - 1, :]
         correction_token = int(correction_logits.argmax(dim=-1).item())
         generated.append(correction_token)
         generation_sources.append(
@@ -629,23 +676,27 @@ def greedy_speculative_decode_cached_quantized(
         target_top1_margins.append(top1_logit_margin(correction_logits))
 
         committed_len = round_prefix_len + accepted_this_round
-        target_cache = crop_cache_to_length(target_cache, committed_len)
         draft_cache = crop_cache_to_length(draft_cache, committed_len)
-        target_cache_len = committed_len
         draft_cache_len = committed_len
-
-        if accepted_this_round > 0:
-            target_cache = quantize_cache_for_next_step(
-                target_cache,
-                target_k_bits,
-                target_v_bits,
-                new_tokens=accepted_this_round,
-                key_quant_axis=key_quant_axis,
-                key_group_size=key_group_size,
-                key_residual_length=key_residual_length,
-                value_quant_scheme=value_quant_scheme,
-                key_previous_quantization_seq_len=round_prefix_len,
-                key_quantization_seq_len=committed_len,
+        if target_verification_mode == BATCHED_TARGET_VERIFICATION:
+            target_cache = crop_cache_to_length(target_cache, committed_len)
+            target_cache_len = committed_len
+            if accepted_this_round > 0:
+                target_cache = quantize_cache_for_next_step(
+                    target_cache,
+                    target_k_bits,
+                    target_v_bits,
+                    new_tokens=accepted_this_round,
+                    key_quant_axis=key_quant_axis,
+                    key_group_size=key_group_size,
+                    key_residual_length=key_residual_length,
+                    value_quant_scheme=value_quant_scheme,
+                    key_previous_quantization_seq_len=round_prefix_len,
+                    key_quantization_seq_len=committed_len,
+                )
+        elif target_cache_len != committed_len:
+            raise RuntimeError(
+                f"Sequential target cache has length {target_cache_len}, expected {committed_len}."
             )
 
         target_commit = cached_step(
@@ -704,6 +755,7 @@ def greedy_speculative_decode_cached_quantized(
         "full_accept_round_fraction": float(full_accept_rounds / num_rounds) if num_rounds > 0 else 0.0,
         "target_calls": int(target_calls),
         "target_verify_calls": int(target_verify_calls),
+        "target_verification_mode": target_verification_mode,
         "draft_decode_calls": int(draft_decode_calls),
         "draft_prefill_calls": int(draft_prefill_calls),
         "draft_prefill_tokens": int(draft_prefill_tokens),
@@ -881,6 +933,7 @@ def run_one_config(
     value_quant_scheme: str = SYMMETRIC_QUANT,
     target_token_references: Optional[Sequence[Sequence[int]]] = None,
     target_margin_references: Optional[Sequence[Sequence[float]]] = None,
+    target_verification_mode: str = BATCHED_TARGET_VERIFICATION,
 ) -> Dict[str, Any]:
     if target_token_references is None:
         reference_records = generate_target_reference_records(
@@ -927,6 +980,7 @@ def run_one_config(
             key_group_size=key_group_size,
             key_residual_length=key_residual_length,
             value_quant_scheme=value_quant_scheme,
+            target_verification_mode=target_verification_mode,
         )
         sync_cuda(cuda_device_ids)
         elapsed_s = time.perf_counter() - prompt_start
@@ -1083,6 +1137,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip this many token blocks before selecting warmup and benchmark prompts.",
     )
     parser.add_argument("--draft_steps", type=int, default=4)
+    parser.add_argument(
+        "--target_verification_mode",
+        choices=[BATCHED_TARGET_VERIFICATION, SEQUENTIAL_TARGET_VERIFICATION],
+        default=BATCHED_TARGET_VERIFICATION,
+        help=(
+            "Verify proposals in one target block or token-by-token. Sequential mode "
+            "uses the authoritative target cache and avoids BF16 batch-shape drift."
+        ),
+    )
     parser.add_argument("--max_new_tokens", type=int, default=16)
     parser.add_argument("--topk", type=int, default=5)
     parser.add_argument(
@@ -1251,6 +1314,7 @@ def main() -> None:
                 value_quant_scheme=args.value_quant_scheme,
                 target_token_references=warmup_target_references,
                 target_margin_references=warmup_target_margins,
+                target_verification_mode=args.target_verification_mode,
             )
 
     all_rows: List[Dict[str, Any]] = []
@@ -1293,6 +1357,7 @@ def main() -> None:
             value_quant_scheme=args.value_quant_scheme,
             target_token_references=benchmark_target_references,
             target_margin_references=benchmark_target_margins,
+            target_verification_mode=args.target_verification_mode,
         )
         memory = estimate_total_kv_memory(
             big_model=big_model,
@@ -1342,13 +1407,22 @@ def main() -> None:
         "config": vars(args),
         "runtime": {
             "evaluator_version": (
-                "cached_dynamic_v4"
-                if len(target_quant_configs) == 1 and target_quant_configs[0][0] == "none"
-                else "cached_dynamic_v5_joint_target_draft"
+                "cached_dynamic_v6_sequential_target"
+                if args.target_verification_mode == SEQUENTIAL_TARGET_VERIFICATION
+                else (
+                    "cached_dynamic_v4"
+                    if len(target_quant_configs) == 1 and target_quant_configs[0][0] == "none"
+                    else "cached_dynamic_v5_joint_target_draft"
+                )
             ),
             "target_cache_reused": True,
             "draft_cache_reused": True,
-            "cache_crop_mode": "in_place",
+            "cache_crop_mode": (
+                "draft_only_in_place"
+                if args.target_verification_mode == SEQUENTIAL_TARGET_VERIFICATION
+                else "in_place"
+            ),
+            "target_verification_mode": args.target_verification_mode,
             "grouped_key_promotion": "committed_tokens_only",
             "key_quant_axis": args.key_quant_axis,
             "key_group_size": args.key_group_size,
@@ -1356,7 +1430,11 @@ def main() -> None:
             "value_quant_scheme": args.value_quant_scheme,
             "quantization_update_mode": "prefill_once_then_new_tokens_only",
             "target_reference_generation_in_timing": False,
-            "exactness_margin_mode": "minimum_of_tokenwise_reference_and_batched_verifier",
+            "exactness_margin_mode": (
+                "tokenwise_reference_and_sequential_verifier"
+                if args.target_verification_mode == SEQUENTIAL_TARGET_VERIFICATION
+                else "minimum_of_tokenwise_reference_and_batched_verifier"
+            ),
             "quantization_mode": "fake_quantized_values_with_estimated_packed_bytes",
             "torch_version": torch.__version__,
             "transformers_version": transformers.__version__,
