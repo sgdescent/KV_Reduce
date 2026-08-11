@@ -861,6 +861,11 @@ def main() -> None:
             )
         baseline_key = primary_metric.replace("accuracy", "correct")
         bar.set_postfix(bf16=f"{mean(r[baseline_key] for r in rows if r['config'] == 'none'):.3f}")
+        # Release the previous 32K prefix before allocating the next prefill.
+        del prepared_cache
+        del prefill
+        if str(args.device).startswith("cuda"):
+            torch.cuda.empty_cache()
 
     memory_seq_len = int(round(mean(evaluation_lengths)))
     peak_memory_seq_len = max(evaluation_lengths)
@@ -947,6 +952,8 @@ def main() -> None:
         "runtime": {
             "evaluator_version": EVALUATOR_VERSION,
             "cache_reused": True,
+            "choice_cache_mode": "append_then_crop_to_prefix",
+            "example_cache_release": "explicit_del_then_empty_cache",
             "quantization_update_mode": "prefill_once_then_new_tokens_only",
             "quantization_mode": "fake_quantized_values_with_estimated_packed_bytes",
             "objective": "multiple_choice_task_accuracy",
