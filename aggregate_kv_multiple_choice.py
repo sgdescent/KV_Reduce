@@ -116,6 +116,7 @@ def main() -> None:
     parser.add_argument("--expected_tasks", default="")
     parser.add_argument("--expected_seeds", default="")
     parser.add_argument("--expected_configs", default="")
+    parser.add_argument("--expected_dataset_revision", default="")
     parser.add_argument("--require_complete", action="store_true")
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -146,6 +147,12 @@ def main() -> None:
             raise ValueError(f"Unexpected evaluator {version!r} in {summary_path}")
         if expected_tasks and str(summary.get("task")) not in expected_tasks:
             raise ValueError(f"Unexpected task in {summary_path}")
+        if (
+            args.expected_dataset_revision
+            and str(summary.get("runtime", {}).get("dataset_revision", ""))
+            != args.expected_dataset_revision
+        ):
+            raise ValueError(f"Dataset-revision mismatch in {summary_path}")
         if expected_configs:
             observed_configs = list(summary.get("summaries", {}))
             if set(observed_configs) != set(expected_configs):
@@ -175,6 +182,8 @@ def main() -> None:
 
     grouped: List[Dict[str, Any]] = []
     comparisons: List[Dict[str, Any]] = []
+    depth_grouped: List[Dict[str, Any]] = []
+    depth_comparisons: List[Dict[str, Any]] = []
     for task in sorted({str(run["task"]) for run in runs}):
         task_runs = [run for run in runs if run["task"] == task]
         primary = str(task_runs[0]["primary_metric"])
@@ -246,8 +255,85 @@ def main() -> None:
                 }
             )
 
+        if task == "longbench_passage_retrieval":
+            for depth_label, lower, upper in (
+                ("early", 0.0, 1.0 / 3.0),
+                ("middle", 1.0 / 3.0, 2.0 / 3.0),
+                ("late", 2.0 / 3.0, 1.0),
+            ):
+                depth_rows = [
+                    row
+                    for row in task_rows
+                    if (
+                        lower <= float(row["answer_depth"]) < upper
+                        or (
+                            depth_label == "late"
+                            and float(row["answer_depth"]) == upper
+                        )
+                    )
+                ]
+                for config in configs:
+                    config_rows = [row for row in depth_rows if row["config"] == config]
+                    accuracy = bootstrap_mean_ci(
+                        [float(row[metric]) for row in config_rows],
+                        seed=args.seed + 3000 + len(depth_grouped),
+                        samples=args.bootstrap_samples,
+                    )
+                    delta = bootstrap_mean_ci(
+                        paired_metric_differences(
+                            depth_rows,
+                            config=config,
+                            baseline="none",
+                            metric=metric,
+                        ),
+                        seed=args.seed + 4000 + len(depth_grouped),
+                        samples=args.bootstrap_samples,
+                    )
+                    depth_grouped.append(
+                        {
+                            "task": task,
+                            "depth": depth_label,
+                            "config": config,
+                            "num_examples": len(config_rows),
+                            "primary_accuracy_mean": accuracy["mean"],
+                            "primary_accuracy_ci_low": accuracy["ci_low"],
+                            "primary_accuracy_ci_high": accuracy["ci_high"],
+                            "paired_delta_vs_bf16_mean": delta["mean"],
+                            "paired_delta_vs_bf16_ci_low": delta["ci_low"],
+                            "paired_delta_vs_bf16_ci_high": delta["ci_high"],
+                        }
+                    )
+                for left, right in (("k8v4", "k4v8"), ("k4v2", "k2v4")):
+                    if left not in configs or right not in configs:
+                        continue
+                    contrast_values = paired_metric_differences(
+                        depth_rows,
+                        config=left,
+                        baseline=right,
+                        metric=metric,
+                    )
+                    contrast = bootstrap_mean_ci(
+                        contrast_values,
+                        seed=args.seed + 5000 + len(depth_comparisons),
+                        samples=args.bootstrap_samples,
+                    )
+                    depth_comparisons.append(
+                        {
+                            "task": task,
+                            "depth": depth_label,
+                            "config_a": left,
+                            "config_b": right,
+                            "paired_count": len(contrast_values),
+                            "accuracy_a_minus_b_mean": contrast["mean"],
+                            "accuracy_a_minus_b_ci_low": contrast["ci_low"],
+                            "accuracy_a_minus_b_ci_high": contrast["ci_high"],
+                        }
+                    )
+
     write_csv(args.out_dir / "grouped_results.csv", grouped)
     write_csv(args.out_dir / "paired_comparisons.csv", comparisons)
+    write_csv(args.out_dir / "depth_grouped_results.csv", depth_grouped)
+    write_csv(args.out_dir / "depth_paired_comparisons.csv", depth_comparisons)
     payload = {
         "evaluator_version": EVALUATOR_VERSION,
         "num_complete_runs": len(runs),
@@ -256,9 +342,12 @@ def main() -> None:
         "expected_tasks": expected_tasks,
         "expected_seeds": expected_seeds,
         "expected_configs": expected_configs,
+        "expected_dataset_revision": args.expected_dataset_revision,
         "complete_run_gate": args.require_complete and not missing and not underfilled_runs,
         "grouped": grouped,
         "comparisons": comparisons,
+        "depth_grouped": depth_grouped,
+        "depth_comparisons": depth_comparisons,
         "plots": make_plot(grouped, args.out_dir),
     }
     (args.out_dir / "summary.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

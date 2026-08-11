@@ -24,4 +24,5 @@ python3 -u aggregate_kv_multiple_choice.py \
   --expected_tasks longbench_passage_retrieval \
   --expected_seeds 0,1,2 \
   --expected_configs "${EXPECTED_CONFIGS:-none,k8v4,k4v8,k4v4,k4v2,k2v4,k2v2}" \
+  --expected_dataset_revision 5e628be450b7e67fb7ae6e201bd6d8f7056f7672 \
   --require_complete

@@ -54,6 +54,7 @@ PASSKEY_GENERATOR_V3 = "synthetic_associative_passkey_v3"
 PASSKEY_VARIANT_RANDOM = "random"
 PASSKEY_VARIANT_CONFUSABLE = "confusable_records"
 LONGBENCH_REPO = "THUDM/LongBench"
+LONGBENCH_REVISION = "5e628be450b7e67fb7ae6e201bd6d8f7056f7672"
 LONGBENCH_ARCHIVE = "data.zip"
 LONGBENCH_RETRIEVAL_FILE = "data/passage_retrieval_en.jsonl"
 LONGBENCH_RETRIEVAL_PROMPT = """Here are 30 paragraphs from Wikipedia, along with an abstract. Please determine which paragraph the abstract is from.
@@ -272,6 +273,7 @@ def load_examples(
             repo_id=LONGBENCH_REPO,
             filename=LONGBENCH_ARCHIVE,
             repo_type="dataset",
+            revision=LONGBENCH_REVISION,
         )
         with zipfile.ZipFile(archive_path) as archive:
             with archive.open(LONGBENCH_RETRIEVAL_FILE) as handle:
@@ -952,6 +954,15 @@ def main() -> None:
                     )
                 )
                 if args.task == "passkey"
+                else None
+            ),
+            "dataset_repo": LONGBENCH_REPO if args.task == "longbench_passage_retrieval" else None,
+            "dataset_revision": (
+                LONGBENCH_REVISION if args.task == "longbench_passage_retrieval" else None
+            ),
+            "dataset_file": (
+                LONGBENCH_RETRIEVAL_FILE
+                if args.task == "longbench_passage_retrieval"
                 else None
             ),
         },
