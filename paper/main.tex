@@ -398,21 +398,22 @@ per-channel keys (CI $[0.00391,0.00494]$). Thus, the key axis alone can reverse
 both the speculative and ordinary-quality preference while value geometry,
 model, prompts, and nominal bit budget remain fixed.
 
-The effect generalizes beyond Qwen. Figure~\ref{fig:geometry-asymmetry} pairs the
-same six model families under the two quantizer geometries at 1K. The naive
-K8V4--K4V8 contrast averages $+10.87$ acceptance points (95\% model-pair
-bootstrap CI $[+3.75,+19.68]$), while the KIVI contrast averages $-0.25$ points
-(CI $[-0.56,+0.04]$). Their paired difference is $-11.12$ points
-(CI $[-19.71,-4.25]$). K8V4 wins five of six families under the naive geometry
-but only two of six under KIVI, demonstrating that the apparent role asymmetry
-cannot be interpreted independently of quantization axis and grouping.
+An exploratory six-pair audit suggests that this geometry effect may generalize
+beyond Qwen, but it is not yet part of our confirmatory evidence.
+Figure~\ref{fig:geometry-asymmetry} shows the raw macro estimates: the naive
+K8V4--K4V8 contrast is $+10.87$ acceptance points, while the KIVI contrast is
+$-0.25$ points. A subsequent exactness audit found non-tie verifier mismatches
+in five of the six KIVI model pairs, so we do not use their confidence intervals
+or macro difference to support the main claim. Backend and sequential-shadow
+verifier matrices are running for each affected family; the controlled Qwen
+factorial above remains the confirmatory geometry result.
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{campaign_artifacts/quantizer_geometry_asymmetry.pdf}
-  \caption{Equal-memory K8V4 minus K4V8 acceptance under matched model pairs.
-  Grouped per-channel affine key quantization removes the large asymmetry created
-  by naive per-token symmetric quantization.}
+  \caption{Exploratory equal-memory K8V4 minus K4V8 acceptance across model
+  pairs. Five KIVI cells have unresolved non-tie verifier mismatches and are
+  shown only as a diagnostic pending exact reruns.}
   \label{fig:geometry-asymmetry}
 \end{figure}
 

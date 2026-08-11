@@ -196,16 +196,12 @@ draft cache and 18.36% of total KV memory, with a +0.41 point acceptance change
 small positive acceptance deltas as preservation, not as evidence that
 quantization improves the model.
 
-The clearest result so far is that quantizer geometry changes the apparent K/V
-sensitivity. We paired the same six model families at 1K context. With naive
-per-token symmetric quantization, K8V4 beats equal-memory K4V8 by 10.87
-acceptance points on average (95% model-pair bootstrap CI: 3.75 to 19.68) and
-wins five of six pairs. With KIVI-style grouped per-channel affine keys, the
-same contrast is -0.25 points (CI: -0.56 to +0.04) and K8V4 wins only two of
-six. The paired geometry shift is -11.12 points (CI: -19.71 to -4.25). Thus,
-the earlier conclusion that keys inherently require more precision was largely
-an artifact of applying a poor quantization axis to persistent key-channel
-outliers.
+The clearest confirmatory result so far is that quantizer geometry changes the
+apparent K/V sensitivity in the controlled Qwen factorial below. An exploratory
+six-pair macro showed the same direction, but a subsequent audit found non-tie
+target-verifier mismatches in five of the six KIVI model pairs. We therefore do
+not treat the six-pair confidence intervals as paper-ready. Backend and
+sequential-shadow verifier matrices are queued for every affected family.
 
 The controlled three-seed factorial result is even sharper. Holding affine value
 quantization, model, prompts, and nominal bit budget fixed, per-token keys make
@@ -217,6 +213,22 @@ to -3.66 points (CI: -5.80 to -1.56). Ordinary-quality KL independently flips
 in the same direction: the K8V4-minus-K4V8 KL contrast changes from -2.023 to
 +0.00440. This establishes a controlled geometry-induced preference reversal,
 not merely a cross-family correlation.
+
+Ordinary free-running generation now provides an independent, verifier-free
+check. Across 96 paired Qwen2.5-1.5B prompts with 1K-token prefixes and 64-token
+continuations, K4V8 retains 57.49% of BF16 tokens versus 46.60% for K8V4. The
+paired K8V4-minus-K4V8 difference is -10.89 points (95% CI: -18.65 to -3.12),
+and exact-sequence match differs by -16.67 points (CI: -26.04 to -8.33).
+Llama-3.2-3B shows the same direction over 96 prompts: token agreement differs
+by -7.18 points (CI: -14.70 to +0.29). At more aggressive precision, Llama
+K4V2-minus-K2V4 token agreement is -5.62 points (CI: -9.73 to -1.61).
+
+The value-preserving preference also persists at long context for Qwen
+speculative decoding. At 16K, K8V4-minus-K4V8 acceptance is -2.40 points
+(95% CI: -4.41 to -0.65); at 32K it is -3.92 points (CI: -8.57 to 0.00).
+Teacher-forced KL independently favors K4V8 at both lengths. These results use
+the KIVI-style per-channel key geometry and support a geometry-conditional,
+rather than universal, K/V precision claim.
 
 Within the KIVI geometry, reducing value precision from four to three bits
 (K4V3) is more harmful on average than reducing key precision (K3V4): K4V3
