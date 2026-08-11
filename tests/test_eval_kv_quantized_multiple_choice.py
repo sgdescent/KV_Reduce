@@ -3,6 +3,8 @@ import unittest
 import torch
 
 from eval_kv_quantized_multiple_choice import (
+    PASSKEY_VARIANT_CONFUSABLE,
+    assemble_confusable_passkey_prompt_ids,
     assemble_passkey_prompt_ids,
     build_fewshot_prefix,
     choose_answer,
@@ -71,6 +73,30 @@ class MultipleChoiceFormattingTest(unittest.TestCase):
             self.assertEqual(len(set(row["choices"])), 16)
             self.assertEqual(row["choices"][row["gold"]], row["passkey"])
 
+    def test_generates_confusable_associative_passkeys(self):
+        examples = generate_passkey_examples(
+            num_examples=3,
+            skip_examples=0,
+            dataset_seed=17,
+            num_choices=16,
+            variant=PASSKEY_VARIANT_CONFUSABLE,
+        )
+        for _source_idx, row in examples:
+            self.assertEqual(row["variant"], PASSKEY_VARIANT_CONFUSABLE)
+            self.assertEqual(len(row["choices"]), 16)
+            self.assertEqual(len(row["distractor_records"]), 15)
+            self.assertEqual(row["choices"][row["gold"]], row["passkey"])
+            self.assertEqual(
+                len({record["tag"] for record in row["distractor_records"]} | {row["target_tag"]}),
+                16,
+            )
+            for choice in row["choices"]:
+                if choice != row["passkey"]:
+                    self.assertEqual(
+                        sum(left != right for left, right in zip(choice, row["passkey"])),
+                        1,
+                    )
+
     def test_rejects_degenerate_passkey_choices(self):
         with self.assertRaises(ValueError):
             generate_passkey_examples(
@@ -93,6 +119,20 @@ class MultipleChoiceFormattingTest(unittest.TestCase):
         self.assertEqual(prompt[0, -1].item(), 8)
         key_positions = (prompt[0] == 9).nonzero(as_tuple=False).flatten().tolist()
         self.assertEqual(key_positions, [5, 6])
+
+    def test_assembles_exact_length_confusable_passkey_prompt(self):
+        prompt = assemble_confusable_passkey_prompt_ids(
+            prefix_ids=torch.tensor([1, 1]),
+            filler_ids=torch.tensor([2, 3]),
+            target_record_ids=torch.tensor([9, 9]),
+            distractor_record_ids=[torch.tensor([4]), torch.tensor([5])],
+            query_ids=torch.tensor([8]),
+            target_tokens=15,
+            depth=0.5,
+        )
+        self.assertEqual(tuple(prompt.shape), (1, 15))
+        self.assertEqual(prompt[0, -1].item(), 8)
+        self.assertEqual((prompt[0] == 9).sum().item(), 2)
 
     def test_formats_passkey_choices(self):
         prompt, choices, gold = format_task_example(

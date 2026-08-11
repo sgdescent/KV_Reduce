@@ -26,4 +26,5 @@ python3 -u aggregate_kv_passkey.py \
   --expected_examples_per_run "${PASSKEY_EXAMPLES:-16}" \
   --expected_num_choices "${PASSKEY_NUM_CHOICES:-16}" \
   --expected_generator_version "${PASSKEY_GENERATOR_VERSION:-synthetic_passkey_16way_v2}" \
+  --expected_passkey_variant "${PASSKEY_VARIANT:-random}" \
   --require_complete

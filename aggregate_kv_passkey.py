@@ -120,6 +120,7 @@ def main() -> None:
     parser.add_argument("--expected_examples_per_run", type=int, default=0)
     parser.add_argument("--expected_num_choices", type=int, default=4)
     parser.add_argument("--expected_generator_version", default=GENERATOR_VERSION)
+    parser.add_argument("--expected_passkey_variant", default="")
     parser.add_argument("--require_complete", action="store_true")
     parser.add_argument("--bootstrap_samples", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=2026)
@@ -152,6 +153,12 @@ def main() -> None:
                 raise ValueError(f"Context mismatch in {summary_path}")
             if int(summary["config"].get("passkey_num_choices", 4)) != args.expected_num_choices:
                 raise ValueError(f"Choice-count mismatch in {summary_path}")
+            if (
+                args.expected_passkey_variant
+                and str(summary["config"].get("passkey_variant", ""))
+                != args.expected_passkey_variant
+            ):
+                raise ValueError(f"Passkey-variant mismatch in {summary_path}")
             if (
                 args.expected_examples_per_run > 0
                 and int(summary.get("num_examples", -1))
@@ -282,6 +289,7 @@ def main() -> None:
         "expected_seeds": expected_seeds,
         "expected_examples_per_run": args.expected_examples_per_run,
         "expected_num_choices": args.expected_num_choices,
+        "expected_passkey_variant": args.expected_passkey_variant,
         "missing_runs": missing,
         "underfilled_runs": underfilled,
         "complete_run_gate": args.require_complete and not missing and not underfilled,

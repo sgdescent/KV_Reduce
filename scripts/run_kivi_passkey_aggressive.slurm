@@ -44,6 +44,7 @@ python3 -u eval_kv_quantized_multiple_choice.py \
   --max_prompt_tokens "$context" \
   --max_choice_tokens 16 \
   --passkey_num_choices "${PASSKEY_NUM_CHOICES:-16}" \
+  --passkey_variant "${PASSKEY_VARIANT:-random}" \
   --seed "$seed" \
   --quant_configs "${QUANT_CONFIGS:-none;k4v4;k4v2;k2v4;k2v2}" \
   --key_quant_axis per_channel \
@@ -53,5 +54,5 @@ python3 -u eval_kv_quantized_multiple_choice.py \
   --out_dir "$out_dir" \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
-  --wandb_group kivi-passkey-aggressive \
-  --wandb_run_name "qwen25_15b_passkey_aggressive_c${context}_s${seed}"
+  --wandb_group "${PASSKEY_WANDB_GROUP:-kivi-passkey-aggressive}" \
+  --wandb_run_name "qwen25_15b_passkey_${PASSKEY_VARIANT:-random}_c${context}_s${seed}"

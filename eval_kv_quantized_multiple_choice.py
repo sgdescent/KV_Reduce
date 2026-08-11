@@ -49,6 +49,9 @@ from kv_utils import (
 EVALUATOR_VERSION = "kv_multiple_choice_cached_v2"
 PASSKEY_GENERATOR_V1 = "synthetic_passkey_v1"
 PASSKEY_GENERATOR_V2 = "synthetic_passkey_16way_v2"
+PASSKEY_GENERATOR_V3 = "synthetic_associative_passkey_v3"
+PASSKEY_VARIANT_RANDOM = "random"
+PASSKEY_VARIANT_CONFUSABLE = "confusable_records"
 TASK_SPECS = {
     "hellaswag": {
         "dataset_name": "Rowan/hellaswag",
@@ -130,30 +133,73 @@ def generate_passkey_examples(
     skip_examples: int,
     dataset_seed: int,
     num_choices: int = 4,
+    variant: str = PASSKEY_VARIANT_RANDOM,
 ) -> List[Tuple[int, Dict[str, Any]]]:
     """Create deterministic passkey retrieval examples."""
 
     if num_choices < 2:
         raise ValueError("Passkey evaluation requires at least two choices.")
+    if variant not in {PASSKEY_VARIANT_RANDOM, PASSKEY_VARIANT_CONFUSABLE}:
+        raise ValueError(f"Unsupported passkey variant: {variant!r}")
     depths = (0.1, 0.5, 0.9)
     examples: List[Tuple[int, Dict[str, Any]]] = []
     for source_idx in range(skip_examples, skip_examples + num_examples):
         rng = random.Random(dataset_seed + source_idx * 104_729)
         passkey = f"{rng.randrange(100_000, 1_000_000):06d}"
         choices = {passkey}
-        while len(choices) < num_choices:
-            choices.add(f"{rng.randrange(100_000, 1_000_000):06d}")
+        if variant == PASSKEY_VARIANT_CONFUSABLE:
+            # Near-collision alternatives prevent the model from succeeding by
+            # remembering only a coarse numeric pattern from the target record.
+            candidates = []
+            for position, original_digit in enumerate(passkey):
+                for replacement in "0123456789":
+                    if replacement == original_digit:
+                        continue
+                    candidate = passkey[:position] + replacement + passkey[position + 1 :]
+                    if candidate[0] != "0":
+                        candidates.append(candidate)
+            rng.shuffle(candidates)
+            choices.update(candidates[: num_choices - 1])
+            if len(choices) < num_choices:
+                raise ValueError(
+                    f"Confusable passkey supports at most {len(candidates) + 1} choices."
+                )
+        else:
+            while len(choices) < num_choices:
+                choices.add(f"{rng.randrange(100_000, 1_000_000):06d}")
         shuffled = sorted(choices)
         rng.shuffle(shuffled)
+        example: Dict[str, Any] = {
+            "passkey": passkey,
+            "choices": shuffled,
+            "gold": shuffled.index(passkey),
+            "depth": depths[source_idx % len(depths)],
+            "variant": variant,
+        }
+        if variant == PASSKEY_VARIANT_CONFUSABLE:
+            tags = set()
+            while len(tags) < num_choices:
+                tags.add(f"{rng.choice('ABCDEFGHJKLMNPQRSTUVWXYZ')}{rng.randrange(100, 1000)}")
+            shuffled_tags = sorted(tags)
+            rng.shuffle(shuffled_tags)
+            target_tag = shuffled_tags[0]
+            distractor_codes = [choice for choice in shuffled if choice != passkey]
+            distractor_tags = shuffled_tags[1:]
+            records = [
+                {"tag": tag, "code": code}
+                for tag, code in zip(distractor_tags, distractor_codes)
+            ]
+            rng.shuffle(records)
+            example.update(
+                {
+                    "target_tag": target_tag,
+                    "distractor_records": records,
+                }
+            )
         examples.append(
             (
                 source_idx,
-                {
-                    "passkey": passkey,
-                    "choices": shuffled,
-                    "gold": shuffled.index(passkey),
-                    "depth": depths[source_idx % len(depths)],
-                },
+                example,
             )
         )
     return examples
@@ -168,6 +214,7 @@ def load_examples(
     dataset_seed: int,
     streaming: bool,
     passkey_num_choices: int = 4,
+    passkey_variant: str = PASSKEY_VARIANT_RANDOM,
 ) -> List[Tuple[int, Dict[str, Any]]]:
     if task == "passkey":
         return generate_passkey_examples(
@@ -175,6 +222,7 @@ def load_examples(
             skip_examples=skip_examples,
             dataset_seed=dataset_seed,
             num_choices=passkey_num_choices,
+            variant=passkey_variant,
         )
 
     try:
@@ -274,6 +322,52 @@ def assemble_passkey_prompt_ids(
     return prompt.unsqueeze(0)
 
 
+def assemble_confusable_passkey_prompt_ids(
+    *,
+    prefix_ids: torch.Tensor,
+    filler_ids: torch.Tensor,
+    target_record_ids: torch.Tensor,
+    distractor_record_ids: Sequence[torch.Tensor],
+    query_ids: torch.Tensor,
+    target_tokens: int,
+    depth: float,
+) -> torch.Tensor:
+    """Place one target among evenly distributed, confusable archive records."""
+
+    if not 0.0 <= float(depth) <= 1.0:
+        raise ValueError("Passkey depth must be between zero and one.")
+    if filler_ids.numel() == 0:
+        raise ValueError("Passkey filler tokenization is empty.")
+    records = list(distractor_record_ids)
+    target_record_index = int(round(float(depth) * len(records)))
+    records.insert(target_record_index, target_record_ids)
+    fixed_tokens = int(
+        prefix_ids.numel()
+        + query_ids.numel()
+        + sum(record.numel() for record in records)
+    )
+    filler_tokens = int(target_tokens) - fixed_tokens
+    if filler_tokens < 1:
+        raise ValueError(
+            f"Passkey context {target_tokens} is too short for {fixed_tokens} fixed tokens."
+        )
+    repeats = (filler_tokens + int(filler_ids.numel()) - 1) // int(filler_ids.numel())
+    filler = filler_ids.repeat(repeats)[:filler_tokens]
+    num_segments = len(records) + 1
+    base, remainder = divmod(filler_tokens, num_segments)
+    segment_lengths = [base + int(idx < remainder) for idx in range(num_segments)]
+    pieces = [prefix_ids]
+    offset = 0
+    for record, segment_length in zip(records, segment_lengths):
+        pieces.extend([filler[offset : offset + segment_length], record])
+        offset += segment_length
+    pieces.extend([filler[offset:], query_ids])
+    prompt = torch.cat(pieces, dim=0)
+    if int(prompt.numel()) != int(target_tokens):
+        raise AssertionError("Confusable passkey prompt assembly produced the wrong length.")
+    return prompt.unsqueeze(0)
+
+
 def tokenize_passkey_example(
     tokenizer,
     example: Dict[str, Any],
@@ -288,23 +382,51 @@ def tokenize_passkey_example(
             return_tensors="pt",
         ).input_ids[0]
 
+    variant = str(example.get("variant", PASSKEY_VARIANT_RANDOM))
     prefix_ids = encode(
-        "Read the following archive carefully and remember the pass key when it appears.\n\n",
+        (
+            "Read the archive carefully. Each record ID has a different access code. "
+            "Return only the code associated with the requested record ID.\n\n"
+            if variant == PASSKEY_VARIANT_CONFUSABLE
+            else "Read the following archive carefully and remember the pass key when it appears.\n\n"
+        ),
         special_tokens=True,
     )
     filler_ids = encode(
         "The archive records routine observations about weather, books, cities, and daily work. "
     )
-    key_ids = encode(f"\nImportant record: the pass key is {example['passkey']}.\n")
-    query_ids = encode("\nEnd of archive. Question: What is the pass key? Answer:")
-    prompt_ids = assemble_passkey_prompt_ids(
-        prefix_ids=prefix_ids,
-        filler_ids=filler_ids,
-        key_ids=key_ids,
-        query_ids=query_ids,
-        target_tokens=max_prompt_tokens,
-        depth=float(example["depth"]),
-    )
+    if variant == PASSKEY_VARIANT_CONFUSABLE:
+        target_tag = str(example["target_tag"])
+        key_ids = encode(
+            f"\nArchive record {target_tag}: the access code is {example['passkey']}.\n"
+        )
+        distractor_ids = [
+            encode(f"\nArchive record {record['tag']}: the access code is {record['code']}.\n")
+            for record in example["distractor_records"]
+        ]
+        query_ids = encode(
+            f"\nEnd of archive. Question: What is the access code for record {target_tag}? Answer:"
+        )
+        prompt_ids = assemble_confusable_passkey_prompt_ids(
+            prefix_ids=prefix_ids,
+            filler_ids=filler_ids,
+            target_record_ids=key_ids,
+            distractor_record_ids=distractor_ids,
+            query_ids=query_ids,
+            target_tokens=max_prompt_tokens,
+            depth=float(example["depth"]),
+        )
+    else:
+        key_ids = encode(f"\nImportant record: the pass key is {example['passkey']}.\n")
+        query_ids = encode("\nEnd of archive. Question: What is the pass key? Answer:")
+        prompt_ids = assemble_passkey_prompt_ids(
+            prefix_ids=prefix_ids,
+            filler_ids=filler_ids,
+            key_ids=key_ids,
+            query_ids=query_ids,
+            target_tokens=max_prompt_tokens,
+            depth=float(example["depth"]),
+        )
     choice_ids = [
         tokenizer(
             " " + str(choice),
@@ -420,6 +542,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max_prompt_tokens", type=int, default=1024)
     parser.add_argument("--max_choice_tokens", type=int, default=128)
     parser.add_argument("--passkey_num_choices", type=int, default=4)
+    parser.add_argument(
+        "--passkey_variant",
+        default=PASSKEY_VARIANT_RANDOM,
+        choices=[PASSKEY_VARIANT_RANDOM, PASSKEY_VARIANT_CONFUSABLE],
+    )
     parser.add_argument("--quant_configs", default="none;k8v4;k4v8;k4v4;k3v4;k4v3")
     parser.add_argument("--scale_bits", type=int, default=16)
     parser.add_argument("--key_quant_axis", default=PER_CHANNEL_AXIS, choices=[PER_TOKEN_AXIS, PER_CHANNEL_AXIS])
@@ -463,6 +590,7 @@ def main() -> None:
         dataset_seed=args.dataset_seed,
         streaming=args.streaming,
         passkey_num_choices=args.passkey_num_choices,
+        passkey_variant=args.passkey_variant,
     )
     if not examples:
         raise ValueError("No task examples were loaded.")
@@ -477,6 +605,7 @@ def main() -> None:
             dataset_seed=args.fewshot_seed,
             streaming=args.streaming,
             passkey_num_choices=args.passkey_num_choices,
+            passkey_variant=args.passkey_variant,
         )
     )
     fewshot_prefix = build_fewshot_prefix(
@@ -591,6 +720,8 @@ def main() -> None:
                     {
                         "passkey_depth": float(example["depth"]),
                         "passkey": str(example["passkey"]),
+                        "passkey_variant": str(example.get("variant", PASSKEY_VARIANT_RANDOM)),
+                        "target_tag": str(example.get("target_tag", "")),
                     }
                 )
             rows.append(row)
@@ -686,9 +817,13 @@ def main() -> None:
             "value_quant_scheme": args.value_quant_scheme,
             "task_generator_version": (
                 (
-                    PASSKEY_GENERATOR_V1
-                    if args.passkey_num_choices == 4
-                    else PASSKEY_GENERATOR_V2
+                    PASSKEY_GENERATOR_V3
+                    if args.passkey_variant == PASSKEY_VARIANT_CONFUSABLE
+                    else (
+                        PASSKEY_GENERATOR_V1
+                        if args.passkey_num_choices == 4
+                        else PASSKEY_GENERATOR_V2
+                    )
                 )
                 if args.task == "passkey"
                 else None
