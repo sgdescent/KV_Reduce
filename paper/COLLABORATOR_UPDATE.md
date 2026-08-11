@@ -137,15 +137,15 @@ so it is not yet an end-to-end speed claim.
 ## Work In Progress
 
 - Exact proposal-length sweep at `gamma = 2, 4, 8`, including aggressive
-  `K4V2` and `K2V4` controls. Two of three `gamma=2` seeds are complete:
-  `K4V2 - K2V4` is provisionally **-4.08 acceptance points**, 95% CI
-  **[-7.47, -0.82]**. The mild `K8V4 - K4V8` contrast remains unresolved at
-  **-0.13 points**, CI **[-1.23, +1.01]**.
+  `K4V2` and `K2V4` controls. Two of three seeds are complete at every gamma.
+  `K4V2 - K2V4` is provisionally **-4.08**, **-5.93**, and **-3.50**
+  acceptance points at gamma 2, 4, and 8, respectively; all three confidence
+  intervals exclude zero. The mild `K8V4 - K4V8` contrast is unresolved at
+  gamma 2 and 4 but is **+1.64 points**, CI **[+0.40, +2.97]**, at gamma 8.
 - Six-pair exact `K4V2` versus `K2V4` cross-family replication, paired with an
-  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. Four
-  exact runs are complete; the current three-family provisional macro favors
-  `K2V4` by 2.27 acceptance points, but its CI **[-5.47, +0.69]** still crosses
-  zero.
+  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM. Seven
+  exact runs are complete for the first three families; the provisional macro
+  `K4V2 - K2V4` is **-2.53 acceptance points**, CI **[-4.73, -0.23]**.
 - Exact key-quantization group-size sweep over 16, 32, 64, and 128 channels,
   with three disjoint seeds and metadata-adjusted byte accounting.
 - Exact BF16 recent-key residual-window sweep over 0, 32, 128, and 256 tokens
@@ -156,6 +156,10 @@ so it is not yet an end-to-end speed claim.
   256-token seed, `K4V8` retains 40.43% of BF16 tokens versus 28.59% for
   `K8V4`; this is provisional until all three seeds finish.
 - Cross-family ARC-Challenge/HellaSwag task checks.
+- Exact quality-optimized versus acceptance-optimized allocation matrix at
+  matched bytes: two budgets, 1K/4K contexts, three held-out seeds, and 24
+  ordinary/speculative cross-evaluation cells. The serialized one-GPU chain is
+  queued as SLURM jobs `13168` through `13172`.
 - Model-weighted paper tables and objective-comparison figures.
 - Packed-kernel optimization and a serving-capacity benchmark.
 
