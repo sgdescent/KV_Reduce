@@ -38,6 +38,7 @@ from kv_cache_quantization import (
     SYMMETRIC_QUANT,
     bit_allocation_stats,
     estimate_model_kv_cache_bytes,
+    kv_bit_layout_signature,
     parse_quant_config_specs,
     quantize_dequantize_per_vector,
     quantize_key_cache_kivi_style,
@@ -97,6 +98,45 @@ def build_joint_quant_configs(target_configs, draft_configs):
                 )
             )
     return combined
+
+
+def joint_quant_layout_signature(candidate):
+    """Identify joint target/draft configs that execute the same quantization."""
+    return (
+        kv_bit_layout_signature(candidate[2], candidate[3]),
+        kv_bit_layout_signature(candidate[5], candidate[6]),
+    )
+
+
+def alias_config_result(
+    result: Dict[str, Any],
+    *,
+    source_name: str,
+    alias_name: str,
+) -> Dict[str, Any]:
+    """Clone an identical-layout result under another policy name."""
+    source_memory_prefix = f"memory/{source_name}/"
+    alias_memory_prefix = f"memory/{alias_name}/"
+    summary: Dict[str, Any] = {}
+    for key, value in result["summary"].items():
+        alias_key = (
+            alias_memory_prefix + key[len(source_memory_prefix) :]
+            if key.startswith(source_memory_prefix)
+            else key
+        )
+        summary[alias_key] = value
+    summary["layout_reused"] = 1.0
+    summary["layout_canonical_config"] = source_name
+    rows = [
+        {
+            **row,
+            "config": alias_name,
+            "layout_reused": 1.0,
+            "layout_canonical_config": source_name,
+        }
+        for row in result["rows"]
+    ]
+    return {"rows": rows, "summary": summary}
 
 
 def aggregate_rows(rows: List[Dict[str, Any]], exclude: Optional[Sequence[str]] = None) -> Dict[str, float]:
@@ -1279,16 +1319,17 @@ def main() -> None:
     benchmark_target_margins = [record["top1_margins"] for record in benchmark_reference_records]
     if warmup_prompts:
         print(f"Running {len(warmup_prompts)} warmup prompts for each config...")
-        for (
-            name,
-            _,
-            target_k_bits,
-            target_v_bits,
-            _,
-            k_bits,
-            v_bits,
-            _,
-        ) in quant_configs:
+        seen_warmup_layouts = set()
+        for candidate in quant_configs:
+            layout = joint_quant_layout_signature(candidate)
+            if layout in seen_warmup_layouts:
+                continue
+            seen_warmup_layouts.add(layout)
+            name = candidate[0]
+            target_k_bits = candidate[2]
+            target_v_bits = candidate[3]
+            k_bits = candidate[5]
+            v_bits = candidate[6]
             run_one_config(
                 config_name=name,
                 prompts=warmup_prompts,
@@ -1320,6 +1361,9 @@ def main() -> None:
     all_rows: List[Dict[str, Any]] = []
     summaries: Dict[str, Dict[str, float]] = {}
     memory_estimates: Dict[str, Dict[str, float]] = {}
+    results_by_layout = {}
+    canonical_names_by_layout = {}
+    deduplicated_configs: Dict[str, str] = {}
 
     for config_idx, (
         name,
@@ -1331,34 +1375,68 @@ def main() -> None:
         v_bits,
         metadata,
     ) in enumerate(quant_configs):
-        print(f"Benchmarking quant config: {name}")
-        result = run_one_config(
-            config_name=name,
-            prompts=benchmark_prompts,
-            big_model=big_model,
-            small_model=small_model,
-            draft_steps=args.draft_steps,
-            max_new_tokens=args.max_new_tokens,
-            big_device=args.big_device,
-            small_device=args.small_device,
-            topk=args.topk,
-            k_bits=k_bits,
-            v_bits=v_bits,
-            target_k_bits=target_k_bits,
-            target_v_bits=target_v_bits,
-            cuda_device_ids=cuda_device_ids,
-            wandb_run=wandb_run,
-            wandb_prefix="spec_kv",
-            wandb_step_offset=config_idx * len(benchmark_prompts),
-            shared_vocab_size=shared_vocab_size,
-            key_quant_axis=args.key_quant_axis,
-            key_group_size=args.key_group_size,
-            key_residual_length=args.key_residual_length,
-            value_quant_scheme=args.value_quant_scheme,
-            target_token_references=benchmark_target_references,
-            target_margin_references=benchmark_target_margins,
-            target_verification_mode=args.target_verification_mode,
-        )
+        candidate = quant_configs[config_idx]
+        layout = joint_quant_layout_signature(candidate)
+        if layout in results_by_layout:
+            canonical_name = canonical_names_by_layout[layout]
+            print(f"Reusing quant layout for {name} from {canonical_name}")
+            result = alias_config_result(
+                results_by_layout[layout],
+                source_name=canonical_name,
+                alias_name=name,
+            )
+            deduplicated_configs[name] = canonical_name
+            if wandb_run is not None:
+                for prompt_idx, row in enumerate(result["rows"]):
+                    wandb_run.log(
+                        {
+                            f"spec_kv/{name}/{key}": value
+                            for key, value in row.items()
+                            if key not in {"config", "prompt_idx", "layout_canonical_config"}
+                        },
+                        step=config_idx * len(benchmark_prompts) + prompt_idx + 1,
+                    )
+        else:
+            print(f"Benchmarking quant config: {name}")
+            result = run_one_config(
+                config_name=name,
+                prompts=benchmark_prompts,
+                big_model=big_model,
+                small_model=small_model,
+                draft_steps=args.draft_steps,
+                max_new_tokens=args.max_new_tokens,
+                big_device=args.big_device,
+                small_device=args.small_device,
+                topk=args.topk,
+                k_bits=k_bits,
+                v_bits=v_bits,
+                target_k_bits=target_k_bits,
+                target_v_bits=target_v_bits,
+                cuda_device_ids=cuda_device_ids,
+                wandb_run=wandb_run,
+                wandb_prefix="spec_kv",
+                wandb_step_offset=config_idx * len(benchmark_prompts),
+                shared_vocab_size=shared_vocab_size,
+                key_quant_axis=args.key_quant_axis,
+                key_group_size=args.key_group_size,
+                key_residual_length=args.key_residual_length,
+                value_quant_scheme=args.value_quant_scheme,
+                target_token_references=benchmark_target_references,
+                target_margin_references=benchmark_target_margins,
+                target_verification_mode=args.target_verification_mode,
+            )
+            result["summary"]["layout_reused"] = 0.0
+            result["summary"]["layout_canonical_config"] = name
+            result["rows"] = [
+                {
+                    **row,
+                    "layout_reused": 0.0,
+                    "layout_canonical_config": name,
+                }
+                for row in result["rows"]
+            ]
+            results_by_layout[layout] = result
+            canonical_names_by_layout[layout] = name
         memory = estimate_total_kv_memory(
             big_model=big_model,
             small_model=small_model,
@@ -1389,6 +1467,10 @@ def main() -> None:
         if wandb_run is not None:
             for key, value in memory.items():
                 wandb_run.summary[f"spec_kv/{name}/{key}"] = value
+            wandb_run.summary[f"spec_kv/{name}/layout_reused"] = summary["layout_reused"]
+            wandb_run.summary[f"spec_kv/{name}/layout_canonical_config"] = summary[
+                "layout_canonical_config"
+            ]
 
     baseline = summaries.get("none") or summaries.get("target_none__draft_none")
     if baseline is not None:
@@ -1444,6 +1526,8 @@ def main() -> None:
         "quant_configs": [candidate[0] for candidate in quant_configs],
         "target_quant_configs": [name for name, _, _, _ in target_quant_configs],
         "draft_quant_configs": [name for name, _, _, _ in draft_quant_configs],
+        "quant_layouts_evaluated": len(results_by_layout),
+        "deduplicated_configs": deduplicated_configs,
         "tokenizer_compatibility": compatibility,
         "shared_vocab_size": shared_vocab_size,
         "model_output_vocab_sizes": {

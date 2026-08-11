@@ -433,3 +433,14 @@ def bit_allocation_stats(k_bits_by_layer: Sequence[int], v_bits_by_layer: Sequen
         "v_bits_mean": sum(v_values) / len(v_values),
         "all_bits_mean": sum(all_values) / len(all_values),
     }
+
+
+def kv_bit_layout_signature(
+    k_bits_by_layer: Sequence[int],
+    v_bits_by_layer: Sequence[int],
+) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
+    """Return a hashable signature for the computation-relevant KV bit layout."""
+    return (
+        tuple(int(bits) for bits in k_bits_by_layer),
+        tuple(int(bits) for bits in v_bits_by_layer),
+    )

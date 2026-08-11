@@ -35,6 +35,7 @@ from kv_cache_quantization import (
     SYMMETRIC_QUANT,
     bit_allocation_stats,
     estimate_model_kv_cache_bytes,
+    kv_bit_layout_signature,
     parse_csv_ints,
     parse_quant_config_specs,
     uniform_bit_lists,
@@ -342,6 +343,14 @@ def main() -> None:
                     )
         mode = "sensitivity"
 
+    canonical_name_by_layout = {}
+    candidate_canonical_names: Dict[str, str] = {}
+    for candidate in candidates:
+        name = str(candidate["candidate"])
+        layout = kv_bit_layout_signature(candidate["k_bits"], candidate["v_bits"])
+        canonical_name_by_layout.setdefault(layout, name)
+        candidate_canonical_names[name] = canonical_name_by_layout[layout]
+
     seq_iter = iter_token_blocks(
         tokenizer=tokenizer,
         seq_len=args.prompt_len + args.continuation_len,
@@ -376,9 +385,13 @@ def main() -> None:
             vocab_size=vocab_size,
         )
 
+        metrics_by_layout: Dict[Any, Dict[str, float]] = {}
         for candidate in candidates:
             name = str(candidate["candidate"])
-            if candidate["component"] == "none":
+            layout = kv_bit_layout_signature(candidate["k_bits"], candidate["v_bits"])
+            if layout in metrics_by_layout:
+                metrics = dict(metrics_by_layout[layout])
+            elif candidate["component"] == "none":
                 metrics = {
                     "native_nll": reference_summary["nll"],
                     "quantized_nll": reference_summary["nll"],
@@ -398,6 +411,7 @@ def main() -> None:
                         0.0, (args.continuation_len - 1) / max(1, args.continuation_len)
                     ),
                 }
+                metrics_by_layout[layout] = dict(metrics)
             else:
                 metrics = evaluate_quantized_sequence(
                     model=model,
@@ -415,6 +429,7 @@ def main() -> None:
                     key_residual_length=args.key_residual_length,
                     value_quant_scheme=args.value_quant_scheme,
                 )
+                metrics_by_layout[layout] = dict(metrics)
             metric_rows[name].append(metrics)
             raw_rows.append(
                 {
@@ -423,6 +438,8 @@ def main() -> None:
                     "layer": candidate["layer"],
                     "component": candidate["component"],
                     "bits": candidate["bits"],
+                    "layout_reused": float(candidate_canonical_names[name] != name),
+                    "layout_canonical_config": candidate_canonical_names[name],
                     **metrics,
                 }
             )
@@ -456,6 +473,8 @@ def main() -> None:
             "layer": candidate["layer"],
             "component": candidate["component"],
             "bits": candidate["bits"],
+            "layout_reused": float(candidate_canonical_names[name] != name),
+            "layout_canonical_config": candidate_canonical_names[name],
             **metrics,
             **memory,
             **{f"allocation/{key}": value for key, value in bit_allocation_stats(candidate["k_bits"], candidate["v_bits"]).items()},
@@ -481,6 +500,7 @@ def main() -> None:
             "key_group_size": args.key_group_size,
             "key_residual_length": args.key_residual_length,
             "value_quant_scheme": args.value_quant_scheme,
+            "quant_layouts_evaluated": len(canonical_name_by_layout),
         },
         "mode": mode,
         "model": args.model,

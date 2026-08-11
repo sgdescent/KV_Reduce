@@ -8,8 +8,13 @@ from pathlib import Path
 
 from acceptance_risk_statistics import paired_drop_statistics
 from aggregate_objective_kv_matrix import classify_exactness
-from benchmark_spec_kv_quantization import build_joint_quant_configs, last_token_logits_kwargs
-from kv_cache_quantization import parse_csv_ints, parse_quant_config_specs
+from benchmark_spec_kv_quantization import (
+    alias_config_result,
+    build_joint_quant_configs,
+    joint_quant_layout_signature,
+    last_token_logits_kwargs,
+)
+from kv_cache_quantization import kv_bit_layout_signature, parse_csv_ints, parse_quant_config_specs
 from prepare_objective_kv_matrix import evaluation_skip_blocks, heuristic_component_bits
 from profile_spec_kv_sensitivity import (
     build_parser as build_spec_sensitivity_parser,
@@ -233,6 +238,33 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
         )
         self.assertEqual(len(joint[0][2]), 2)
         self.assertEqual(len(joint[0][5]), 3)
+
+    def test_identical_allocation_metadata_deduplicates_by_bit_layout(self) -> None:
+        target = parse_quant_config_specs("none", num_layers=2)
+        draft_a = ("policy_a", [4, 8], [8, 4], {"objective": "quality"})
+        draft_b = ("policy_b", [4, 8], [8, 4], {"objective": "acceptance"})
+        joint = build_joint_quant_configs(target, [draft_a, draft_b])
+
+        self.assertEqual(joint_quant_layout_signature(joint[0]), joint_quant_layout_signature(joint[1]))
+        self.assertEqual(kv_bit_layout_signature([4, 8], [8, 4]), ((4, 8), (8, 4)))
+
+    def test_alias_config_result_preserves_rows_and_renames_memory(self) -> None:
+        source = {
+            "rows": [{"config": "quality", "prompt_idx": 0, "accept_rate": 0.5}],
+            "summary": {
+                "overall_accept_rate": 0.5,
+                "memory/quality/cuda:0/peak_allocated_bytes": 123.0,
+            },
+        }
+        alias = alias_config_result(source, source_name="quality", alias_name="acceptance")
+
+        self.assertEqual(alias["rows"][0]["config"], "acceptance")
+        self.assertEqual(alias["rows"][0]["layout_canonical_config"], "quality")
+        self.assertEqual(alias["summary"]["layout_reused"], 1.0)
+        self.assertEqual(
+            alias["summary"]["memory/acceptance/cuda:0/peak_allocated_bytes"],
+            123.0,
+        )
 
     def test_fixed_budget_allocator_changes_layout_by_objective(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
