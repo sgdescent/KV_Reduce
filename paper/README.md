@@ -34,6 +34,12 @@ python paper/aggregate_objective_campaign.py \
   --out_dir paper/objective_campaign_artifacts
 
 python paper/build_packed_artifacts.py
+
+python paper/build_free_generation_artifacts.py \
+  --source Qwen2.5-1.5B=outputs/kivi_free_generation_v1_retry/cross_family/qwen25_15b/aggregate/summary.json \
+  --source Llama-3.2-3B=outputs/kivi_free_generation_v1_retry/cross_family/llama32_3b/aggregate/summary.json \
+  --source OLMo-2-1B=outputs/kivi_free_generation_v1_retry/cross_family/olmo2_1b/aggregate/summary.json \
+  --source SmolLM2-360M=outputs/kivi_free_generation_v1_retry/cross_family/smollm2_360m/aggregate/summary.json
 ```
 
 By default, incomplete matrices, stale evaluator outputs, and smoke runs are not

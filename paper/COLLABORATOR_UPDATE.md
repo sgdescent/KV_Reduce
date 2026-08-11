@@ -223,6 +223,12 @@ and exact-sequence match differs by -16.67 points (CI: -26.04 to -8.33).
 Llama-3.2-3B shows the same direction over 96 prompts: token agreement differs
 by -7.18 points (CI: -14.70 to +0.29). At more aggressive precision, Llama
 K4V2-minus-K2V4 token agreement is -5.62 points (CI: -9.73 to -1.61).
+OLMo-2-1B provides a second significant replication: K4V8 retains 68.23% of
+BF16 tokens versus 54.23% for K8V4, a paired difference of -14.00 points
+(CI: -21.99 to -6.12). SmolLM2-360M has the same point-estimate direction
+(54.72% versus 47.75%); its token-agreement CI crosses zero, but exact-sequence
+retention and retained-prefix fraction significantly favor K4V8. Across all
+four verifier-free families, K4V8 has the higher token-retention point estimate.
 
 The value-preserving preference also persists at long context for Qwen
 speculative decoding. At 16K, K8V4-minus-K4V8 acceptance is -2.40 points

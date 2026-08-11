@@ -1,0 +1,23 @@
+{
+  "source_evaluator_version": "free_running_cached_v1",
+  "sources": [
+    {
+      "label": "Qwen2.5-1.5B",
+      "path": "outputs/kivi_free_generation_v1_retry/cross_family/qwen25_15b/aggregate/summary.json"
+    },
+    {
+      "label": "Llama-3.2-3B",
+      "path": "outputs/kivi_free_generation_v1_retry/cross_family/llama32_3b/aggregate/summary.json"
+    },
+    {
+      "label": "OLMo-2-1B",
+      "path": "outputs/kivi_free_generation_v1_retry/cross_family/olmo2_1b/aggregate/summary.json"
+    },
+    {
+      "label": "SmolLM2-360M",
+      "path": "outputs/kivi_free_generation_v1_retry/cross_family/smollm2_360m/aggregate/summary.json"
+    }
+  ],
+  "num_models": 4,
+  "num_runs": 12
+}

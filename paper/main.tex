@@ -398,24 +398,38 @@ per-channel keys (CI $[0.00391,0.00494]$). Thus, the key axis alone can reverse
 both the speculative and ordinary-quality preference while value geometry,
 model, prompts, and nominal bit budget remain fixed.
 
+We next remove speculative verification from the measurement entirely and run
+64-token continuations from 1K-token prefixes under KIVI geometry. Each model
+uses three disjoint seeds and 96 paired prompts. Figure~\ref{fig:free-generation}
+shows that K4V8 has higher token agreement with BF16 than equal-nominal-budget
+K8V4 for all four model families. The paired K8V4--K4V8 differences are
+$-10.89$ points for Qwen (95\% CI $[-18.65,-3.12]$), $-7.18$ for Llama
+(CI $[-14.70,+0.29]$), $-14.00$ for OLMo (CI $[-21.99,-6.12]$), and
+$-6.97$ for SmolLM (CI $[-15.22,+1.30]$). Exact-sequence retention also
+significantly favors K4V8 for Qwen, OLMo, and SmolLM. This verifier-free result
+supports a geometry-conditional value-precision preference in ordinary
+generation; it does not by itself establish the speculative-acceptance ranking.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=0.94\textwidth]{free_generation_artifacts/free_generation_kv_asymmetry.pdf}
+  \caption{Free-running generation under an equal nominal 12-bit K/V budget.
+  Bars show agreement with each model's BF16 continuation; the forest plot shows
+  paired K8V4-minus-K4V8 token-agreement differences over 96 prompts per model.
+  K4V8 has the higher point estimate in all four families, with CIs excluding
+  zero for Qwen and OLMo.}
+  \label{fig:free-generation}
+\end{figure*}
+
 An exploratory six-pair audit suggests that this geometry effect may generalize
 beyond Qwen, but it is not yet part of our confirmatory evidence.
-Figure~\ref{fig:geometry-asymmetry} shows the raw macro estimates: the naive
-K8V4--K4V8 contrast is $+10.87$ acceptance points, while the KIVI contrast is
+The raw speculative macro estimates move from a naive K8V4--K4V8 contrast of
+$+10.87$ acceptance points to a KIVI contrast of
 $-0.25$ points. A subsequent exactness audit found non-tie verifier mismatches
 in five of the six KIVI model pairs, so we do not use their confidence intervals
 or macro difference to support the main claim. Backend and sequential-shadow
 verifier matrices are running for each affected family; the controlled Qwen
 factorial above remains the confirmatory geometry result.
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\linewidth]{campaign_artifacts/quantizer_geometry_asymmetry.pdf}
-  \caption{Exploratory equal-memory K8V4 minus K4V8 acceptance across model
-  pairs. Five KIVI cells have unresolved non-tie verifier mismatches and are
-  shown only as a diagnostic pending exact reruns.}
-  \label{fig:geometry-asymmetry}
-\end{figure}
 
 A fixed-key value-precision sweep identifies a sharp knee below four bits. Across
 three 1K-context seeds, K8V4 saves $27.00\%$ of total target-plus-draft KV memory
@@ -434,7 +448,7 @@ reduces value precision, loses $5.43$ acceptance points relative to BF16
 points (CI $[-2.58,-0.31]$). The direct paired K4V2--K2V4 contrast is $-4.01$
 points (CI $[-5.82,-2.15]$). Both policies use the same nominal mean bit-width;
 because key metadata is asymmetric, their total-cache savings are near rather
-than exactly equal (31.76% versus 31.38%). Under the deployed KIVI geometry,
+than exactly equal (31.76\% versus 31.38\%). Under the deployed KIVI geometry,
 aggressive value quantization is therefore significantly more harmful than
 aggressive key quantization in this setting. The result replicates at
 $\gamma=4$ across 189 paired prompts: K4V2 loses $6.48$ points
