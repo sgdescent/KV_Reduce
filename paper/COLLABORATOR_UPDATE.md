@@ -307,7 +307,7 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   **12.3%** of total target-plus-draft KV. This is a promising raw preference
   reversal, not yet a resolved speculative result; powered 1K/4K, three-seed
   SmolLM, Qwen, and OLMo grids are queued as jobs `13506`--`13514`.
-  The confusable 16-way passkey control is complete: nine strict runs cover
+  The Qwen2.5 confusable 16-way passkey control is complete: nine strict runs cover
   three seeds at 8K, 16K, and 32K, with 48 paired examples per context and no
   missing or underfilled runs. Equal-memory `K4V2 - K2V4` is **+10.42 accuracy
   points** at 8K, CI **[0.00, +20.83]**; **+20.83 points** at 16K, CI
@@ -316,7 +316,12 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   **37/48** for `K2V4`; at 32K the scores are **44/48**, **47/48**, and
   **41/48**, respectively. Both asymmetric policies save about **77%** of
   standalone KV. This is synthetic draft-only retrieval-quality evidence, not
-  speculative acceptance.
+  speculative acceptance. A matched strict Llama-3.2-3B replication reverses
+  the resolved 32K preference: `K4V2 - K2V4` is **-10.42 points**, CI
+  **[-18.75, -2.08]**, with **42/48** versus **47/48** correct. Its 8K and
+  16K contrasts are unresolved. Thus, even for the same task and quantizer,
+  retrieval precision preference is model-dependent; Qwen3 and powered 16K
+  replications are running before we promote a cross-family macro claim.
   To separate model-family effects from budget effects, dependency-gated mild
   replications are also queued for OLMo2 (`13386`--`13390`) and SmolLM2
   (`13391`--`13395`). Each adds 24 strict held-out cells over 1K/4K contexts

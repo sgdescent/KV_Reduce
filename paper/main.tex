@@ -531,17 +531,19 @@ therefore a useful screening objective in this setting, though acceptance
 remains the final serving metric.
 
 A complementary confusable 16-way associative-passkey control reveals that the
-preferred asymmetry can change again for retrieval. The strict aggregate contains
-all nine 8K, 16K, and 32K model-seed runs, 48 paired examples per context, and no
-missing or underfilled runs. K4V2 exceeds equal-memory K2V4 by $10.42$ accuracy
-points at 8K (95\% CI $[0.00,20.83]$), $20.83$ points at 16K (CI
+preferred asymmetry can change again for retrieval. For Qwen2.5-1.5B, the strict
+aggregate contains all nine 8K, 16K, and 32K model-seed runs, 48 paired examples
+per context, and no missing or underfilled runs. K4V2 exceeds equal-memory K2V4
+by $10.42$ accuracy points at 8K (95\% CI $[0.00,20.83]$), $20.83$ points at 16K (CI
 $[8.33,33.33]$), and $12.50$ points at 32K (CI $[2.08,25.00]$). At 16K, BF16
 and K4V2 each retrieve 47/48 passkeys, whereas K2V4 retrieves 37/48; at 32K the
 three scores are 44/48, 47/48, and 41/48, respectively. Both asymmetric policies
-save approximately 77\% of the standalone cache. This draft-only synthetic result
-measures retrieval quality rather than speculative acceptance, but it provides a
-resolved long-context example where preserving key precision is preferable under
-essentially matched memory.
+save approximately 77\% of the standalone cache. A strict Llama-3.2-3B
+replication reverses the resolved 32K preference: K4V2 trails K2V4 by $10.42$
+points (CI $[-18.75,-2.08]$), scoring 42/48 versus 47/48; its 8K and 16K
+contrasts remain unresolved. These draft-only synthetic results measure retrieval
+quality rather than speculative acceptance. Together they show that even within
+one task and quantizer geometry, K/V precision preference is model-dependent.
 
 \subsection{Actual packed storage realizes the estimated savings}
 
