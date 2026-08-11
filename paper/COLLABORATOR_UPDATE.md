@@ -17,7 +17,9 @@ the target output distribution.
 
 Quantization alone is not enough novelty for a main-track paper. KIVI already
 establishes asymmetric K/V quantization, KV-AdaQuant allocates different K/V
-precision, and QuantSpec applies quantized KV caches to speculative decoding.
+precision, RateQuant optimizes quantizer-specific mixed precision, Block-GTQ
+allocates precision within RoPE key blocks, and QuantSpec applies quantized KV
+caches to speculative decoding.
 The August 2026 NVIDIA work on cross-model KV transfer also substantially
 occupies our earlier closed-form cache-mapping direction. That paper does not,
 however, study byte-matched precision allocation under ordinary-quality versus
@@ -236,5 +238,7 @@ so it is not yet an end-to-end speed claim.
 - [KV-AdaQuant](https://arxiv.org/abs/2502.15075)
 - [QuantSpec](https://arxiv.org/abs/2502.10424)
 - [RotateKV](https://arxiv.org/abs/2501.16383)
+- [RateQuant](https://arxiv.org/abs/2605.06675)
 - [RoPE-Aware Bit Allocation](https://arxiv.org/abs/2606.24033)
+- [Adaptive KV-Cache Quantization](https://arxiv.org/abs/2604.04722)
 - [Cross-Model KV Cache Transfer](https://arxiv.org/abs/2608.03893)
