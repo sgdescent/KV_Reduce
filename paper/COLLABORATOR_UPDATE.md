@@ -73,9 +73,10 @@ amortized. A direct split-sequence Triton kernel matches the materialized K4V4
 reference at 0.999994 cosine, is 2.05x faster than materialize-then-attend, and
 reduces temporary allocation from 88.3 MiB to 0.38 MiB at 32K. It remains 6.88x
 slower than native BF16 SDPA, so this is a correct compressed-execution proof,
-not a serving-speed claim. Separately, a free-running target-cache campaign is
-queued across Qwen, Llama, OLMo, and SmolLM to measure exact sequence retention,
-token agreement, first divergence, and long-horizon error accumulation outside
+not a serving-speed claim. Separately, the free-running target-cache campaign is
+complete for Qwen2.5-1.5B and Llama-3.2-3B; OLMo-2-1B and SmolLM2-360M are still
+running. These verifier-free runs measure exact sequence retention, token
+agreement, first divergence, and long-horizon error accumulation outside
 speculative decoding.
 
 The strict all-layer objective-specific allocation run is complete and should be
