@@ -165,8 +165,11 @@ so it is not yet an end-to-end speed claim.
 - Cross-family ARC-Challenge/HellaSwag task checks.
 - Exact quality-optimized versus acceptance-optimized allocation matrix at
   matched bytes: two budgets, 1K/4K contexts, three held-out seeds, and 24
-  ordinary/speculative cross-evaluation cells. The serialized one-GPU chain is
-  queued as SLURM jobs `13168` through `13172`.
+  ordinary/speculative cross-evaluation cells. The mild Qwen 4/8-bit matrix is
+  queued as SLURM jobs `13168` through `13172`. Complementary aggressive
+  2/4/8-bit matrices at mean 3- and 5-bit budgets are serialized behind it for
+  Qwen (`13183`--`13187`), OLMo2 (`13190`--`13194`), and SmolLM2
+  (`13195`--`13199`).
 - Model-weighted paper tables and objective-comparison figures.
 - Packed-kernel optimization and a serving-capacity benchmark.
 
