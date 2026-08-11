@@ -45,6 +45,7 @@ python3 -u eval_kv_quantized_multiple_choice.py \
   --max_choice_tokens 16 \
   --passkey_num_choices "${PASSKEY_NUM_CHOICES:-16}" \
   --passkey_variant "${PASSKEY_VARIANT:-random}" \
+  --passkey_score "${PASSKEY_SCORE:-raw}" \
   --seed "$seed" \
   --quant_configs "${QUANT_CONFIGS:-none;k4v4;k4v2;k2v4;k2v2}" \
   --key_quant_axis per_channel \

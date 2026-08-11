@@ -547,6 +547,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=PASSKEY_VARIANT_RANDOM,
         choices=[PASSKEY_VARIANT_RANDOM, PASSKEY_VARIANT_CONFUSABLE],
     )
+    parser.add_argument("--passkey_score", default="raw", choices=["raw", "normalized"])
     parser.add_argument("--quant_configs", default="none;k8v4;k4v8;k4v4;k3v4;k4v3")
     parser.add_argument("--scale_bits", type=int, default=16)
     parser.add_argument("--key_quant_axis", default=PER_CHANNEL_AXIS, choices=[PER_TOKEN_AXIS, PER_CHANNEL_AXIS])
@@ -611,6 +612,12 @@ def main() -> None:
     fewshot_prefix = build_fewshot_prefix(
         args.task,
         [example for _source_idx, example in fewshot_examples],
+    )
+    primary_metric = (
+        "normalized_accuracy"
+        if args.task == "hellaswag"
+        or (args.task == "passkey" and args.passkey_score == "normalized")
+        else "raw_accuracy"
     )
 
     rows: List[Dict[str, Any]] = []
@@ -725,7 +732,7 @@ def main() -> None:
                     }
                 )
             rows.append(row)
-            primary_key = "normalized_correct" if args.task == "hellaswag" else "raw_correct"
+            primary_key = primary_metric.replace("accuracy", "correct")
             running_correct[name].append(float(row[primary_key]))
         if run is not None and ((local_idx + 1) % 10 == 0 or local_idx + 1 == len(examples)):
             run.log(
@@ -735,7 +742,7 @@ def main() -> None:
                 },
                 step=local_idx + 1,
             )
-        baseline_key = "normalized_correct" if args.task == "hellaswag" else "raw_correct"
+        baseline_key = primary_metric.replace("accuracy", "correct")
         bar.set_postfix(bf16=f"{mean(r[baseline_key] for r in rows if r['config'] == 'none'):.3f}")
 
     memory_seq_len = int(round(mean(evaluation_lengths)))
@@ -796,7 +803,7 @@ def main() -> None:
                 summary[f"depth_{int(round(100 * depth))}/accuracy"] = mean(
                     row["raw_correct"] for row in depth_rows
                 )
-        summary["primary_accuracy"] = summary[str(TASK_SPECS[args.task]["primary_metric"])]
+        summary["primary_accuracy"] = summary[primary_metric]
         summaries[name] = summary
         if run is not None:
             for key, value in summary.items():
@@ -831,7 +838,7 @@ def main() -> None:
         },
         "task": args.task,
         "split": split,
-        "primary_metric": TASK_SPECS[args.task]["primary_metric"],
+        "primary_metric": primary_metric,
         "num_examples": len(examples),
         "num_fewshot": len(fewshot_examples),
         "source_index_range": [examples[0][0], examples[-1][0]],

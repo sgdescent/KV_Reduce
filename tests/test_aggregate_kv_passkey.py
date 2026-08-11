@@ -51,6 +51,36 @@ class PasskeyAggregationTest(unittest.TestCase):
         )
         self.assertEqual(values, [-1.0])
 
+    def test_computes_normalized_accuracy_differences(self):
+        rows = [
+            {
+                "prompt_tokens": "8192",
+                "passkey_depth": "0.1",
+                "seed": "0",
+                "source_idx": "4",
+                "config": "none",
+                "raw_correct": "0",
+                "normalized_correct": "1",
+            },
+            {
+                "prompt_tokens": "8192",
+                "passkey_depth": "0.1",
+                "seed": "0",
+                "source_idx": "4",
+                "config": "k2v2",
+                "raw_correct": "1",
+                "normalized_correct": "0",
+            },
+        ]
+        values = paired_accuracy_differences(
+            rows,
+            config="k2v2",
+            baseline="none",
+            context=8192,
+            metric="normalized_correct",
+        )
+        self.assertEqual(values, [-1.0])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -47,6 +47,7 @@ def paired_accuracy_differences(
     baseline: str,
     context: int,
     depth: float | None = None,
+    metric: str = "raw_correct",
 ) -> List[float]:
     by_example: Dict[tuple[str, str], Dict[str, float]] = defaultdict(dict)
     for row in rows:
@@ -57,7 +58,7 @@ def paired_accuracy_differences(
         if row["config"] not in {config, baseline}:
             continue
         key = (row["seed"], row["source_idx"])
-        by_example[key][row["config"]] = float(row["raw_correct"])
+        by_example[key][row["config"]] = float(row[metric])
     return [
         values[config] - values[baseline]
         for values in by_example.values()
@@ -121,6 +122,7 @@ def main() -> None:
     parser.add_argument("--expected_num_choices", type=int, default=4)
     parser.add_argument("--expected_generator_version", default=GENERATOR_VERSION)
     parser.add_argument("--expected_passkey_variant", default="")
+    parser.add_argument("--expected_passkey_score", default="raw", choices=["raw", "normalized"])
     parser.add_argument("--require_complete", action="store_true")
     parser.add_argument("--bootstrap_samples", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=2026)
@@ -129,6 +131,8 @@ def main() -> None:
 
     expected_contexts = parse_int_list(args.expected_contexts)
     expected_seeds = parse_int_list(args.expected_seeds)
+    primary_metric = f"{args.expected_passkey_score}_accuracy"
+    row_metric = f"{args.expected_passkey_score}_correct"
     all_rows: List[Dict[str, str]] = []
     runs: List[Dict[str, Any]] = []
     missing = []
@@ -149,6 +153,8 @@ def main() -> None:
                 raise ValueError(f"Unexpected passkey generator in {summary_path}")
             if summary.get("task") != "passkey":
                 raise ValueError(f"Unexpected task in {summary_path}")
+            if summary.get("primary_metric") != primary_metric:
+                raise ValueError(f"Passkey-score mismatch in {summary_path}")
             if int(summary["config"]["max_prompt_tokens"]) != context:
                 raise ValueError(f"Context mismatch in {summary_path}")
             if int(summary["config"].get("passkey_num_choices", 4)) != args.expected_num_choices:
@@ -210,7 +216,7 @@ def main() -> None:
                 if not config_rows:
                     continue
                 accuracy = bootstrap_mean_ci(
-                    [float(row["raw_correct"]) for row in config_rows],
+                    [float(row[row_metric]) for row in config_rows],
                     seed=args.seed + len(grouped),
                     samples=args.bootstrap_samples,
                 )
@@ -220,6 +226,7 @@ def main() -> None:
                     baseline="none",
                     context=context,
                     depth=depth,
+                    metric=row_metric,
                 )
                 delta = bootstrap_mean_ci(
                     delta_values,
@@ -260,6 +267,7 @@ def main() -> None:
                     baseline=right,
                     context=context,
                     depth=depth,
+                    metric=row_metric,
                 )
                 contrast = bootstrap_mean_ci(
                     values,
@@ -290,6 +298,8 @@ def main() -> None:
         "expected_examples_per_run": args.expected_examples_per_run,
         "expected_num_choices": args.expected_num_choices,
         "expected_passkey_variant": args.expected_passkey_variant,
+        "expected_passkey_score": args.expected_passkey_score,
+        "primary_metric": primary_metric,
         "missing_runs": missing,
         "underfilled_runs": underfilled,
         "complete_run_gate": args.require_complete and not missing and not underfilled,
