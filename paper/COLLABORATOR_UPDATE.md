@@ -138,6 +138,10 @@ so it is not yet an end-to-end speed claim.
 
 - Exact proposal-length sweep at `gamma = 2, 4, 8`, including aggressive
   `K4V2` and `K2V4` controls.
+- Six-pair exact `K4V2` versus `K2V4` cross-family replication, paired with an
+  ordinary 256-token free-generation control on Llama, OLMo, and SmolLM.
+- Exact key-quantization group-size sweep over 16, 32, 64, and 128 channels,
+  with three disjoint seeds and metadata-adjusted byte accounting.
 - Exact 4K/8K/16K speculative long-context replication.
 - Qwen2.5-3B and Qwen3-4B ordinary free-running size sweep; the 256-token
   SmolLM2/OLMo2/Llama replication is complete.
