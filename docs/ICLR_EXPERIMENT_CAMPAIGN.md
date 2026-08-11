@@ -127,12 +127,13 @@ gated 9B checkpoint.
     corresponding speculative warmup block so both objectives evaluate matched
     held-out content.
 24. `longbench_semantic_retrieval`: evaluate the official LongBench
-    `passage_retrieval_en` test archive with its published 30-paragraph prompt.
-    Three disjoint 24-example shards compare BF16, mild K/V asymmetry, K4V4,
-    aggressive K/V asymmetry, and K2V2. The evaluator uses LongBench-style
-    middle truncation, normalized label likelihood, original dataset IDs, and
-    early/middle/late answer-depth diagnostics. Aggregation fails unless all
-    3 runs and all 7 policies are present.
+    `passage_retrieval_en` test archive with its published 30-paragraph prompt
+    on Qwen2.5-1.5B, Llama-3.2-3B, and Qwen3-4B. For each model, three disjoint
+    24-example shards compare BF16, mild K/V asymmetry, K4V4, aggressive K/V
+    asymmetry, and K2V2. The evaluator uses LongBench-style middle truncation,
+    normalized label likelihood, original dataset IDs, and early/middle/late
+    answer-depth diagnostics. Aggregation fails unless all 3 runs and all 7
+    policies are present for that model.
 
 The launcher serializes complete stages and caps each stage at two GPUs. Each
 stage checks its pair-specific prerequisite artifact; a failed pair is skipped in
@@ -219,6 +220,13 @@ The official LongBench retrieval control can follow that calibration:
 ```bash
 DEPENDENCY=<passkey-aggregate-job> WANDB_PROJECT=kv-reduce \
   bash scripts/submit_longbench_passage_retrieval.sh
+```
+
+Llama and Qwen3 replications can then be serialized after the Qwen aggregate:
+
+```bash
+DEPENDENCY=<qwen-longbench-aggregate-job> WANDB_PROJECT=kv-reduce \
+  bash scripts/submit_longbench_cross_family.sh
 ```
 
 The two-seed cross-family target-quality grid is serialized to one GPU and may
