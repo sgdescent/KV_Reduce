@@ -2,13 +2,13 @@
 
 Status: provisional results as of August 10, 2026. The matched-objective grid,
 three-length speculation sweep, 16K/32K speculative long-context sweep,
-four-condition verifier audit, corrected Qwen HellaSwag/ARC task suite, and
-powered Qwen2.5-7B/3B FineWeb-Edu K4V3-versus-K3V4 replication are complete.
-The real bit-packed memory benchmark and a direct packed Triton attention
-microbenchmark are also complete. Llama-3.2-3B and OLMo-2-1B ARC-Challenge and
-HellaSwag checks are complete. Additional cross-family tasks, strict
-quantizer-factorial cells, long-context replications, and free-running
-standalone-generation drift are still running.
+four-model free-running generation study, corrected Qwen HellaSwag/ARC task
+suite, powered Qwen2.5-7B/3B K4V3-versus-K3V4 replication, packed-storage
+benchmark, and direct packed Triton attention microbenchmark are complete. A
+strict sequential-target verifier now produces exact target-greedy output for
+every tested trajectory; its three-seed six-pair cross-family campaign is in
+progress. Additional cross-family tasks, long-generation replications, and
+long-context runs remain active.
 
 ## Bottom Line On Scope And Novelty
 
@@ -74,10 +74,30 @@ reference at 0.999994 cosine, is 2.05x faster than materialize-then-attend, and
 reduces temporary allocation from 88.3 MiB to 0.38 MiB at 32K. It remains 6.88x
 slower than native BF16 SDPA, so this is a correct compressed-execution proof,
 not a serving-speed claim. Separately, the free-running target-cache campaign is
-complete for Qwen2.5-1.5B and Llama-3.2-3B; OLMo-2-1B and SmolLM2-360M are still
-running. These verifier-free runs measure exact sequence retention, token
-agreement, first divergence, and long-horizon error accumulation outside
-speculative decoding.
+complete for Qwen2.5-1.5B, Llama-3.2-3B, OLMo-2-1B, and SmolLM2-360M. All four
+models have a higher token-retention point estimate for K4V8 than equal-mean-bit
+K8V4 under grouped per-channel key quantization. These verifier-free runs
+measure exact sequence retention, token agreement, first divergence, and
+long-horizon error accumulation outside speculative decoding.
+
+The powered Qwen2.5-7B/3B allocator evaluation used 128 quality sequences and
+128 held-out acceptance prompts. Uniform K8V8 has the best KL (0.00083) while
+saving 43.06% of draft KV. Acceptance-oriented policies preserve or slightly
+improve acceptance relative to native: the raw acceptance allocator changes
+acceptance by +1.28 points (95% CI: +0.09 to +2.61), and the shrinkage policies
+change it by +1.20 to +1.63 points. However, none significantly beats the
+quality-optimized allocation at the same evaluation size; the best observed
+contrast is +0.98 points with CI [-0.28, +2.26]. This is evidence that the
+acceptance objective can produce safe policies, but it is not yet evidence that
+objective-specific allocation outperforms a strong quality allocator.
+
+The strict sequential-target verifier has passed both initial cross-family
+diagnostics. Every SmolLM2 and OLMo2 trajectory exactly matches an independent
+BF16 target-greedy reference. On the 32-prompt OLMo2-7B/1B diagnostic, native
+acceptance is 54.62%; K8V4 is 53.50%, K4V8 is 52.47%, and K4V4 is 52.47% while
+saving 66.33% of draft KV and 13.27% of combined target-plus-draft KV. The
+K8V4-minus-K4V8 contrast is +1.02 points with CI [-1.13, +3.31]. This is only a
+single-seed diagnostic; the three-seed cross-family campaign is now running.
 
 The strict all-layer objective-specific allocation run is complete and should be
 treated as a negative result. Across 144 single-layer K/V perturbations, the
