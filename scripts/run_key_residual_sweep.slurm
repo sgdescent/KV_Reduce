@@ -25,8 +25,9 @@ residual_id=$((task_id % ${#residual_lengths[@]}))
 seed=$((task_id / ${#residual_lengths[@]}))
 residual_length="${residual_lengths[$residual_id]}"
 num_prompts="${NUM_PROMPTS:-32}"
-skip_prompts=$(( ${SKIP_BASE:-82000} + task_id * (num_prompts + 8) ))
-root="${OUT_ROOT:-outputs/key_residual_geometry_v1/qwen25_3b_15b}"
+# Every residual length sees the same examples within a seed.
+skip_prompts=$(( ${SKIP_BASE:-82000} + seed * (num_prompts + 8) ))
+root="${OUT_ROOT:-outputs/key_residual_geometry_v2_paired/qwen25_3b_15b}"
 out_dir="$root/residual_${residual_length}/seed_${seed}"
 
 export TOKENIZERS_PARALLELISM=false
@@ -59,5 +60,5 @@ python3 -u benchmark_spec_kv_quantization.py \
   --out_dir "$out_dir" \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
-  --wandb_group "${WANDB_GROUP:-key-residual-geometry}" \
+  --wandb_group "${WANDB_GROUP:-key-residual-geometry-paired}" \
   --wandb_run_name "qwen25_3b_15b_keyresid${residual_length}_s${seed}"

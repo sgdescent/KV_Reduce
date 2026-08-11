@@ -19,7 +19,7 @@ fi
 
 residual_lengths=(0 32 128 256)
 residual_length="${residual_lengths[${SLURM_ARRAY_TASK_ID:-0}]}"
-root="${OUT_ROOT:-outputs/key_residual_geometry_v1/qwen25_3b_15b}"
+root="${OUT_ROOT:-outputs/key_residual_geometry_v2_paired/qwen25_3b_15b}"
 
 python3 -u aggregate_sequential_spec_runs.py \
   --summary_glob "$root/residual_${residual_length}/seed_*/summary.json" \

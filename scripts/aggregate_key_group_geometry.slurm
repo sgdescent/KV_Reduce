@@ -19,7 +19,7 @@ fi
 
 group_sizes=(16 32 64 128)
 group_size="${group_sizes[${SLURM_ARRAY_TASK_ID:-0}]}"
-root="${OUT_ROOT:-outputs/key_group_geometry_v1/qwen25_3b_15b}"
+root="${OUT_ROOT:-outputs/key_group_geometry_v2_paired/qwen25_3b_15b}"
 
 python3 -u aggregate_sequential_spec_runs.py \
   --summary_glob "$root/group_${group_size}/seed_*/summary.json" \

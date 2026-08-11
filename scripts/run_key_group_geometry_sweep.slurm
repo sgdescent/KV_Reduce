@@ -25,8 +25,10 @@ group_id=$((task_id % ${#group_sizes[@]}))
 seed=$((task_id / ${#group_sizes[@]}))
 group_size="${group_sizes[$group_id]}"
 num_prompts="${NUM_PROMPTS:-32}"
-skip_prompts=$(( ${SKIP_BASE:-76000} + task_id * (num_prompts + 8) ))
-root="${OUT_ROOT:-outputs/key_group_geometry_v1/qwen25_3b_15b}"
+# Every group size sees the same examples within a seed. Advancing by task_id
+# would confound quantizer geometry with a different text sample.
+skip_prompts=$(( ${SKIP_BASE:-76000} + seed * (num_prompts + 8) ))
+root="${OUT_ROOT:-outputs/key_group_geometry_v2_paired/qwen25_3b_15b}"
 out_dir="$root/group_${group_size}/seed_${seed}"
 
 export TOKENIZERS_PARALLELISM=false
@@ -59,5 +61,5 @@ python3 -u benchmark_spec_kv_quantization.py \
   --out_dir "$out_dir" \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
-  --wandb_group "${WANDB_GROUP:-key-group-geometry}" \
+  --wandb_group "${WANDB_GROUP:-key-group-geometry-paired}" \
   --wandb_run_name "qwen25_3b_15b_keygroup${group_size}_s${seed}"
