@@ -31,7 +31,8 @@ cmd=(
   python3 -u diagnose_cached_target_verification.py
   --model "${MODEL:-Qwen/Qwen2.5-3B}"
   --small_model "${SMALL_MODEL:-Qwen/Qwen2.5-1.5B}"
-  --device cuda:0
+  --device "${DEVICE:-cuda:0}"
+  --small_device "${SMALL_DEVICE:-${DEVICE:-cuda:0}}"
   --dtype "${DTYPE:-bf16}"
   --attn_implementation "$backend"
   --dataset_name "${DATASET_NAME:-wikitext}"
@@ -67,4 +68,3 @@ printf 'Running command:'
 printf ' %q' "${cmd[@]}"
 printf '\n'
 "${cmd[@]}"
-
