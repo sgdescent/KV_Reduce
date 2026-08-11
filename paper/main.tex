@@ -458,19 +458,20 @@ unresolved at $\gamma=2$ and $4$, but becomes $+1.42$ points at $\gamma=8$
 mild preference, while the aggressive value-precision preference remains stable
 across all three proposal lengths under the deployed KIVI geometry.
 
-The same KIVI geometry remains viable at long prefix lengths. On PG19 at 16K,
-K4V4 saves 70.79\% of draft-cache bytes and 30.97\% of combined target--draft
-KV, with a $+0.30$-point acceptance change across 24 paired prompts
-(CI $[-2.25,3.04]$). At 32K, it saves 70.94\% of draft KV and 31.04\% combined
-KV; the estimated acceptance change is $-2.22$ points (CI $[-5.81,0.00]$), but
-only 11 prompts are available, so we treat the 32K speculative estimate as
-preliminary. The matched ordinary-quality sweep is complete across three seeds:
-K4V4 has KL $0.00624$ at 16K and $0.00724$ at 32K, with 96.35\% and 96.88\%
-top-1 agreement, respectively. K4V8 has significantly lower KL than equal-budget
-K8V4 at both contexts: the K8V4--K4V8 KL contrasts are $+0.00307$
-(CI $[0.00216,0.00409]$) and $+0.00393$ (CI $[0.00268,0.00542]$).
-Thus, the ordinary-quality ranking agrees with the speculative preference at
-16K rather than yielding an objective reversal.
+The same KIVI geometry remains viable at long prefix lengths. Our strict
+PG19 aggregate contains six full runs, three seeds per context, 60 prompts,
+and 360 quantized trajectories that all match independent BF16 target-greedy
+output. At 16K, K4V4 saves 70.83\% of draft-cache bytes and 30.99\% of combined
+target--draft KV, with a $-0.94$-point acceptance change across 36 paired prompts
+(CI $[-2.06,-0.13]$). At 32K, it saves 70.96\% of draft KV and 31.04\% combined
+KV, with a $-0.73$-point change across 24 prompts (CI $[-2.99,1.28]$).
+The mild K8V4--K4V8 contrast is unresolved at 16K ($+0.13$ points,
+CI $[-1.09,1.26]$) but favors preserving values at 32K ($-3.50$ points,
+CI $[-6.62,-0.45]$). The aggressive K4V2--K2V4 contrast is unresolved at both
+contexts. A matched teacher-forced PG19 sweep is running under the same windows,
+seeds, cache geometry, and strict completeness gate; we therefore defer the
+long-context cross-objective conclusion rather than pairing these exact
+speculative results with an earlier, differently sampled quality run.
 
 \subsection{Actual packed storage realizes the estimated savings}
 

@@ -273,12 +273,8 @@ class ObjectiveMatrixAggregationTest(unittest.TestCase):
                     acceptance["achieved_profiled_saved_bytes"],
                 )
                 self.assertIn(2, quality["allowed_bits"])
-            manifest_rows = list(
-                csv.DictReader(
-                    (out_dir / "manifest.tsv").open(encoding="utf-8"),
-                    delimiter="\t",
-                )
-            )
+            with (out_dir / "manifest.tsv").open(encoding="utf-8") as handle:
+                manifest_rows = list(csv.DictReader(handle, delimiter="\t"))
 
         self.assertEqual(len(manifest_rows), 4)
 

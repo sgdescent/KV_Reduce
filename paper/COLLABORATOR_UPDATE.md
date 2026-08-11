@@ -170,16 +170,17 @@ so it is not yet an end-to-end speed claim.
   to separate low-bit compression from the protection of recent context. Its
   corrected prompt-paired chain is `13252`--`13254` and uses the same strict
   treatment-pairing gate.
-- Exact 4K/8K/16K speculative long-context validation, followed by a
-  dependency-chained paper-grade 16K/32K PG19-train extension (`13218`--`13219`). The
-  first 4K and 8K seeds are exact. `K4V2 - K2V4` is **-5.48 points**, CI
-  **[-11.45, -0.18]**, at 4K and **-7.44 points**, CI **[-17.24, +1.74]**, at
-  8K. At 4K, `K4V4` saves **30.63%** of combined target-plus-draft KV with a
-  provisional **+1.84-point** acceptance change. These sparse-seed values are
-  directional, not final context-length estimates. One validation 16K cell
-  yielded only 5 of 8 requested prompts, so it is excluded from paper-grade
-  evidence. The replacement sweep uses three seeds and a strict aggregation
-  gate that rejects every underfilled run.
+- The paper-grade PG19-train long-context extension (`13218`--`13219`) is
+  complete: six full runs, three seeds per context, 60 prompts, and 360 exact
+  target-matching trajectories at 16K and 32K. `K4V4` saves **30.99%** of
+  combined target-plus-draft KV at 16K with an acceptance change of **-0.94
+  points**, CI **[-2.06, -0.13]**; at 32K it saves **31.04%** with a **-0.73
+  point** change, CI **[-2.99, +1.28]**. The mild allocation contrast
+  `K8V4 - K4V8` is unresolved at 16K (**+0.13 points**, CI
+  **[-1.09, +1.26]**) but favors preserving values at 32K (**-3.50 points**,
+  CI **[-6.62, -0.45]**). The aggressive contrast remains unresolved at both
+  contexts. Earlier sparse 4K/8K results remain directional controls, and the
+  underfilled first-generation 16K cell stays excluded.
 - Matched ordinary-LM PG19-train quality at the same 16K/32K windows, seeds,
   K/V policies, and quantizer geometry (`13229`--`13230`), followed by a strict
   exact-acceptance versus teacher-forced KL/NLL comparison (`13232`). This is
