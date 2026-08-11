@@ -21,7 +21,7 @@ root="${OUT_ROOT:-outputs/kivi_passkey_aggressive_v1/qwen25_15b}"
 python3 -u aggregate_kv_passkey.py \
   --root "$root" \
   --out_dir "$root/aggregate" \
-  --expected_contexts 8192,16384,32768 \
+  --expected_contexts "${PASSKEY_CONTEXTS:-8192,16384,32768}" \
   --expected_seeds 0,1,2 \
   --expected_examples_per_run "${PASSKEY_EXAMPLES:-16}" \
   --expected_num_choices "${PASSKEY_NUM_CHOICES:-16}" \

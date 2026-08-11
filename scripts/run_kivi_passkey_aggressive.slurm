@@ -21,7 +21,7 @@ fi
 
 task_id="${SLURM_ARRAY_TASK_ID:-0}"
 task_id=$((10#$task_id))
-contexts=(8192 16384 32768)
+IFS=',' read -r -a contexts <<< "${PASSKEY_CONTEXTS:-8192,16384,32768}"
 context="${contexts[$((task_id / 3))]}"
 seed=$((task_id % 3))
 examples="${PASSKEY_EXAMPLES:-16}"
@@ -50,12 +50,12 @@ python3 -u eval_kv_quantized_multiple_choice.py \
   --passkey_score "${PASSKEY_SCORE:-raw}" \
   --seed "$seed" \
   --quant_configs "${QUANT_CONFIGS:-none;k4v4;k4v2;k2v4;k2v2}" \
-  --key_quant_axis per_channel \
-  --key_group_size 32 \
-  --key_residual_length 128 \
-  --value_quant_scheme affine \
+  --key_quant_axis "${KEY_QUANT_AXIS:-per_channel}" \
+  --key_group_size "${KEY_GROUP_SIZE:-32}" \
+  --key_residual_length "${KEY_RESIDUAL_LENGTH:-128}" \
+  --value_quant_scheme "${VALUE_QUANT_SCHEME:-affine}" \
   --out_dir "$out_dir" \
   --wandb \
   --wandb_project "${WANDB_PROJECT:-kv-reduce}" \
   --wandb_group "${PASSKEY_WANDB_GROUP:-kivi-passkey-aggressive}" \
-  --wandb_run_name "${model_tag}_passkey_${PASSKEY_VARIANT:-random}_c${context}_s${seed}"
+  --wandb_run_name "${model_tag}_passkey_${PASSKEY_VARIANT:-random}_${KEY_QUANT_AXIS:-per_channel}_c${context}_s${seed}"
