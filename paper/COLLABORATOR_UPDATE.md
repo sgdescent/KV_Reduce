@@ -52,7 +52,11 @@ are unresolved. Three-seed 256-token replications are now complete for three
 additional families. The `K8V4 - K4V8` token-retention contrast is -11.28
 points for OLMo, CI [-22.52, -0.26]; -4.96 for SmolLM2, CI [-17.08, +7.29];
 and +0.11 for Llama, CI [-9.87, +10.31]. The policy is therefore model-dependent
-rather than universal.
+rather than universal. Their equal-model macro contrast is -5.38 points,
+CI [-13.72, +2.78]. Across these three models, `K4V4` saves 66.56% of
+standalone-cache bytes and retains 28.68% of exact BF16 tokens over 256-token
+continuations. Token retention is a strict trajectory-drift diagnostic, not a
+semantic-quality score; downstream tasks remain necessary.
 
 This is promising but not yet sufficient for a main-track method paper. The
 remaining gates are a held-out geometry- and objective-aware allocator that
