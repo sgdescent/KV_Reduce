@@ -117,6 +117,8 @@ def main() -> None:
     parser.add_argument("--out_dir", type=Path, required=True)
     parser.add_argument("--expected_contexts", default="4096,8192,16384")
     parser.add_argument("--expected_seeds", default="0,1,2")
+    parser.add_argument("--expected_examples_per_run", type=int, default=0)
+    parser.add_argument("--require_complete", action="store_true")
     parser.add_argument("--bootstrap_samples", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=2026)
     args = parser.parse_args()
@@ -127,6 +129,7 @@ def main() -> None:
     all_rows: List[Dict[str, str]] = []
     runs: List[Dict[str, Any]] = []
     missing = []
+    underfilled = []
     for context in expected_contexts:
         for seed in expected_seeds:
             seed_dir = args.root / f"ctx_{context}" / f"seed_{seed}"
@@ -145,6 +148,19 @@ def main() -> None:
                 raise ValueError(f"Unexpected task in {summary_path}")
             if int(summary["config"]["max_prompt_tokens"]) != context:
                 raise ValueError(f"Context mismatch in {summary_path}")
+            if (
+                args.expected_examples_per_run > 0
+                and int(summary.get("num_examples", -1))
+                != args.expected_examples_per_run
+            ):
+                underfilled.append(
+                    {
+                        "path": str(summary_path),
+                        "observed": int(summary.get("num_examples", -1)),
+                        "expected": args.expected_examples_per_run,
+                    }
+                )
+                continue
             all_rows.extend(read_csv(rows_path))
             runs.append(
                 {
@@ -155,6 +171,10 @@ def main() -> None:
             )
     if not runs:
         raise ValueError("No complete passkey runs were found.")
+    if args.require_complete and (missing or underfilled):
+        raise ValueError(
+            f"Passkey sweep is incomplete: missing={missing}, underfilled={underfilled}"
+        )
 
     grouped: List[Dict[str, Any]] = []
     comparisons: List[Dict[str, Any]] = []
@@ -216,7 +236,11 @@ def main() -> None:
                         / len(summaries),
                     }
                 )
-            for left, right in (("k8v4", "k4v8"), ("k4v3", "k3v4")):
+            for left, right in (
+                ("k8v4", "k4v8"),
+                ("k4v3", "k3v4"),
+                ("k4v2", "k2v4"),
+            ):
                 if left not in configs or right not in configs:
                     continue
                 values = paired_accuracy_differences(
@@ -252,7 +276,10 @@ def main() -> None:
         "num_complete_runs": len(runs),
         "expected_contexts": expected_contexts,
         "expected_seeds": expected_seeds,
+        "expected_examples_per_run": args.expected_examples_per_run,
         "missing_runs": missing,
+        "underfilled_runs": underfilled,
+        "complete_run_gate": args.require_complete and not missing and not underfilled,
         "grouped": grouped,
         "comparisons": comparisons,
         "plots": make_plot(grouped, args.out_dir),
