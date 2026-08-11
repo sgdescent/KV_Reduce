@@ -248,9 +248,13 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   16K contexts, three seeds, and 72 examples per context. BF16 and every tested
   3/4/8-bit allocation achieve 100% accuracy, including keys placed at 10%,
   50%, and 90% depth. This is a ceiling result, not evidence that the policies
-  are equivalent. A stricter 16-choice replacement (`13242`--`13244`)
-  evaluates `K4V2`, `K2V4`, and `K2V2` at 8K/16K/32K with three disjoint
-  seeds and a completeness gate that rejects missing or underfilled runs.
+  are equivalent. The intended stricter execution (`13242`--`13243`) was
+  correctly excluded after its summaries revealed that SLURM had captured a
+  stale four-choice script; its second 100% ceiling result is not used. The
+  corrected v2 sweep (`13443`--`13444`) evaluates `K4V2`, `K2V4`, and `K2V2`
+  at 8K/16K/32K with three disjoint seeds, and aggregation now requires all
+  runs to report 16 choices and generator version
+  `synthetic_passkey_16way_v2`.
 - Exact quality-optimized versus acceptance-optimized allocation matrix at
   actual packed bytes: two budgets, 1K/4K contexts, three held-out seeds, and
   24 ordinary/speculative cross-evaluation cells per family. An audit found
