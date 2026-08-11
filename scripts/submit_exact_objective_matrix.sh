@@ -27,6 +27,12 @@ start_dependency="${START_DEPENDENCY:-}"
 run_tag="${RUN_TAG:-qwen25_exact}"
 profile_wandb_group="${PROFILE_WANDB_GROUP:-exact-objective-profile}"
 matrix_wandb_group="${MATRIX_WANDB_GROUP:-exact-objective-matrix}"
+matrix_throttle="${MATRIX_THROTTLE:-1}"
+
+if ! [[ "$matrix_throttle" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MATRIX_THROTTLE must be a positive integer, got: $matrix_throttle" >&2
+  exit 1
+fi
 
 if [[ "$profile_continuation_len" != "$profile_max_new_tokens" ]]; then
   echo "PROFILE_CONTINUATION_LEN and PROFILE_MAX_NEW_TOKENS must match for byte-aware allocation." >&2
@@ -63,7 +69,7 @@ count_items() {
 num_tasks=$((2 * $(count_items "$budgets") * $(count_items "$contexts") * $(count_items "$seeds")))
 
 matrix_job=$(sbatch --parsable --exclude="$exclude" --dependency="afterok:$prepare_job" \
-  --array="0-$((num_tasks - 1))%1" \
+  --array="0-$((num_tasks - 1))%$matrix_throttle" \
   --export=ALL,MANIFEST="$matrix_root/manifest.tsv",BIG_MODEL="$big_model",SMALL_MODEL="$small_model",DATASET_NAME="$dataset_name",DATASET_CONFIG="$dataset_config",EVAL_SPLIT=train,STREAM_EVAL=1,CONTINUATION_LEN=32,DRAFT_STEPS=4,MAX_NEW_TOKENS=16,TARGET_VERIFICATION_MODE=sequential,KEY_QUANT_AXIS=per_channel,KEY_GROUP_SIZE=32,KEY_RESIDUAL_LENGTH=128,VALUE_QUANT_SCHEME=affine,ENABLE_WANDB=1,WANDB_PROJECT=kv-reduce,WANDB_GROUP="$matrix_wandb_group" \
   scripts/eval_objective_kv_matrix.slurm)
 
@@ -76,7 +82,7 @@ Submitted exact objective-aware KV matrix
   quality profile:    $quality_job
   acceptance profile: $acceptance_job
   prepare:            $prepare_job
-  matrix ($num_tasks):       $matrix_job
+  matrix ($num_tasks, max $matrix_throttle concurrent): $matrix_job
   aggregate:          $aggregate_job
   output:             $root
 EOF
