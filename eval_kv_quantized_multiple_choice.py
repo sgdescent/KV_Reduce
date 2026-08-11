@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import itertools
 import json
@@ -21,6 +22,7 @@ from tqdm import tqdm
 from benchmark_spec_kv_quantization import (
     cached_prefill,
     cached_step,
+    crop_cache_to_length,
     finish_wandb,
     hard_exit_after_success,
     init_wandb,
@@ -535,6 +537,8 @@ def tokenize_passkey_example(
 
 
 def clone_cache(cache):
+    if hasattr(cache, "layers"):
+        return copy.deepcopy(cache)
     return legacy_to_cache(clone_legacy_cache(as_legacy_cache(cache)))
 
 
@@ -548,6 +552,8 @@ def prepare_prefill_cache(
     key_residual_length: int,
     value_quant_scheme: str,
 ):
+    if all(int(bits) >= 16 for bits in k_bits) and all(int(bits) >= 16 for bits in v_bits):
+        return cache
     return quantize_cache_for_next_step(
         clone_cache(cache),
         k_bits,
@@ -576,38 +582,43 @@ def score_choice_from_prefill(
     key_residual_length: int,
     value_quant_scheme: str,
 ) -> Tuple[float, int]:
-    cache = clone_cache(prepared_cache)
+    rewindable = hasattr(prepared_cache, "crop")
+    cache = prepared_cache if rewindable else clone_cache(prepared_cache)
     logits = shared_token_logits(prefill_logits, vocab_size)
     cache_len = int(prompt_len)
     score = 0.0
     token_count = int(choice_ids.shape[1])
 
-    for token_idx in range(token_count):
-        token = choice_ids[:, token_idx].to(device)
-        if int(token.max().item()) >= int(logits.shape[-1]):
-            raise ValueError("Choice token falls outside the model output vocabulary.")
-        score += float(F.log_softmax(logits.float(), dim=-1).gather(-1, token[:, None]).item())
-        if token_idx + 1 >= token_count:
-            break
-        step = cached_step(
-            model=model,
-            input_ids=choice_ids[:, token_idx : token_idx + 1],
-            cache=cache,
-            cache_len=cache_len,
-            device=device,
-        )
-        logits = shared_token_logits(step["logits"][:, -1, :], vocab_size)
-        cache = quantize_cache_for_next_step(
-            step["cache"],
-            k_bits,
-            v_bits,
-            new_tokens=1,
-            key_quant_axis=key_quant_axis,
-            key_group_size=key_group_size,
-            key_residual_length=key_residual_length,
-            value_quant_scheme=value_quant_scheme,
-        )
-        cache_len = int(step["cache_len"])
+    try:
+        for token_idx in range(token_count):
+            token = choice_ids[:, token_idx].to(device)
+            if int(token.max().item()) >= int(logits.shape[-1]):
+                raise ValueError("Choice token falls outside the model output vocabulary.")
+            score += float(F.log_softmax(logits.float(), dim=-1).gather(-1, token[:, None]).item())
+            if token_idx + 1 >= token_count:
+                break
+            step = cached_step(
+                model=model,
+                input_ids=choice_ids[:, token_idx : token_idx + 1],
+                cache=cache,
+                cache_len=cache_len,
+                device=device,
+            )
+            logits = shared_token_logits(step["logits"][:, -1, :], vocab_size)
+            cache = quantize_cache_for_next_step(
+                step["cache"],
+                k_bits,
+                v_bits,
+                new_tokens=1,
+                key_quant_axis=key_quant_axis,
+                key_group_size=key_group_size,
+                key_residual_length=key_residual_length,
+                value_quant_scheme=value_quant_scheme,
+            )
+            cache_len = int(step["cache_len"])
+    finally:
+        if rewindable:
+            crop_cache_to_length(cache, prompt_len)
     return score, token_count
 
 

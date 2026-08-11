@@ -1,6 +1,7 @@
 import unittest
 
 import torch
+from transformers import DynamicCache
 
 from eval_kv_quantized_multiple_choice import (
     PASSKEY_VARIANT_CONFUSABLE,
@@ -9,8 +10,10 @@ from eval_kv_quantized_multiple_choice import (
     build_fewshot_prefix,
     choose_answer,
     clean_hellaswag_text,
+    clone_cache,
     format_task_example,
     generate_passkey_examples,
+    prepare_prefill_cache,
 )
 
 
@@ -43,6 +46,36 @@ class MultipleChoiceFormattingTest(unittest.TestCase):
 
     def test_choose_answer(self):
         self.assertEqual(choose_answer([-3.0, -1.0, -2.0]), 1)
+
+    def test_dynamic_cache_clone_is_independent_without_conversion(self):
+        legacy = tuple(
+            (torch.randn(1, 2, 8, 4), torch.randn(1, 2, 8, 4))
+            for _ in range(3)
+        )
+        cache = DynamicCache(ddp_cache_data=legacy)
+        cloned = clone_cache(cache)
+
+        self.assertIsInstance(cloned, DynamicCache)
+        self.assertNotEqual(cloned.layers[0].keys.data_ptr(), cache.layers[0].keys.data_ptr())
+        cloned.crop(5)
+        self.assertEqual(cache.get_seq_length(), 8)
+        self.assertEqual(cloned.get_seq_length(), 5)
+
+    def test_full_precision_prefill_reuses_rewindable_cache(self):
+        legacy = ((torch.randn(1, 2, 8, 4), torch.randn(1, 2, 8, 4)),)
+        cache = DynamicCache(ddp_cache_data=legacy)
+
+        prepared = prepare_prefill_cache(
+            cache,
+            k_bits=[16],
+            v_bits=[16],
+            key_quant_axis="per_channel",
+            key_group_size=4,
+            key_residual_length=4,
+            value_quant_scheme="affine",
+        )
+
+        self.assertIs(prepared, cache)
 
     def test_generates_deterministic_passkeys_at_multiple_depths(self):
         first = generate_passkey_examples(
