@@ -162,6 +162,59 @@ def aggregate_contrasts(
     return output
 
 
+def make_plot(
+    model_rows: Sequence[Mapping[str, Any]],
+    macro_rows: Sequence[Mapping[str, Any]],
+    out_dir: Path,
+) -> List[str]:
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return []
+    contexts = sorted({int(row["context"]) for row in model_rows})
+    models = sorted({str(row["model"]) for row in model_rows})
+    fig, axis = plt.subplots(figsize=(7.7, 4.8))
+    for model in models:
+        subset = sorted(
+            (row for row in model_rows if row["model"] == model),
+            key=lambda row: int(row["context"]),
+        )
+        axis.plot(
+            [int(row["context"]) for row in subset],
+            [100.0 * float(row["accuracy_a_minus_b_mean"]) for row in subset],
+            marker="o",
+            linewidth=1.5,
+            alpha=0.65,
+            label=model,
+        )
+    macro = sorted(macro_rows, key=lambda row: int(row["context"]))
+    axis.plot(
+        [int(row["context"]) for row in macro],
+        [100.0 * float(row["k4v2_minus_k2v4_macro_mean"]) for row in macro],
+        color="#C53D55",
+        marker="D",
+        linewidth=3.0,
+        label="Model macro",
+        zorder=5,
+    )
+    axis.axhline(0.0, color="#222222", linewidth=1)
+    axis.set_xscale("log", base=2)
+    axis.set_xticks(contexts, [f"{context // 1024}K" for context in contexts])
+    axis.set_xlabel("Prefix length")
+    axis.set_ylabel("K4V2 - K2V4 retrieval accuracy (pp)")
+    axis.set_title("Equal-Memory Retrieval Precision Preference", fontweight="bold")
+    axis.grid(alpha=0.22)
+    axis.legend(frameon=False, ncol=2)
+    fig.tight_layout()
+    paths = []
+    for extension in ("png", "pdf"):
+        path = out_dir / f"cross_family_passkey_preference.{extension}"
+        fig.savefig(path, dpi=240, bbox_inches="tight")
+        paths.append(str(path))
+    plt.close(fig)
+    return paths
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", action="append", required=True)
@@ -190,6 +243,7 @@ def main() -> None:
     write_csv(args.out_dir / "model_accuracy.csv", accuracy_rows)
     write_csv(args.out_dir / "model_contrasts.csv", contrast_rows)
     write_csv(args.out_dir / "macro_contrasts.csv", macro)
+    plots = make_plot(contrast_rows, macro, args.out_dir)
     payload = {
         "evaluator_version": EVALUATOR_VERSION,
         "task_generator_version": GENERATOR_VERSION,
@@ -199,6 +253,7 @@ def main() -> None:
         "models": sorted(sources),
         "complete_gate": True,
         "macro_contrasts": macro,
+        "plots": plots,
     }
     (args.out_dir / "summary.json").write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"

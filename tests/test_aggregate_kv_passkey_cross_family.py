@@ -6,6 +6,7 @@ from pathlib import Path
 from aggregate_kv_passkey_cross_family import (
     aggregate_contrasts,
     collect_rows,
+    make_plot,
     parse_sources,
 )
 
@@ -66,6 +67,21 @@ class PasskeyCrossFamilyTest(unittest.TestCase):
         output = aggregate_contrasts(rows, bootstrap_samples=1000, seed=1)
         self.assertEqual(output[0]["num_models"], 2)
         self.assertAlmostEqual(output[0]["k4v2_minus_k2v4_macro_mean"], 0.2)
+
+    def test_writes_cross_family_figure(self) -> None:
+        model_rows = [
+            {"model": "a", "context": 8192, "accuracy_a_minus_b_mean": 0.1},
+            {"model": "a", "context": 16384, "accuracy_a_minus_b_mean": 0.2},
+        ]
+        macro_rows = [
+            {"context": 8192, "k4v2_minus_k2v4_macro_mean": 0.1},
+            {"context": 16384, "k4v2_minus_k2v4_macro_mean": 0.2},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            paths = make_plot(model_rows, macro_rows, Path(directory))
+            if paths:
+                self.assertEqual(len(paths), 2)
+                self.assertTrue(all(Path(path).exists() for path in paths))
 
 
 if __name__ == "__main__":
