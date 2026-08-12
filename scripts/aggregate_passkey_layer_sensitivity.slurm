@@ -33,5 +33,6 @@ python3 -u aggregate_passkey_layer_sensitivity.py \
   --context "$context" \
   --expected_seeds 0,1,2 \
   --expected_examples_per_run "${PASSKEY_EXAMPLES:-32}" \
+  --minimum_source_index "${PASSKEY_SKIP_BASE:-192}" \
   --out_dir "$root/aggregate" \
   --require_complete

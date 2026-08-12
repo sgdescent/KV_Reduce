@@ -90,6 +90,7 @@ def main() -> None:
     parser.add_argument("--context", type=int, default=16384)
     parser.add_argument("--expected_seeds", default="0,1,2")
     parser.add_argument("--expected_examples_per_run", type=int, default=32)
+    parser.add_argument("--minimum_source_index", type=int, default=192)
     parser.add_argument("--out_dir", type=Path, required=True)
     parser.add_argument("--require_complete", action="store_true")
     parser.add_argument("--bootstrap_samples", type=int, default=10_000)
@@ -149,7 +150,13 @@ def main() -> None:
         if len(unique_rows) != len(run_rows):
             raise ValueError(f"Duplicate example/config rows in {rows_path}.")
         all_rows.extend(run_rows)
-        run_source_ranges.append(tuple(int(value) for value in summary["source_index_range"]))
+        source_range = tuple(int(value) for value in summary["source_index_range"])
+        if source_range[0] < args.minimum_source_index:
+            raise ValueError(
+                f"Source range {source_range} overlaps the reserved powered split "
+                f"ending before {args.minimum_source_index}."
+            )
+        run_source_ranges.append(source_range)
     if args.require_complete and (missing or underfilled):
         raise ValueError(f"Incomplete sweep: missing={missing}, underfilled={underfilled}")
     if not all_rows:
@@ -201,6 +208,7 @@ def main() -> None:
         "context": args.context,
         "expected_seeds": expected_seeds,
         "expected_examples_per_run": args.expected_examples_per_run,
+        "minimum_source_index": args.minimum_source_index,
         "baseline": manifest["baseline"],
         "selected_layers": manifest["selected_layers"],
         "complete_gate": complete_gate,

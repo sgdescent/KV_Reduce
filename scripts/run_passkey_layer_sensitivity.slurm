@@ -31,7 +31,10 @@ esac
 
 context="${PASSKEY_CONTEXT:-16384}"
 examples="${PASSKEY_EXAMPLES:-32}"
-skip=$((seed * examples))
+# Powered 16K runs use source indices 0--191. Keep this localization sweep
+# disjoint by default so it cannot tune conclusions on the replication set.
+skip_base="${PASSKEY_SKIP_BASE:-192}"
+skip=$((skip_base + seed * examples))
 root="${OUT_ROOT:-outputs/passkey_layer_sensitivity_v1}/$model_tag"
 allocation_dir="$root/allocations"
 out_dir="$root/ctx_${context}/seed_${seed}"
