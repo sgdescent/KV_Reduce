@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
@@ -38,6 +39,19 @@ def write_csv(path: Path, rows: Sequence[Dict[str, Any]]) -> None:
 
 def parse_int_list(value: str) -> List[int]:
     return [int(item.strip()) for item in value.split(",") if item.strip()]
+
+
+def parse_comparison_pairs(value: str) -> List[tuple[str, str]]:
+    pairs = []
+    for item in re.split(r"[,;]", value):
+        item = item.strip()
+        if not item:
+            continue
+        fields = [field.strip() for field in item.split(":")]
+        if len(fields) != 2 or not all(fields):
+            raise ValueError(f"Invalid comparison pair {item!r}; expected config_a:config_b.")
+        pairs.append((fields[0], fields[1]))
+    return pairs
 
 
 def paired_accuracy_differences(
@@ -123,9 +137,20 @@ def main() -> None:
     parser.add_argument("--expected_generator_version", default=GENERATOR_VERSION)
     parser.add_argument("--expected_passkey_variant", default="")
     parser.add_argument("--expected_passkey_score", default="raw", choices=["raw", "normalized"])
+    parser.add_argument(
+        "--minimum_source_index",
+        type=int,
+        default=-1,
+        help="Reject runs whose source range starts before this index; negative disables the gate.",
+    )
     parser.add_argument("--require_complete", action="store_true")
     parser.add_argument("--bootstrap_samples", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument(
+        "--comparison_pairs",
+        default="k8v4:k4v8;k4v3:k3v4;k4v2:k2v4",
+        help="Semicolon-separated config_a:config_b paired contrasts.",
+    )
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -133,10 +158,13 @@ def main() -> None:
     expected_seeds = parse_int_list(args.expected_seeds)
     primary_metric = f"{args.expected_passkey_score}_accuracy"
     row_metric = f"{args.expected_passkey_score}_correct"
+    comparison_pairs = parse_comparison_pairs(args.comparison_pairs)
     all_rows: List[Dict[str, str]] = []
     runs: List[Dict[str, Any]] = []
     missing = []
     underfilled = []
+    run_source_ranges: List[tuple[int, int]] = []
+    expected_config_names: set[str] | None = None
     for context in expected_contexts:
         for seed in expected_seeds:
             seed_dir = args.root / f"ctx_{context}" / f"seed_{seed}"
@@ -178,7 +206,44 @@ def main() -> None:
                     }
                 )
                 continue
-            all_rows.extend(read_csv(rows_path))
+            observed_config_names = set(summary.get("summaries", {}))
+            if expected_config_names is None:
+                expected_config_names = observed_config_names
+            elif observed_config_names != expected_config_names:
+                raise ValueError(
+                    f"Configuration mismatch in {summary_path}: "
+                    f"expected={sorted(expected_config_names)}, "
+                    f"observed={sorted(observed_config_names)}"
+                )
+            run_rows = read_csv(rows_path)
+            if args.expected_examples_per_run > 0:
+                expected_rows = args.expected_examples_per_run * len(observed_config_names)
+                if len(run_rows) != expected_rows:
+                    underfilled.append(
+                        {
+                            "path": str(rows_path),
+                            "observed_rows": len(run_rows),
+                            "expected_rows": expected_rows,
+                        }
+                    )
+                    continue
+            unique_rows = {
+                (row["seed"], row["source_idx"], row["config"]) for row in run_rows
+            }
+            if len(unique_rows) != len(run_rows):
+                raise ValueError(f"Duplicate example/config rows in {rows_path}")
+            if args.minimum_source_index >= 0:
+                raw_source_range = summary.get("source_index_range")
+                if not raw_source_range or len(raw_source_range) != 2:
+                    raise ValueError(f"Missing source_index_range in {summary_path}")
+                source_range = tuple(int(value) for value in raw_source_range)
+                if source_range[0] < args.minimum_source_index:
+                    raise ValueError(
+                        f"Source range {source_range} starts before held-out boundary "
+                        f"{args.minimum_source_index} in {summary_path}"
+                    )
+                run_source_ranges.append(source_range)
+            all_rows.extend(run_rows)
             runs.append(
                 {
                     "context": context,
@@ -192,6 +257,11 @@ def main() -> None:
         raise ValueError(
             f"Passkey sweep is incomplete: missing={missing}, underfilled={underfilled}"
         )
+    if args.minimum_source_index >= 0:
+        sorted_ranges = sorted(run_source_ranges)
+        for previous, current in zip(sorted_ranges, sorted_ranges[1:]):
+            if current[0] <= previous[1]:
+                raise ValueError(f"Passkey source shards overlap: {sorted_ranges}")
 
     grouped: List[Dict[str, Any]] = []
     comparisons: List[Dict[str, Any]] = []
@@ -254,11 +324,7 @@ def main() -> None:
                         / len(summaries),
                     }
                 )
-            for left, right in (
-                ("k8v4", "k4v8"),
-                ("k4v3", "k3v4"),
-                ("k4v2", "k2v4"),
-            ):
+            for left, right in comparison_pairs:
                 if left not in configs or right not in configs:
                     continue
                 values = paired_accuracy_differences(
@@ -299,6 +365,8 @@ def main() -> None:
         "expected_num_choices": args.expected_num_choices,
         "expected_passkey_variant": args.expected_passkey_variant,
         "expected_passkey_score": args.expected_passkey_score,
+        "minimum_source_index": args.minimum_source_index,
+        "source_index_ranges": run_source_ranges,
         "primary_metric": primary_metric,
         "missing_runs": missing,
         "underfilled_runs": underfilled,
