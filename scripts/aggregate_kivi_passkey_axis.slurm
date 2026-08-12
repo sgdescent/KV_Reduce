@@ -23,4 +23,8 @@ python3 -u aggregate_kv_passkey_axis.py \
   --out_dir "${OUT_DIR:-outputs/kivi_passkey_axis_v1/qwen25_15b_comparison}" \
   --context "${PASSKEY_CONTEXT:-16384}" \
   --expected_examples_per_run "${PASSKEY_EXAMPLES:-16}" \
+  --expected_num_choices "${PASSKEY_NUM_CHOICES:-16}" \
+  --expected_generator_version "${PASSKEY_GENERATOR_VERSION:-synthetic_associative_passkey_v3}" \
+  --expected_passkey_variant "${PASSKEY_VARIANT:-confusable_records}" \
+  --expected_passkey_score "${PASSKEY_SCORE:-normalized}" \
   --require_complete
