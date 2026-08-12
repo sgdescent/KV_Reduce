@@ -705,6 +705,18 @@ exactness gate. Thus the powered Qwen control shows agreement, not reversal:
 both downstream objectives favor retaining more value precision under the
 tested outlier-aware key quantizer.
 
+OLMo2-7B/1B independently reproduces this aggressive all-layer result. Across
+the same 1K/4K, three-seed design, all six speculative and six quality runs are
+complete and all 2,016 target trajectories are exact. K4V2 trails near-matched
+K2V4 by $1.91$ acceptance points at 1K (95\% CI $[-3.70,-0.09]$) and
+$2.35$ points at 4K (CI $[-4.58,-0.07]$). Ordinary-quality KL agrees:
+K4V2--K2V4 is $+0.05148$ at 1K (CI $[+0.03861,+0.06648]$) and
+$+0.04786$ at 4K (CI $[+0.03941,+0.05964]$). Total-cache savings differ by
+only 0.17 and 0.04 percentage points, respectively. At the mild K8V4--K4V8
+comparison, acceptance remains unresolved while KL favors K4V8. Together,
+Qwen and OLMo provide two powered families where aggressive value precision
+improves both speculative acceptance and ordinary quality.
+
 This agreement is useful operationally. Across 48 model-pair/configuration cells,
 ordinary-quality KL and speculative-acceptance harm have Spearman correlation
 $0.849$; the macro average across the six model pairs is $0.794$ (95\% model-pair

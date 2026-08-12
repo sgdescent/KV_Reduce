@@ -389,8 +389,17 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   and differ in total-cache savings by only **0.38 points** at 1K and
   **0.10 points** at 4K. This is resolved evidence that value precision can
   matter more for both speculative acceptance and ordinary quality.
-- Direct all-layer replications remain active or dependency-queued for OLMo2
-  and Llama (`13512`--`13517`). A strict four-family meta-analysis
+- The powered all-layer OLMo2-7B/1B replication is complete with all six
+  speculative and six quality runs and **2,016/2,016** exact target
+  trajectories. Near-matched `K4V2 - K2V4` acceptance is **-1.91 points** at
+  1K, CI **[-3.70, -0.09]**, and **-2.35 points** at 4K, CI
+  **[-4.58, -0.07]**. Ordinary-quality KL agrees: the same contrast is
+  **+0.05148**, CI **[+0.03861, +0.06648]**, at 1K and **+0.04786**, CI
+  **[+0.03941, +0.05964]**, at 4K. Total-cache savings differ by only
+  **0.17 points** and **0.04 points**, respectively. This independently
+  reproduces Qwen's aggressive value-precision preference.
+- The direct all-layer Llama quality replication is active and its speculative
+  replication remains safely dependency-queued (`13515`--`13517`). A strict four-family meta-analysis
   (`13518`) will run only after all four aggregates pass completeness, evaluator,
   and target-exactness gates.
 - Model-weighted paper tables and objective-comparison figures.
