@@ -23,5 +23,5 @@ python3 -u aggregate_kv_passkey.py \
   --expected_num_choices 16 \
   --expected_generator_version synthetic_associative_passkey_v3 \
   --expected_passkey_variant confusable_records \
-  --expected_passkey_score raw \
+  --expected_passkey_score normalized \
   --require_complete
