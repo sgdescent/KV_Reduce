@@ -21,5 +21,5 @@ root="${ROOT:-outputs/kivi_longbench_passage_retrieval_v1}"
 python3 -u aggregate_longbench_cross_family.py \
   --root "$root" \
   --out_dir "$root/cross_family_aggregate" \
-  --models qwen25_15b,llama32_3b,qwen3_4b \
-  --expected_examples_per_model 72
+  --models "${MODELS:-qwen25_15b,llama32_3b,qwen3_4b}" \
+  --expected_examples_per_model "${EXPECTED_EXAMPLES_PER_MODEL:-72}"
