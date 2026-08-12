@@ -335,7 +335,12 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   **[0.00, +10.42]**; **+6.25 points** at 16K, CI **[-2.08, +20.83]**; and
   exactly **0.00 points** at 32K, CI **[-10.42, +12.50]**. The cross-family
   aggregate therefore rejects a universal K-first or V-first retrieval policy;
-  key/value allocation must be model- and context-aware. The quantizer-axis
+  key/value allocation must be model- and context-aware. The powered Qwen3
+  16K study is also complete: BF16 scores **191/192**, while every compressed
+  policy scores **192/192**, so `K4V2 - K2V4` is exactly zero. Across all three
+  powered 16K studies, the model-macro contrast is **+5.73 points**, with
+  model-bootstrap CI **[0.00, +16.15]**; this aggregate is driven primarily by
+  Qwen2.5 rather than a universal family-level effect. The quantizer-axis
   ablation (`13538`--`13540`) is now complete and resolved. On the same 48
   Qwen2.5 16K examples, per-channel keys yield a `K4V2 - K2V4` contrast of
   **+20.83 points**, CI **[+8.33, +33.33]**, while per-token keys yield
@@ -355,8 +360,11 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   cross-context `K8V4 - K4V8` heuristic contrast is **-0.41 acceptance points**,
   CI **[-1.01, +0.16]**, while `K8V4` incurs **+0.00140 KL**, CI
   **[+0.00092, +0.00214]**. This is a clean mild-budget null/control rather than
-  evidence for a universal K-first policy. The SmolLM2 mild chain
-  (`13391`--`13395`) is now running with the same 24-cell strict design.
+  evidence for a universal K-first policy. The matched SmolLM2 mild chain
+  (`13391`--`13395`) is also complete: all **24/24** held-out cells pass byte
+  matching and **3,840/3,840** exact target checks. Quality and acceptance
+  profiling select identical layouts at both budgets, so every paired
+  cross-objective acceptance/KL/NLL effect is exactly zero.
 - Larger-pair exact-byte replications are dependency-queued after those stages.
   Qwen2.5-7B/3B aggressive (`13398`--`13402`) and mild
   (`13403`--`13407`) matrices are followed by Llama-3.1-8B/3.2-3B aggressive
@@ -371,8 +379,18 @@ full dequantization workspace, but is not yet an end-to-end speed claim.
   contrast is **+0.03128** at 1K, CI **[+0.02541, +0.03767]**, and
   **+0.04353** at 4K, CI **[+0.03154, +0.05935]**. The 4K means reverse, but
   acceptance remains unresolved after powering the test.
-- Direct all-layer replications remain dependency-queued for Qwen2.5,
-  OLMo2, and Llama (`13506`--`13517`). A strict four-family meta-analysis
+- The powered all-layer Qwen2.5-3B/1.5B replication is complete across 1K and
+  4K, three seeds, and **288 prompts**. At 1K, `K4V2 - K2V4` acceptance is
+  **-2.72 points**, CI **[-4.76, -0.66]**, significantly favoring `K2V4`.
+  At 4K the mean is **-2.59 points**, CI **[-5.88, +0.70]**. Ordinary-quality
+  KL decisively favors `K2V4` at both contexts: the same contrast is
+  **+0.12186**, CI **[+0.10334, +0.14284]**, at 1K and **+0.12675**, CI
+  **[+0.08585, +0.18014]**, at 4K. The policies use the same mean precision
+  and differ in total-cache savings by only **0.38 points** at 1K and
+  **0.10 points** at 4K. This is resolved evidence that value precision can
+  matter more for both speculative acceptance and ordinary quality.
+- Direct all-layer replications remain active or dependency-queued for OLMo2
+  and Llama (`13512`--`13517`). A strict four-family meta-analysis
   (`13518`) will run only after all four aggregates pass completeness, evaluator,
   and target-exactness gates.
 - Model-weighted paper tables and objective-comparison figures.

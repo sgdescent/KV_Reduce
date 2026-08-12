@@ -549,7 +549,13 @@ contrasts remain unresolved. A powered Llama 16K replication remains unresolved:
 K4V2 scores 185/192 versus 183/192 for K2V4, a $+1.04$-point difference
 (CI $[-1.56,+4.17]$). Qwen3-4B is saturated at 48/48 for every policy at
 8K and 16K; at 32K, K4V2 scores 47/48 and K2V4 scores 48/48, an unresolved
-$-2.08$-point contrast (CI $[-6.25,0.00]$). A strict model-level bootstrap over
+$-2.08$-point contrast (CI $[-6.25,0.00]$). A powered Qwen3 16K replication
+is fully saturated: BF16 retrieves 191/192 passkeys and every compressed policy,
+including K4V2 and K2V4, retrieves 192/192, yielding an exact zero paired
+contrast. Across the three powered 16K model studies, the macro
+K4V2--K2V4 effect is $+5.73$ points, but its model-bootstrap interval
+$[0.00,+16.15]$ includes a null cross-family effect and is driven primarily by
+Qwen2.5. A strict model-level bootstrap over the smaller three-context study of
 Qwen2.5, Llama~3, and Qwen3 gives macro K4V2--K2V4 effects of $+4.86$ points at
 8K (CI $[0.00,+10.42]$), $+6.25$ at 16K (CI $[-2.08,+20.83]$), and exactly
 $0.00$ at 32K (CI $[-10.42,+12.50]$). These draft-only synthetic results
@@ -685,6 +691,19 @@ points at 1K (CI $[-3.24,+0.54]$) and $+0.63$ points at 4K
 contexts by $0.03128$ (CI $[+0.02541,+0.03767]$) and $0.04353$
 (CI $[+0.03154,+0.05935]$), respectively. The 4K means reverse direction, but
 the acceptance interval rules out a resolved objective-specific allocation.
+
+The corresponding all-layer Qwen2.5-3B/1.5B replication is complete across
+1K and 4K contexts with three seeds and 288 prompts. At 1K, K4V2 trails K2V4
+by $2.72$ acceptance points (95\% CI $[-4.76,-0.66]$); at 4K the mean gap is
+$-2.59$ points but remains unresolved (CI $[-5.88,+0.70]$). Ordinary-quality
+KL strongly favors K2V4 at both contexts: K4V2--K2V4 is $+0.12186$ at 1K
+(CI $[+0.10334,+0.14284]$) and $+0.12675$ at 4K
+(CI $[+0.08585,+0.18014]$). The policies use the same mean bit budget and have
+near-matched measured storage: their total-cache savings differ by 0.38 points
+at 1K and 0.10 points at 4K. All target trajectories pass the strict sequential
+exactness gate. Thus the powered Qwen control shows agreement, not reversal:
+both downstream objectives favor retaining more value precision under the
+tested outlier-aware key quantizer.
 
 This agreement is useful operationally. Across 48 model-pair/configuration cells,
 ordinary-quality KL and speculative-acceptance harm have Spearman correlation
@@ -822,6 +841,13 @@ points below K4V8 (CI $[-1.01,+0.16]$) and incurs $+0.00140$ ordinary-quality
 KL (CI $[+0.00092,+0.00214]$). The mild control therefore preserves behavior
 but neither separates the downstream objectives nor supports a universal
 K-first allocation rule.
+
+A matched SmolLM2 mild-budget control reaches the same conclusion. All 24
+held-out cells pass byte-matching and 3,840/3,840 target-exactness checks.
+Quality and acceptance profiling select identical allocations at both six- and
+eight-bit budgets, making every paired cross-objective acceptance, KL, and NLL
+contrast exactly zero. This independent null shows that the lack of objective
+separation at mild precision is not specific to OLMo.
 
 A strict SmolLM2-1.7B/360M replication provides the third aggressive family and
 passes 3,840/3,840 target-exactness checks. At the three-bit budget, the
