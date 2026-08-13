@@ -892,6 +892,17 @@ three-family macro acceptance effect at budget three is $-0.17$ points, with a
 model-bootstrap interval of $[-0.61,+0.11]$. Thus, the additive sensitivity
 allocator does not establish a downstream-objective benefit.
 
+The final exact-byte meta-analysis extends this comparison to five model pairs:
+Qwen2.5 3B/1.5B and 7B/3B, Llama 3.1/3.2, OLMo~2, and SmolLM2. All ten mild and
+aggressive matrices are complete, with 38,400/38,400 exact target checks and no
+ties or invalid prompts. At the aggressive three-bit budget, acceptance-optimized
+allocation is $0.48$ acceptance points worse than quality-optimized allocation
+(95\% model-bootstrap CI $[-0.98,-0.05]$), while increasing ordinary-quality KL
+by $0.00561$ (CI $[+0.00180,+0.01030]$). At aggressive budget five and mild
+budgets six and eight, both objectives select identical policies. The completed
+matrix therefore provides evidence against, rather than for, a separate
+acceptance-trained additive allocator.
+
 We therefore add a direct all-layer equal-memory control that avoids the
 additive allocator. In a 32-prompt SmolLM pilot with 224/224 exact target
 checks, K4V2 exceeds K2V4 by $2.39$ speculative-acceptance points, although its

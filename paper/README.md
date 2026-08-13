@@ -60,7 +60,9 @@ not admitted to paper tables.
   pairs. Draft-only results retain an unquantized BF16 verifier and are gated on
   complete paired prompts, supported evaluator versions, and target exactness.
 - Matched ordinary-quality and speculative-acceptance objective matrices are
-  complete. They show no resolved objective-specific allocation advantage.
+  complete across five model pairs and 38,400 exact target checks. At the
+  aggressive budget, acceptance-optimized allocation is significantly worse;
+  at milder budgets the objectives select identical policies.
 - The powered 16K retrieval study contains 192 paired Qwen2.5 examples and finds
   a resolved key-axis-by-allocation interaction. The three-model LongBench
   passage-retrieval control is complete but saturates for Llama and Qwen3.

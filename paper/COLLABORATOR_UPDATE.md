@@ -14,6 +14,16 @@ LongBench passage-retrieval control finds K4V2 matches BF16 macro accuracy at
 Llama and Qwen3 saturate. A held-out retrieval-aware layer policy also fails to
 beat the strongest uniform baseline, so it is retained as a null result.
 
+The final strict objective matrix now includes five model pairs and ten complete
+exact-byte matrices. Across **38,400/38,400 exact target checks**, there are no
+ties, invalid prompts, or non-tie mismatches. At the aggressive three-bit budget,
+acceptance-optimized allocation is **0.48 acceptance points worse** than
+quality-optimized allocation, 95% CI **[-0.98, -0.05]**, and increases
+ordinary-quality KL by **0.00561**, CI **[+0.00180, +0.01030]**. At aggressive
+budget five and mild budgets six and eight, the objectives select identical
+policies. This is a clean negative result for our original objective-specific
+allocator hypothesis.
+
 ## Copy-Paste Update
 
 We have pivoted from cross-model KV translation to KV-cache quantization. This
