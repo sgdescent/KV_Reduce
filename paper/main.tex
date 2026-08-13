@@ -15,7 +15,7 @@
 \newcommand{\method}{\textsc{SpecKV}}
 \newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
 
-\title{Quantizer Geometry Matters: Objective-Aware KV Cache Compression for Speculative Decoding}
+\title{Quantizer Geometry Matters: Task-Aware KV-Cache Compression for Language Model Inference}
 
 \author{Anonymous authors}
 
@@ -24,12 +24,14 @@
 \maketitle
 
 \begin{abstract}
-Speculative decoding accelerates language-model inference by asking a small draft
-model to propose tokens for verification by a larger target model, but standard
-implementations retain a separate key--value (KV) cache for each model. We study
-how the draft cache can be compressed while preserving the quantity that directly
-controls speculative speed: token acceptance. We show that conclusions about key
-versus value precision depend critically on quantizer geometry. A naive per-token
+KV-cache compression reduces the memory and bandwidth cost of language-model
+inference, but its effects depend on how the cache is used. We study ordinary
+language-model quality, long-context retrieval, and speculative decoding, where
+a compressed draft cache affects token acceptance while an unquantized target
+still preserves final correctness. Our initial Gaussian-perturbation experiments
+suggested that keys intrinsically require more precision than values. Controlled
+quantization rejects that interpretation: conclusions about key versus value
+precision depend critically on quantizer geometry. A naive per-token
 symmetric quantizer makes 8-bit keys with 4-bit values (K8V4) outperform
 equal-memory K4V8 by 10.87 acceptance points across six model pairs. Replacing
 only the key quantizer with grouped per-channel affine quantization changes the
@@ -38,13 +40,15 @@ same contrast to $-0.25$ points; the paired geometry shift is $-11.12$ points
 key-channel outliers---not an intrinsic need for more key bits---drive the
 apparent asymmetry. This motivates a matched study
 of mixed-precision allocations using KIVI-style per-channel affine keys and
-per-token affine values under two downstream objectives: ordinary language-model
-quality and speculative acceptance. Across the six pairs, K4V4 removes 66.13\%
+per-token affine values under ordinary language-model quality, retrieval, and
+speculative acceptance. Across six speculative model pairs, K4V4 removes 66.13\%
 of the draft cache and 22.64\% of total target-plus-draft KV at 1K, with a
 $-0.79$ point acceptance change (95\% CI $[-1.63,+0.04]$), ordinary-quality
-KL 0.00730, and 95.99\% top-1 agreement. However, no equal-memory comparison
-shows a statistically resolved objective-preference reversal, rejecting a
-universal speculative-specific precision rule.
+KL 0.00730, and 95.99\% top-1 agreement. In ten strict exact-byte matrices,
+acceptance-aware allocation selects the same policies as quality-aware allocation
+at mild budgets and is significantly worse at the aggressive budget. Thus,
+acceptance remains an evaluation metric, but our acceptance-specific additive
+objective provides no allocation benefit.
 On 192 associative-retrieval examples, changing only the key quantization axis
 changes the equal-memory K4V2--K2V4 accuracy gap from $+81.25$ to $+16.15$
 points (interaction $-65.10$ points, 95\% CI $[-73.44,-56.77]$), showing that
@@ -78,6 +82,19 @@ directions irrelevant to the verifier may have little effect on acceptance. This
 motivates measuring compression inside the speculative loop and testing whether
 an acceptance-aware objective improves upon ordinary language-model quality.
 
+Our initial hypothesis was stronger: because keys determine attention routing,
+we expected keys to be intrinsically less compressible than values and expected
+speculative acceptance to require a distinct precision-allocation objective.
+Both ideas are plausible but incomplete. Isotropic Gaussian noise makes keys
+look dramatically more fragile, yet noise is not a cache quantizer and ignores
+the persistent channel-wise outliers that determine code utilization. Once we
+control quantization axis, grouping, zero-points, and actual bytes, the apparent
+K-first rule weakens or reverses. Likewise, acceptance-aware calibration does
+not outperform ordinary-quality calibration in our strict held-out matrices.
+This negative result changes the paper's focus from proposing a special
+speculative objective to identifying which experimental factors genuinely
+determine KV-compression behavior.
+
 Our investigation starts from the attention decomposition
 \begin{equation}
   A_\ell = \operatorname{softmax}\!\left(\frac{Q_\ell K_\ell^\top}{\sqrt{d_h}} + M\right),
@@ -85,9 +102,9 @@ Our investigation starts from the attention decomposition
   \label{eq:attention}
 \end{equation}
 Keys determine the routing distribution $A_\ell$, whereas values determine the
-payload read after routing. We hypothesize that coarse key quantization is more
-likely to redirect attention and cascade through subsequent layers than an
-equal-memory reduction in value precision. This role asymmetry is compatible with
+payload read after routing. We began by hypothesizing that coarse key quantization
+would be more likely to redirect attention and cascade through subsequent layers
+than an equal-memory reduction in value precision. This role asymmetry is compatible with
 prior KV quantization analyses~\citep{liu2024kivi,hariri2025more}, but we ask a
 different operational question: \emph{which errors can a draft model tolerate
 without losing speculative acceptance?}
@@ -99,7 +116,8 @@ key outliers consume the available code range. Third, after controlling the
 quantizer, speculative acceptance and ordinary language-model quality may rank
 equal-memory allocations differently. We evaluate each question independently
 instead of interpreting reconstruction or perturbation error as a precision
-allocation rule.
+allocation rule. The first two questions produce a strong geometry effect; the
+third produces a useful null result rather than a new objective-specific method.
 
 \section{Background and Problem Formulation}
 
@@ -1014,8 +1032,11 @@ making end-to-end throughput and serving-capacity claims.
 
 \section{Conclusion}
 
-Draft KV compression should be evaluated by the speculative work it preserves,
-not reconstruction error alone. Equally importantly, precision allocation cannot
+KV compression should be evaluated by the downstream behavior it preserves,
+not reconstruction error or synthetic perturbation sensitivity alone. Our
+initial finding that keys tolerate less Gaussian noise is real under that
+intervention, but it does not imply that keys universally require more bits.
+Precision allocation cannot
 be interpreted independently of quantization axis, grouping, and zero-points: a
 naive quantizer can manufacture an apparent K/V asymmetry that an outlier-aware
 quantizer removes. Across six model pairs, changing quantizer geometry shifts the
@@ -1031,8 +1052,11 @@ raise total savings to 54.59\% under quality and acceptance constraints, but it
 changes the target distribution and is not consistently feasible at 4K. Powered
 retrieval experiments expose a large, resolved interaction between key axis and
 K/V allocation, while a held-out learned layer policy provides no benefit over
-uniform baselines. These findings support quantizer-aware allocation, not a
-speculative-specific or universally K-first policy.
+uniform baselines. The strict objective matrices further show that our
+acceptance-specific additive objective is unnecessary: it matches quality-based
+selection at mild budgets and performs worse at the aggressive budget. These
+findings support task-aware evaluation and quantizer-aware allocation, not a
+speculative-specific objective or universally K-first policy.
 The observed cross-family correlation supports a two-stage calibration procedure:
 ordinary-quality metrics cheaply reject risky configurations, then direct
 acceptance testing searches the remaining memory frontier. These findings

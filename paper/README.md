@@ -1,5 +1,15 @@
 # Paper Draft
 
+Working title: **Quantizer Geometry Matters: Task-Aware KV-Cache Compression
+for Language Model Inference**.
+
+The central narrative is a hypothesis correction. Gaussian perturbations first
+suggested that keys universally need more precision than values, but controlled
+equal-byte experiments show that quantizer geometry, model, and task determine
+the observed asymmetry. Speculative acceptance remains an important evaluation
+metric; however, the acceptance-specific additive allocation objective does not
+outperform ordinary-quality calibration.
+
 This directory contains an anonymous ICLR-style draft and reproducible preliminary
 figures. The official ICLR 2027 author guide is live, but its linked `iclr2027.zip`
 was not yet present in the official template repository when this draft was

@@ -1,5 +1,8 @@
 # KV-Cache Quantization: Collaborator Update
 
+Working title: **Quantizer Geometry Matters: Task-Aware KV-Cache Compression
+for Language Model Inference**
+
 Status: audited results as of August 13, 2026. All speculative-decoding numbers
 below use a sequential BF16 target verifier, an unquantized target cache, and
 produce exactly the same target-greedy tokens as the independent BF16 target.
@@ -49,6 +52,18 @@ Our possible main-track contribution is narrower and more controlled:
 > Quantizer geometry, model architecture, and downstream decoding objective
 > jointly determine the best KV precision allocation; allocation must therefore
 > be optimized at equal actual bytes and validated on the metric used in serving.
+
+The research trajectory itself is important. We initially believed that keys
+intrinsically require more precision because Gaussian key noise damages attention
+routing much more than value noise. That observation is valid for isotropic
+noise, but it is not a reliable bit-allocation objective. Once key outliers are
+handled with grouped per-channel affine quantization, the K/V preference becomes
+much smaller, can reverse, and varies by model and task. We also hypothesized
+that speculative acceptance required its own allocation objective. The strict
+five-pair matrices reject that method claim: acceptance-aware allocation is
+identical to quality-aware allocation at mild budgets and significantly worse at
+the aggressive budget. Acceptance remains essential for evaluating speculative
+serving, but it was not a better calibration objective in our implementation.
 
 The strongest exact speculative result now covers six target/draft pairs from
 Qwen2.5, Qwen3, Llama 3, OLMo 2, and SmolLM2. Across 18 runs, 576 prompts, and
