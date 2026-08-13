@@ -29,6 +29,7 @@ PAIR_LABELS = {
     "olmo2_7b_1b": "OLMo-2 7B/1B",
     "smollm2_17b_360m": "SmolLM2 1.7B/360M",
 }
+PAIR_ORDER = {pair: index for index, pair in enumerate(PAIR_LABELS)}
 
 CONFIG_LABELS = {
     "none": "BF16",
@@ -97,6 +98,11 @@ def valid_cached_summary(summary: Dict[str, Any]) -> Tuple[bool, str]:
     if runtime.get("target_reference_generation_in_timing") is not False:
         return False, "target reference generation timing is ambiguous"
     return True, ""
+
+
+def pair_sort_key(pair: str) -> Tuple[int, str]:
+    """Keep known paper pairs ordered while remaining safe on extra artifacts."""
+    return PAIR_ORDER.get(pair, len(PAIR_ORDER)), pair
 
 
 def acceptance_ratio(rows: Sequence[Dict[str, str]], indices: Iterable[int] | None = None) -> float:
@@ -192,6 +198,9 @@ def collect_campaign(
         pair_name = summary_path.parents[1].name
         run_label = summary_path.parent.name
         if run_label == "smoke" or run_label.startswith("sensitivity_"):
+            continue
+        if pair_name not in PAIR_LABELS:
+            rejected.append({"path": str(summary_path), "reason": "unrecognized model pair"})
             continue
         summary = read_json(summary_path)
         valid, reason = valid_cached_summary(summary)
@@ -321,7 +330,7 @@ def plot_cross_family(metrics: Sequence[Dict[str, Any]], out_dir: Path) -> None:
         and row["dataset"] == "wikitext"
         and row["config"] in {"none", "k8v4", "k4v8"}
     ]
-    pairs = sorted({row["pair"] for row in selected}, key=lambda pair: list(PAIR_LABELS).index(pair))
+    pairs = sorted({row["pair"] for row in selected}, key=pair_sort_key)
     if not pairs:
         return
     lookup = {(row["pair"], row["config"]): row for row in selected}
@@ -431,7 +440,7 @@ def write_latex_table(comparisons: Sequence[Dict[str, Any]], out_dir: Path) -> N
         for row in comparisons
         if row["context"] == 1024 and row["run"] == "wikitext_ctx1024"
     ]
-    rows.sort(key=lambda row: list(PAIR_LABELS).index(row["pair"]))
+    rows.sort(key=lambda row: pair_sort_key(row["pair"]))
     lines = [
         r"\begin{tabular}{lrrrr}",
         r"\toprule",

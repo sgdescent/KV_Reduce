@@ -56,13 +56,16 @@ not admitted to paper tables.
 
 ## Current evidence status
 
-- Earlier Qwen2.5-3B/1.5B results are retained only as preliminary evidence;
-  final tables use the cache-resident evaluator campaign.
-- Gaussian K/V perturbation is complete.
-- A four-budget, three-context, three-seed Qwen objective matrix is running.
-- Llama and OLMo cross-family profiles, an all-layer Qwen run, streaming C4,
-  uncertainty-aware allocation, and a calibration-size ablation are dependency-chained.
-- Equal-memory K-priority and V-priority heuristics are included in new matrices.
-- Actual packed persistent storage is validated from 1K--32K; fused-kernel
-  latency, broader downstream long-context quality, and powered multi-seed
-  results remain required before submission.
+- The cache-resident speculative campaign is complete across six target/draft
+  pairs. Draft-only results retain an unquantized BF16 verifier and are gated on
+  complete paired prompts, supported evaluator versions, and target exactness.
+- Matched ordinary-quality and speculative-acceptance objective matrices are
+  complete. They show no resolved objective-specific allocation advantage.
+- The powered 16K retrieval study contains 192 paired Qwen2.5 examples and finds
+  a resolved key-axis-by-allocation interaction. The three-model LongBench
+  passage-retrieval control is complete but saturates for Llama and Qwen3.
+- The held-out retrieval-aware layer policy does not beat uniform policies and
+  is reported as a null result.
+- Actual packed storage is validated from 1K--32K. The direct Triton path avoids
+  full-cache materialization but remains slower than native BF16 SDPA, so the
+  draft makes no production throughput claim.

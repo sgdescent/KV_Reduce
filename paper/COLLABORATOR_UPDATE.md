@@ -1,8 +1,18 @@
 # KV-Cache Quantization: Collaborator Update
 
-Status: audited results as of August 11, 2026. All speculative-decoding numbers
+Status: audited results as of August 13, 2026. All speculative-decoding numbers
 below use a sequential BF16 target verifier, an unquantized target cache, and
 produce exactly the same target-greedy tokens as the independent BF16 target.
+
+Final campaign additions: a powered 192-example Qwen2.5 16K retrieval study
+finds K4V2--K2V4 gaps of **+16.15 points** with grouped per-channel keys and
+**+81.25 points** with per-token keys; the axis-by-allocation interaction is
+**-65.10 points**, CI **[-73.44, -56.77]**. A 216-example, three-model
+LongBench passage-retrieval control finds K4V2 matches BF16 macro accuracy at
+**76.96% KV savings**, while K2V4 changes accuracy by **-3.24 points**, CI
+**[-9.72, 0.00]**. The cross-family K4V2--K2V4 interval touches zero because
+Llama and Qwen3 saturate. A held-out retrieval-aware layer policy also fails to
+beat the strongest uniform baseline, so it is retained as a null result.
 
 ## Copy-Paste Update
 
@@ -78,12 +88,13 @@ favoring value precision. The full-continuation token-agreement contrast is
 aggressive sweep, `K4V4` saves **66.56%** of standalone-cache bytes and retains
 **24.67%** exact BF16 tokens over 256-token continuations.
 
-This is promising but not yet sufficient for a main-track method paper. The
-remaining gates are a held-out geometry- and objective-aware allocator that
-beats uniform/asymmetric baselines at equal actual bytes, and a packed attention
-implementation that converts compression into measured long-context throughput
-or batch-capacity gains. If those gates fail, the work remains a useful empirical
-study, but the main-track novelty case is substantially weaker.
+This now supports a strong controlled empirical/mechanism paper, but not yet a
+main-track method claim. The held-out geometry- and objective-aware allocator did
+not beat uniform asymmetric baselines, and the packed attention implementation
+does not yet convert compression into native-relative throughput gains. A new
+allocator or fused production kernel would materially strengthen the method
+claim; without one, the honest contribution is the quantizer-geometry interaction
+and the cross-objective/cross-family audit.
 
 ## Exact Speculative Results
 

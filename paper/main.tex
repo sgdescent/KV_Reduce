@@ -45,6 +45,10 @@ $-0.79$ point acceptance change (95\% CI $[-1.63,+0.04]$), ordinary-quality
 KL 0.00730, and 95.99\% top-1 agreement. However, no equal-memory comparison
 shows a statistically resolved objective-preference reversal, rejecting a
 universal speculative-specific precision rule.
+On 192 associative-retrieval examples, changing only the key quantization axis
+changes the equal-memory K4V2--K2V4 accuracy gap from $+81.25$ to $+16.15$
+points (interaction $-65.10$ points, 95\% CI $[-73.44,-56.77]$), showing that
+precision allocation and quantizer geometry cannot be selected independently.
 An actual bit-packed implementation confirms that K4V4 reduces a
 Qwen2.5-1.5B-shaped 32K cache from 896.0 to 260.2 MiB (70.96\%). Across six
 draft-model shapes, three batch sizes, and five contexts from 1K to 32K, a
@@ -564,20 +568,30 @@ show that even within one task and quantizer geometry, K/V precision preference
 is model-dependent rather than universally K-first or V-first.
 
 Quantizer geometry amplifies this asymmetry (Figure~\ref{fig:passkey-axis}). On
-the same 48 Qwen2.5 16K examples, per-channel keys give a K4V2--K2V4 contrast
-of $+20.83$ points (CI $[+8.33,+33.33]$), whereas per-token keys give
-$+75.00$ points (CI $[+62.50,+87.50]$). The resolved axis-by-allocation
-interaction is $-54.17$ points for per-channel minus per-token contrasts
-(CI $[-72.92,-35.42]$). Per-token K2V4 retrieves only 4/48 examples, versus
-40/48 for per-token K4V2. Thus key fragility is not merely a consequence of
+the same 192 Qwen2.5 16K examples, per-channel keys give a K4V2--K2V4 contrast
+of $+16.15$ points (CI $[+10.94,+21.88]$), whereas per-token keys give
+$+81.25$ points (CI $[+75.00,+86.98]$). The resolved axis-by-allocation
+interaction is $-65.10$ points for per-channel minus per-token contrasts
+(CI $[-73.44,-56.77]$). Per-token K2V4 retrieves only 10/192 examples, versus
+166/192 for per-token K4V2. Thus key fragility is not merely a consequence of
 using fewer bits: preserving the channel-wise outlier structure identified by
 KIVI is essential, and bit allocation must be specified jointly with quantizer
 geometry.
 
+A natural LongBench passage-retrieval control on larger instruction models
+provides a less synthetic check. Across Qwen2.5-7B-Instruct,
+Llama-3.1-8B-Instruct, and Qwen3-8B (72 paired examples per model), K4V2 matches
+the BF16 macro accuracy while saving 76.96\% of standalone KV. K2V4 saves the
+same bytes within 0.07 points but changes macro accuracy by $-3.24$ points
+(model-bootstrap CI $[-9.72,0.00]$). The K4V2--K2V4 contrast is $+3.24$ points
+(CI $[0.00,+10.19]$): Qwen2.5 contributes a resolved $+9.72$-point effect,
+whereas Llama and Qwen3 saturate. This supports a geometry-dependent retrieval
+risk but not a universal cross-family allocation rule.
+
 \begin{figure}[t]
   \centering
   \includegraphics[width=0.68\linewidth]{campaign_artifacts/passkey_axis_interaction.pdf}
-  \caption{Qwen2.5-1.5B associative-passkey retrieval at 16K over 48 paired
+  \caption{Qwen2.5-1.5B associative-passkey retrieval at 16K over 192 paired
   examples. Per-token key quantization sharply magnifies the cost of reducing
   key precision relative to per-channel KIVI-style keys. Error bars are paired
   bootstrap 95\% confidence intervals.}
@@ -642,6 +656,13 @@ the six pairs, held-out acceptance retention ranges from 94.9\% to 102.8\%, whil
 total KV savings range from 2.9\% to 9.9\%. Figure~\ref{fig:pareto} shows that
 uniform K4V4 often saves more memory but can retain less than half of native
 acceptance; the sensitivity-aware solutions stay near the 100\% line.
+
+A held-out retrieval-aware successor evaluates disjoint associative-passkey
+indices 288--383 on Qwen2.5-1.5B, Llama-3.2-3B, and Qwen3-4B. It does not
+improve over the strongest uniform policy: on Qwen, the learned mixed policy and
+uniform K4V2 both score 89/96, while uniform K2V4 scores 92/96; Llama and Qwen3
+are saturated across policies. We therefore report the learned allocator as a
+null result rather than selecting it post hoc.
 
 \begin{figure}[t]
   \centering
@@ -964,8 +985,10 @@ packed bytes and transient allocation, not end-to-end throughput, are currently
 the reliable systems metrics.
 Although the campaign spans six pairs and includes
 two C4 seeds for three pairs, prompt counts remain modest at 16K--32K and on
-task-conditioned code and mathematics prompts. Broader LongBench evaluation and
-larger PG19, HumanEval, and GSM8K samples are needed. Our BF16 audit also shows
+task-conditioned code and mathematics prompts. Our LongBench control covers
+passage retrieval only and saturates for two of three instruction models;
+broader LongBench tasks and larger PG19, HumanEval, and GSM8K samples are needed.
+Our BF16 audit also shows
 that mathematically distribution-preserving
 speculation need not be bitwise identical to tokenwise decoding across kernel
 shapes; higher-precision and production-kernel audits remain important.
@@ -995,8 +1018,10 @@ loss and KL below 0.01, but matched objective rankings remain strongly correlate
 and show no statistically resolved equal-memory reversal. Joint quantization can
 raise total savings to 54.59\% under quality and acceptance constraints, but it
 changes the target distribution and is not consistently feasible at 4K. Powered
-task and natural long-context experiments remain necessary before claiming a
-speculative-specific policy.
+retrieval experiments expose a large, resolved interaction between key axis and
+K/V allocation, while a held-out learned layer policy provides no benefit over
+uniform baselines. These findings support quantizer-aware allocation, not a
+speculative-specific or universally K-first policy.
 The observed cross-family correlation supports a two-stage calibration procedure:
 ordinary-quality metrics cheaply reject risky configurations, then direct
 acceptance testing searches the remaining memory frontier. These findings
