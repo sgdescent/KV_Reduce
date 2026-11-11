@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "Please cite the AXIOM workshop paper when using this repository."
+title: "Memory-Efficient Speculative Decoding with Quantized Draft KV Cache"
+type: software
+authors:
+  - family-names: Gupta
+    given-names: Saksham
+  - family-names: Li
+    given-names: Michael
+repository-code: "https://github.com/sgdescent/KV_Reduce"
+url: "https://openreview.net/forum?id=NE193n19qO"
+license: MIT
+preferred-citation:
+  type: generic
+  title: "Memory-Efficient Speculative Decoding with Quantized Draft KV Cache"
+  authors:
+    - family-names: Gupta
+      given-names: Saksham
+    - family-names: Li
+      given-names: Michael
+  year: 2026
+  notes: "Accepted at the AXIOM workshop at NeurIPS 2026."
+  url: "https://openreview.net/forum?id=NE193n19qO"

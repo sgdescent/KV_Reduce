@@ -591,6 +591,7 @@ def greedy_speculative_decode_cached_quantized(
     full_accept_rounds = 0
     num_rounds = 0
     round_metric_rows: List[Dict[str, float]] = []
+    round_details = []
     generation_sources: List[str] = []
     target_top1_margins: List[float] = []
 
@@ -697,6 +698,7 @@ def greedy_speculative_decode_cached_quantized(
                 accepted_this_round += 1
             correction_logits = target_logits
 
+        round_details.append({"round": num_rounds, "output_position": len(generated), "proposed": len(proposal), "accepted_prefix": accepted_this_round, "rejection_position": accepted_this_round if accepted_this_round < len(proposal) else -1})
         accepted_tokens += accepted_this_round
         if accepted_this_round == len(proposal):
             full_accept_rounds += 1
@@ -801,6 +803,7 @@ def greedy_speculative_decode_cached_quantized(
         "draft_prefill_tokens": int(draft_prefill_tokens),
         "num_rounds": int(num_rounds),
         "round_metrics": round_metrics,
+        "round_details": round_details,
     }
 
 
@@ -1068,6 +1071,9 @@ def run_one_config(
             )
         )
         row = {
+            "round_details": json.dumps(result["round_details"]),
+            "target_calls_per_output_token": result["target_calls"]/max(1,generated_tokens),
+            "output_tokens_per_round": generated_tokens/max(1,result["num_rounds"]),
             "config": config_name,
             "prompt_idx": int(prompt_idx),
             "latency_s": float(elapsed_s),

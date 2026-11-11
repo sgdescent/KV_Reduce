@@ -1,0 +1,2 @@
+# CPU-only result validation and bootstrap analysis; no model downloads.
+numpy>=1.24,<3

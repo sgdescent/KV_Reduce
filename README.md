@@ -1,248 +1,115 @@
-# KV Cache Perturbation + Linear Translation Experiments
+# Quantized Draft KV Cache
 
-This mini bundle gives you two runnable experiments for the project idea:
+**Memory-Efficient Speculative Decoding with Quantized Draft KV Cache**
 
-1. `kv_perturbation_sweep.py`
-   - Takes a model KV cache, perturbs keys/values by controlled noise, and measures how much the next-token distribution and greedy continuation change.
-   - Useful for answering: *"How stable is generation to small KV perturbations?"*
+Saksham Gupta · Michael Li
 
-2. `fit_kv_linear_probe.py`
-   - Fits a **layerwise linear affine map** from the big model's KV cache to the small model's KV cache using closed-form ridge regression.
-   - Evaluates both:
-     - cache reconstruction quality
-     - functional quality: how the small model behaves when you replace its native prefix KV cache with translated KV from the big model.
+Accepted at **AXIOM, a NeurIPS 2026 workshop**
 
-3. `fit_kv_factorized_probe.py`
-   - Trains a **streamed low-rank neural translator** for the KV cache with a bottleneck of shape `D -> R -> D` per layer (separate K/V modules).
-   - Can optionally deepen the per-layer MLP to `D -> R -> ... -> R -> D`, including V-only extra depth if values seem harder to translate than keys.
-   - Designed for much larger Hugging Face corpora by reading token blocks online instead of materializing the full split in memory.
-   - Evaluates both:
-     - per-layer cache reconstruction
-     - next-token behavior when the small model consumes translated big-model KV
+[Paper on OpenReview](https://openreview.net/forum?id=NE193n19qO) · [Reproduce the experiments](docs/REPRODUCING_AXIOM.md) · [Results and limitations](docs/AXIOM_RESULTS.md) · [Citation](CITATION.cff)
 
-## Recommended starter pair
+Compress the **draft model's KV cache** in two-model speculative decoding, while keeping the target cache in BF16. We study how key/value precision interacts with quantizer geometry, then measure acceptance and actual packed-cache storage.
 
-A very convenient pair is:
+> **Research prototype.** The October review experiments demonstrate smaller persistent draft-cache storage. They do **not** demonstrate a decoding speedup or lower peak GPU allocation. The packed benchmark's batched verifier has unresolved output mismatches, including with a BF16 draft. See [correctness and scope](docs/AXIOM_RESULTS.md#correctness-and-scope) before interpreting its timings.
 
-- Big: `Qwen/Qwen2.5-3B`
-- Small: `Qwen/Qwen2.5-1.5B`
+## What this repository contains
 
-Why this pair is nice:
+- **Quantization:** grouped per-channel keys, per-token values, configurable bit widths and residual windows.
+- **Evaluation:** paired acceptance measurements, sequential reference checks, long-context and cross-model research tools.
+- **Packed storage:** actual packed payloads, metadata and residual tensors, with a Triton decode-attention prototype.
+- **Review experiment release:** portable launchers, per-prompt metrics, bootstrap analysis and documented negative results.
 
-- same tokenizer family
-- same number of KV heads (`2`)
-- same head dimension for K/V (`128`)
-- so the **per-layer KV tensor shape matches exactly**
+The original research history is retained. The repository previously focused on translating KV caches between models; those instructions are preserved in [the legacy guide](docs/LEGACY_EXPERIMENTS.md). The `paper/` directory contains an **older research draft**, not the accepted AXIOM manuscript. Use the OpenReview link above for the paper.
 
-That makes it a genuine KV-sharing experiment rather than a shape-matching workaround.
+## Results at a glance
 
-## Install
+The October 2026 review campaign used **Qwen2.5-3B / Qwen2.5-1.5B**, greedy decoding, batch size 1, proposals of up to 4 tokens, and **256-token continuations**.
+
+| Measurement | Observed result | Interpretation |
+| :--- | :--- | :--- |
+| K4V4 acceptance vs. BF16 | −0.59 to +0.33 percentage points across six settings | Small central estimates; every paired 95% interval includes zero. Not an equivalence result. |
+| Persistent packed draft-cache bytes | **67.05–71.05% lower** | Includes payload, metadata and residual storage; not total GPU memory. |
+| Packed latency vs. BF16 speculative | **18.3–32.9% higher** | The prototype is slower. |
+| Peak allocated GPU memory | **No reduction** | BF16 KV is materialized during prefill. |
+| Sequential quality output agreement | **576/576** configuration–prompt evaluations | Repeated prompts across configurations; not 576 independent prompts. |
+| Batched prototype output agreement | **3–5/24 at 1K; 2/12 at 16K** | Correctness remains unresolved; these are not validated exact-output serving timings. |
+
+These new runs cover **one model pair**. They are separate from the original paper's six-model, shorter-generation study. Full tables, sample sizes, uncertainty definitions and residual-window comparisons are in [the results guide](docs/AXIOM_RESULTS.md).
+
+## Start here: inspect results without a GPU
+
+From the repository root, using Python 3.11 or newer:
 
 ```bash
-pip install -U torch transformers datasets accelerate sentencepiece safetensors
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-analysis.txt
+python analyze_axiom_review.py --check
 ```
 
-## 1) KV perturbation sweep
-
-Single GPU:
+This validates the released metrics and reconstructs the acceptance, latency, storage, residual and prefix summaries. It downloads no models and submits no jobs. To save a fresh report:
 
 ```bash
-python kv_perturbation_sweep.py \
-  --model Qwen/Qwen2.5-1.5B \
-  --dataset_name wikitext \
-  --dataset_config wikitext-2-raw-v1 \
-  --split validation \
-  --seq_len 256 \
-  --num_sequences 128 \
-  --alphas 0,1e-4,3e-4,1e-3,3e-3,1e-2,3e-2,1e-1 \
-  --perturb_targets keys,values,both \
-  --layer_mode all \
-  --generate_steps 16 \
-  --out_dir outputs/perturb_qwen15b
+python analyze_axiom_review.py --output outputs/axiom-review-summary.json
 ```
 
-Per-layer sensitivity sweep:
+[Released metrics](results/axiom-review-2026/) include per-prompt and per-round statistics plus token-sequence hashes. Prompt text, generated token sequences, model weights and private cluster metadata are excluded. Hashes support consistency checks, not reconstruction of omitted outputs.
+
+## Run a small quality experiment
+
+GPU inference uses a separate environment. Follow [installation and hardware notes](docs/REPRODUCING_AXIOM.md#gpu-environment) first; the packed prototype requires Linux, CUDA and Triton.
 
 ```bash
-python kv_perturbation_sweep.py \
-  --model Qwen/Qwen2.5-1.5B \
-  --dataset_name wikitext \
-  --dataset_config wikitext-2-raw-v1 \
-  --split validation \
-  --seq_len 256 \
-  --num_sequences 64 \
-  --alphas 1e-3,3e-3,1e-2 \
-  --perturb_targets both \
-  --layer_mode single \
-  --generate_steps 8 \
-  --out_dir outputs/perturb_qwen15b_single_layers
-```
-
-Important output columns:
-
-- `accept_mass`: one-step speculative acceptance proxy, `sum_i min(p_i, q_i)`
-- `tv`: total variation distance, equal to `1 - accept_mass`
-- `top1_match`: whether the argmax token stayed the same
-- `gen_prefix_match_len`: how many greedy-generated tokens remain identical before first divergence
-
-Sanity check: the `alpha=0` rows are a built-in correctness check. Because the baseline
-and all perturbed forward passes use the same cache reconstruction path (legacy round-trip)
-and the same explicit `cache_position` / `attention_mask`, the alpha=0 row must produce
-near-zero divergence (`kl≈0`, `js≈0`, `accept_mass≈1`, `top1_match≈1`,
-`gen_exact_match≈1`). If it does not, there is a cache-format or decode-position mismatch
-in the environment.
-
-## 2) Fit a linear KV translator
-
-Single GPU:
-
-```bash
-python fit_kv_linear_probe.py \
+python benchmark_spec_kv_quantization.py \
   --big_model Qwen/Qwen2.5-3B \
   --small_model Qwen/Qwen2.5-1.5B \
-  --dataset_name wikitext \
-  --dataset_config wikitext-2-raw-v1 \
-  --train_split train \
-  --eval_split validation \
-  --seq_len 256 \
-  --train_sequences 512 \
-  --eval_sequences 128 \
-  --lambda_reg 1e-4 \
-  --out_dir outputs/qwen25_3b_to_15b_probe
+  --big_device cuda:0 --small_device cuda:0 \
+  --attn_implementation sdpa \
+  --dataset_name HuggingFaceFW/fineweb-edu --dataset_config sample-10BT \
+  --eval_split train --stream_eval --shuffle_eval --seed 0 \
+  --prompt_len 1024 --num_prompts 2 --warmup_prompts 1 --skip_prompts 100 \
+  --max_new_tokens 32 --draft_steps 4 --target_verification_mode sequential \
+  --quant_configs 'none;k4v4' --key_quant_axis per_channel \
+  --key_group_size 32 --key_residual_length 0 --value_quant_scheme affine \
+  --out_dir outputs/axiom-quality-smoke
 ```
 
-Two GPUs (big model on one GPU, small model on another):
+This is a smoke workload, not a reproduction of the reported scientific result. The quality evaluator uses **fake quantization**; its timing and memory estimates must not be presented as packed-cache serving performance.
 
-```bash
-srun --gres=gpu:2 --cpus-per-task=16 --mem=64G \
-  python fit_kv_linear_probe.py \
-  --big_model Qwen/Qwen2.5-3B \
-  --small_model Qwen/Qwen2.5-1.5B \
-  --big_device cuda:0 \
-  --small_device cuda:1 \
-  --dataset_name wikitext \
-  --dataset_config wikitext-2-raw-v1 \
-  --train_split train \
-  --eval_split validation \
-  --seq_len 256 \
-  --train_sequences 512 \
-  --eval_sequences 128 \
-  --lambda_reg 1e-4 \
-  --out_dir outputs/qwen25_3b_to_15b_probe_2gpu
+For the six full quality settings and two packed benchmarks, see the [reproduction guide](docs/REPRODUCING_AXIOM.md). Launchers refuse to overwrite existing run directories.
+
+## Repository map
+
+| Path | Purpose |
+| :--- | :--- |
+| `kv_cache_quantization.py` | Quantization layouts and byte estimates |
+| `benchmark_spec_kv_quantization.py` | Quality evaluator, sequential/batched verifier modes and round records |
+| `packed_kv_cache.py` | Bit packing, affine quantization and stored-byte accounting |
+| `triton_packed_kv_attention.py` | Attention over packed KV tensors |
+| `packed_review.py` | Qwen2 review benchmark; batched correctness caveat applies |
+| `analyze_axiom_review.py` | CPU-only validation and paired bootstrap analysis |
+| `scripts/axiom/` | Portable review experiment launchers |
+| `results/axiom-review-2026/` | Released metrics, summaries and provenance |
+| `tests/` | Quantizer, cache and analysis tests |
+| `docs/` | Reproduction, results and historical research notes |
+| `paper/` | Historical draft and figure-generation artifacts; not the accepted paper |
+
+## Citation
+
+Please cite the paper when using this work. This is a workshop acceptance, not a NeurIPS main-conference paper.
+
+```bibtex
+@misc{gupta2026quantizeddraftkv,
+  title  = {Memory-Efficient Speculative Decoding with Quantized Draft KV Cache},
+  author = {Gupta, Saksham and Li, Michael},
+  year   = {2026},
+  note   = {Accepted at the AXIOM workshop at NeurIPS 2026},
+  url    = {https://openreview.net/forum?id=NE193n19qO}
+}
 ```
 
-Useful outputs:
+## Contributing and license
 
-- `translator.pt`
-  - learned affine translator weights per layer for K and V
-- `summary.json`
-  - aggregate metrics
-- `reconstruction_per_layer.csv`
-  - per-layer KV reconstruction metrics
-- `next_token_rows.csv`
-  - actual behavior when the small model consumes **translated big-model KV**
+For bug reports, include the command, software versions, hardware and a minimal reproducer. Keep correctness checks separate from performance comparisons. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Most important metrics to watch in `next_token_rows.csv` / `summary.json`:
-
-- `native_vs_big_accept_mass`
-  - how aligned the untouched small model is to the big model
-- `translated_vs_big_accept_mass`
-  - whether translated big KV makes the small model more aligned to the big model
-- `translated_vs_native_accept_mass`
-  - whether translated big KV approximates the small model's own prefix computation
-- `translated_vs_big_top1_match`
-  - greedy-token alignment with the big model
-
-## Suggested experiment order
-
-1. Run perturbation on the small model first.
-2. Run perturbation on the big model.
-3. Fit the linear probe big -> small.
-4. Compare:
-   - native small vs big
-   - identity big-KV -> small (if dims match)
-   - learned linear big-KV -> small
-
-## What would count as a promising result?
-
-- `alpha=0` rows are exact identity (sanity check, see above).
-- Small perturbations (`alpha ≤ 0.01`) leave `accept_mass` and `top1_match` close to their
-  alpha=0 values, with a sharp drop only at larger noise levels.
-- Value perturbations are more robust than key perturbations — keys drive attention routing
-  so errors there compound faster.
-- Learned linear translation beats the identity baseline on `k_cos` / `v_cos`.
-- `translated_vs_big_accept_mass` improves over `native_vs_big_accept_mass`.
-- Per-layer reconstruction is especially good in early/mid layers.
-
-## Natural next steps after this bundle
-
-- add a logit-space training objective instead of only cache regression
-- try low-rank translators instead of full affine maps
-- learn layer alignment instead of fixed depth alignment
-- test draft acceptance over multi-token speculative blocks instead of one-step proxies
-
-## 3) Train a streamed low-rank KV translator
-
-This trainer is intended for the "more data + fewer parameters" version of the project:
-
-- it supports Hugging Face streaming datasets
-- it trains a separate low-rank residual network per layer
-- each translator is approximately `D x R + R x D` parameters per target (plus optional bias / layernorm)
-
-Example command:
-
-```bash
-python fit_kv_factorized_probe.py \
-  --big_model Qwen/Qwen2.5-3B \
-  --small_model Qwen/Qwen2.5-1.5B \
-  --big_device cuda:0 \
-  --small_device cuda:1 \
-  --dataset_name wikitext \
-  --dataset_config wikitext-2-raw-v1 \
-  --train_split train \
-  --eval_split validation \
-  --stream_train \
-  --seq_len 256 \
-  --train_sequences 20000 \
-  --eval_sequences 128 \
-  --shuffle_train \
-  --shuffle_buffer_size 10000 \
-  --position_stride 2 \
-  --max_rows_per_layer_per_block 128 \
-  --rank 64 \
-  --v_hidden_layers 1 \
-  --lr 3e-4 \
-  --weight_decay 1e-4 \
-  --cos_loss_weight 0.1 \
-  --out_dir outputs/qwen25_3b_to_15b_factorized_stream
-```
-
-For a much larger corpus, replace `--dataset_name` / `--dataset_config` with your preferred Hugging Face dataset and keep `--stream_train` enabled.
-
-If you want a deeper value translator while keeping the key path shallow, use:
-
-```bash
-python fit_kv_factorized_probe.py \
-  ... \
-  --k_hidden_layers 0 \
-  --v_hidden_layers 1
-```
-
-This changes the value modules from `D -> R -> D` to `D -> R -> R -> D`.
-
-Most useful outputs:
-
-- `factorized_translator.pt`
-  - learned low-rank per-layer translator weights
-- `parameter_summary.csv`
-  - parameter counts per layer for K, V, and total
-- `train_log.csv`
-  - rolling training metrics
-- `train_per_layer.csv`
-  - average train losses / cosine scores per layer
-- `reconstruction_per_layer.csv`
-  - per-layer reconstruction metrics on the eval split
-- `next_token_rows.csv`
-  - functional behavior when the small model consumes translated big-model KV
-- `summary.json`
-  - aggregate metrics and run metadata
+Repository code is released under the [MIT License](LICENSE). Third-party models, datasets and bundled template files retain their own licenses and terms. No model weights or dataset passages are included in the new review-results bundle.

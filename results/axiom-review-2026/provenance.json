@@ -1,0 +1,35 @@
+{
+  "campaign_date": "2026-10-19",
+  "source_commit": "41835f80a87c4dabc9b9040a619aecea79c4d71f",
+  "gpu": "NVIDIA RTX A5000",
+  "quality_runtime_recorded": {
+    "torch": "2.10.0+cu128",
+    "transformers": "5.3.0"
+  },
+  "environment_read_on_2026_11_10": {
+    "torch": "2.10.0",
+    "transformers": "5.3.0",
+    "datasets": "4.8.2",
+    "triton": "3.6.0",
+    "accelerate": "1.13.0",
+    "numpy": "2.4.3"
+  },
+  "campaign_code_sha256": {
+    "review_spec.py": "95b9f6ac8f5a2d62baf040075a79990a40c15206ef876e9de25e26ba665724f7",
+    "packed_review.py": "7495ec118312d6ee252d5ed5b696f59155113f3a5b6af3242d84cc2d47620e4d"
+  },
+  "source_result_sha256": {
+    "axiom_quality_ctx1024_r0_s0/benchmark_rows.csv": "c6438fa62544edc4512284eb42d9887de08b4a0b4c7c7d4d4faaacdd938f47ef",
+    "axiom_quality_ctx1024_r0_s1/benchmark_rows.csv": "678b3e8b6f91dade8372ff279cd0156b4836694f36f252bf7ceaa9575d9602db",
+    "axiom_quality_ctx1024_r128_s0/benchmark_rows.csv": "1d9050754b910558d36a6db01da98ce90c1acc65ac6da106b7b9b29fc62c5f0e",
+    "axiom_quality_ctx1024_r128_s1/benchmark_rows.csv": "8af94665e7e50d2a2c7214787b0773adc843eee6772f46cb58a893efe625b069",
+    "axiom_quality_ctx16384_r0_s0/benchmark_rows.csv": "89fe2aaf33b7ee473fcd5e9c854d6c2a71ada0e3482fc15c016f4f936283fba0",
+    "axiom_quality_ctx16384_r128_s0/benchmark_rows.csv": "2cbd3856aa1df3ddf9d8f0dc596595c873328fdf2141972c5a2c1a30115b6407",
+    "axiom_packed_ctx1024/speculative.jsonl": "da553957975270ab4e263eb3d332ef7b97201053267a1b74bd671839a3f8af40",
+    "axiom_packed_ctx16384/speculative.jsonl": "a46bc56bf716285b6e2b175e23aa43f8486aa0c809f3993d41439a6f6922b953",
+    "axiom_packed_ctx1024/target_only.jsonl": "b7b4d2a287332f0a1c2558129404aab22487d80314ff51ebffc04d6c5a13f362",
+    "axiom_packed_ctx16384/target_only.jsonl": "9ed6ab325ceab81452d8722ad4b606a086e98d565900aa9d78585b0b66bb63a2"
+  },
+  "privacy": "Prompt tokens and generated/reference tokens omitted. Token arrays hashed with SHA-256 over compact JSON. No model weights or dataset passages redistributed. Per-prompt/round metrics retained.",
+  "limitations": "Model/dataset revision hashes were not pinned by the historical launchers. Package versions read later are not a historical lockfile. CPU reanalysis does not establish GPU runtime correctness."
+}
