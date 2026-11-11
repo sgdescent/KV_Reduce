@@ -52,6 +52,30 @@ access and usage terms. The original campaign did not pin model or dataset revis
 hashes; fresh downloads therefore do not promise bit-for-bit historical replication.
 Record revisions, software, hardware and launch arguments for new runs.
 
+## Small quality example
+
+GPU inference uses a separate environment. Follow [installation and hardware notes](#gpu-environment) first; the packed prototype requires Linux, CUDA and Triton.
+
+```bash
+python benchmark_spec_kv_quantization.py \
+  --big_model Qwen/Qwen2.5-3B \
+  --small_model Qwen/Qwen2.5-1.5B \
+  --big_device cuda:0 --small_device cuda:0 \
+  --attn_implementation sdpa \
+  --dataset_name HuggingFaceFW/fineweb-edu --dataset_config sample-10BT \
+  --eval_split train --stream_eval --shuffle_eval --seed 0 \
+  --prompt_len 1024 --num_prompts 2 --warmup_prompts 1 --skip_prompts 100 \
+  --max_new_tokens 32 --draft_steps 4 --target_verification_mode sequential \
+  --quant_configs 'none;k4v4' --key_quant_axis per_channel \
+  --key_group_size 32 --key_residual_length 0 --value_quant_scheme affine \
+  --out_dir outputs/axiom-quality-smoke
+```
+
+This is a smoke workload, not a reproduction of the reported scientific result. The quality evaluator uses **fake quantization**; its timing and memory estimates must not be presented as packed-cache serving performance.
+
+For the six full quality settings and two packed benchmarks, see the [reproduction guide](#quality-matrix). Launchers refuse to overwrite existing run directories.
+
+
 ## Quality matrix
 
 Each task evaluates 24 scored prompts plus 1 warmup, four configurations (BF16,
