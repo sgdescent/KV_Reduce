@@ -1,0 +1,129 @@
+{
+  "archive": "raw-outputs.zip",
+  "archive_sha256": "2326be5ae56ec01f1515d99c6bd24e120c5649281d106b13b73511c2eab908e5",
+  "verified_against_catalyst_on": "2026-11-12",
+  "file_count": 24,
+  "uncompressed_bytes": 14349419,
+  "files": [
+    {
+      "path": "axiom_packed_ctx1024/complete.json",
+      "bytes": 253,
+      "sha256": "0a4e7123e6a0f95d019f0f2af026db073f96b6f898866f27a1c3649764050121"
+    },
+    {
+      "path": "axiom_packed_ctx1024/prompts.json",
+      "bytes": 143718,
+      "sha256": "79893814bb2333e4ecf988b200f821d47b59eda59ff669a15e6757d7fc3e9861"
+    },
+    {
+      "path": "axiom_packed_ctx1024/speculative.jsonl",
+      "bytes": 980327,
+      "sha256": "da553957975270ab4e263eb3d332ef7b97201053267a1b74bd671839a3f8af40"
+    },
+    {
+      "path": "axiom_packed_ctx1024/target_only.jsonl",
+      "bytes": 79702,
+      "sha256": "b7b4d2a287332f0a1c2558129404aab22487d80314ff51ebffc04d6c5a13f362"
+    },
+    {
+      "path": "axiom_packed_ctx16384/complete.json",
+      "bytes": 254,
+      "sha256": "4353897b9c910e0d5c370595eb89343a26545470faeca4e7184edca5b2bb3737"
+    },
+    {
+      "path": "axiom_packed_ctx16384/prompts.json",
+      "bytes": 1192771,
+      "sha256": "d7415ef714ca9d01d5b9fd4def3d80428aa1cc423666914a320f7266e9b50736"
+    },
+    {
+      "path": "axiom_packed_ctx16384/speculative.jsonl",
+      "bytes": 499564,
+      "sha256": "a46bc56bf716285b6e2b175e23aa43f8486aa0c809f3993d41439a6f6922b953"
+    },
+    {
+      "path": "axiom_packed_ctx16384/target_only.jsonl",
+      "bytes": 41373,
+      "sha256": "9ed6ab325ceab81452d8722ad4b606a086e98d565900aa9d78585b0b66bb63a2"
+    },
+    {
+      "path": "axiom_packed_smoke/complete.json",
+      "bytes": 251,
+      "sha256": "55225efa58fb8556d6382eed9a627bd0b31e23750ed89daf826a84ad6cecc72b"
+    },
+    {
+      "path": "axiom_packed_smoke/prompts.json",
+      "bytes": 11285,
+      "sha256": "bca8b8db57187398099c65c47ba3d2fcbb137fb288419f5cea5f26e68c55d7d5"
+    },
+    {
+      "path": "axiom_packed_smoke/speculative.jsonl",
+      "bytes": 13113,
+      "sha256": "19f744c59d3545ddb190be05b913876ed4db2fb06c63db86cb4c4f7b7f26db3a"
+    },
+    {
+      "path": "axiom_packed_smoke/target_only.jsonl",
+      "bytes": 1089,
+      "sha256": "56eb7ffe715fad361b99594801824d6e2959f5830957894611035e01fae97363"
+    },
+    {
+      "path": "axiom_quality_ctx1024_r0_s0/benchmark_rows.csv",
+      "bytes": 1864892,
+      "sha256": "c6438fa62544edc4512284eb42d9887de08b4a0b4c7c7d4d4faaacdd938f47ef"
+    },
+    {
+      "path": "axiom_quality_ctx1024_r0_s0/summary.json",
+      "bytes": 26366,
+      "sha256": "d8107e26e6f69e3c5ccaf40cf35dff15f24cc26c04353b993c1b7656771fb669"
+    },
+    {
+      "path": "axiom_quality_ctx1024_r0_s1/benchmark_rows.csv",
+      "bytes": 1878319,
+      "sha256": "678b3e8b6f91dade8372ff279cd0156b4836694f36f252bf7ceaa9575d9602db"
+    },
+    {
+      "path": "axiom_quality_ctx1024_r0_s1/summary.json",
+      "bytes": 26427,
+      "sha256": "280cecb8126b0c954540f6444bb335bd5d2ab32908320df39d2d4268672ac97a"
+    },
+    {
+      "path": "axiom_quality_ctx1024_r128_s0/benchmark_rows.csv",
+      "bytes": 1864325,
+      "sha256": "1d9050754b910558d36a6db01da98ce90c1acc65ac6da106b7b9b29fc62c5f0e"
+    },
+    {
+      "path": "axiom_quality_ctx1024_r128_s0/summary.json",
+      "bytes": 26419,
+      "sha256": "59267b5c34b119e5c37abca8c3421cfcc7ca3cc63300d3c0aac87d94c0e7b2bd"
+    },
+    {
+      "path": "axiom_quality_ctx1024_r128_s1/benchmark_rows.csv",
+      "bytes": 1878972,
+      "sha256": "8af94665e7e50d2a2c7214787b0773adc843eee6772f46cb58a893efe625b069"
+    },
+    {
+      "path": "axiom_quality_ctx1024_r128_s1/summary.json",
+      "bytes": 26494,
+      "sha256": "12cc64d8d0aad6a439462fe60aefeac9a16b9a0a3b6cb2cad606fb8724ed5f3b"
+    },
+    {
+      "path": "axiom_quality_ctx16384_r0_s0/benchmark_rows.csv",
+      "bytes": 1870511,
+      "sha256": "89fe2aaf33b7ee473fcd5e9c854d6c2a71ada0e3482fc15c016f4f936283fba0"
+    },
+    {
+      "path": "axiom_quality_ctx16384_r0_s0/summary.json",
+      "bytes": 26594,
+      "sha256": "12c8b749ae5e01d1e94ec717beee2105287c8ab61273dec86f862e9888f00ddf"
+    },
+    {
+      "path": "axiom_quality_ctx16384_r128_s0/benchmark_rows.csv",
+      "bytes": 1869658,
+      "sha256": "2cbd3856aa1df3ddf9d8f0dc596595c873328fdf2141972c5a2c1a30115b6407"
+    },
+    {
+      "path": "axiom_quality_ctx16384_r128_s0/summary.json",
+      "bytes": 26742,
+      "sha256": "431db9184b22f28ab9254dc73485cdc36f5625c3aab52b954c47c0f1a41451b8"
+    }
+  ]
+}

@@ -22,7 +22,7 @@ independent random sample. All audit outcomes are reported, including warmups.
 
 The checker validates counts, pairing, token hashes, round totals and recorded
 correctness outcomes, then compares reproduced summary values with the frozen
-reference. It cannot inspect omitted token sequences or verify GPU computations.
+reference. It cannot verify GPU computations. The [raw archive and plot workflow](../results/axiom-review-2026/README.md) additionally rebuild these metrics from the original saved token arrays and round records.
 
 ## GPU environment
 
@@ -153,8 +153,7 @@ No automated retry or matrix expansion is included.
 Read [AXIOM_RESULTS.md](AXIOM_RESULTS.md) for the estimands and claim boundaries.
 The released [provenance file](../results/axiom-review-2026/provenance.json) records
 source hashes and distinguishes historical runtime metadata from later environment
-observations. Original raw outputs remain preserved by the authors. Published
-metrics omit source text and token sequences; token hashes preserve equality checks.
+observations. All 24 original review result files are also provided in the [raw ZIP](../results/axiom-review-2026/README.md), verified against Catalyst. The compact JSONL metrics omit token sequences; the ZIP preserves the original saved token IDs.
 
 The frozen bundle and `--check` are for this campaign. New GPU runs produce the
 original raw schemas, including token arrays. Review and sanitize new outputs before

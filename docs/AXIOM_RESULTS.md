@@ -85,4 +85,4 @@ Diagnose the first batched mismatch in BF16 before changing the packed path: com
 
 [Metrics and hashes](../results/axiom-review-2026/) · [Reproduction instructions](REPRODUCING_AXIOM.md) · [Paper](https://openreview.net/forum?id=NE193n19qO)
 
-Campaign base commit: `41835f80a87c4dabc9b9040a619aecea79c4d71f`. The frozen summaries contain only AXIOM measurements. Private campaign manifests, Google Docs links, coauthor contact addresses, source passages and token sequences are not part of this bundle.
+Campaign base commit: `41835f80a87c4dabc9b9040a619aecea79c4d71f`. The frozen summaries contain only AXIOM measurements. Private campaign manifests, Google Docs links and coauthor contact addresses are excluded. Compact metrics omit token arrays; the separately documented [raw ZIP](../results/axiom-review-2026/README.md) now preserves all 24 original review output files, including saved prompt and output/reference token IDs.

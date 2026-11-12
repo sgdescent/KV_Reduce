@@ -23,6 +23,8 @@ python -m pip install -r requirements-analysis.txt
 python -m kv_reduce.analysis.analyze_axiom_review --check
 ```
 
+To regenerate the Appendix E figures from the archived raw outputs (also CPU-only), see [results/axiom-review-2026](results/axiom-review-2026/README.md).
+
 **GPU experiments** (Linux + CUDA; the paper used Python 3.13 and 24 GiB RTX A5000 GPUs):
 
 ```bash
@@ -61,7 +63,7 @@ This writes per-prompt rows (`benchmark_rows.csv`) and a summary of acceptance, 
 | `kv_reduce/allocation/` | Build mixed-precision K/V policies from sensitivity profiles (CPU) |
 | `kv_reduce/analysis/` | Aggregate runs into the paper's statistics (CPU) |
 | `scripts/` | SLURM launchers, one folder per experiment ([how to use them](docs/REPRODUCING.md#launchers)) |
-| `results/` | Frozen data behind the paper's numbers, including Appendix E's per-prompt metrics |
+| `results/` | Frozen data behind the paper's numbers; `axiom-review-2026/` also holds Appendix E's raw outputs and figures |
 | `tests/` | CPU unit tests (`pytest`) |
 
 ## Paper → code
