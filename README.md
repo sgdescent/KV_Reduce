@@ -27,6 +27,8 @@ python analyze_axiom_review.py --check
 
 To run model experiments, follow the [GPU setup and reproduction guide](docs/REPRODUCING_AXIOM.md).
 
+**Regenerate plots without a GPU:** [download the complete review outputs and follow the plotting guide](results/axiom-review-2026/README.md).
+
 ## Explore
 
 - [Reproduce experiments](docs/REPRODUCING_AXIOM.md): setup, small examples, full runs, and Slurm submission.

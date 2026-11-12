@@ -30,6 +30,6 @@
     "axiom_packed_ctx1024/target_only.jsonl": "b7b4d2a287332f0a1c2558129404aab22487d80314ff51ebffc04d6c5a13f362",
     "axiom_packed_ctx16384/target_only.jsonl": "9ed6ab325ceab81452d8722ad4b606a086e98d565900aa9d78585b0b66bb63a2"
   },
-  "privacy": "Prompt tokens and generated/reference tokens omitted. Token arrays hashed with SHA-256 over compact JSON. No model weights or dataset passages redistributed. Per-prompt/round metrics retained.",
+  "privacy": "Compact top-level JSONL metrics omit prompt and generated/reference token arrays and retain SHA-256 hashes. The separately documented raw-outputs.zip added on 2026-11-12 preserves the 24 original AXIOM review output files, including saved token arrays and historical configuration paths. No weights, contact addresses or private campaign manifest are included.",
   "limitations": "Model/dataset revision hashes were not pinned by the historical launchers. Package versions read later are not a historical lockfile. CPU reanalysis does not establish GPU runtime correctness."
 }
