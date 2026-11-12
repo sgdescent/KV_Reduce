@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from compare_kv_quantizer_geometry import join_geometry_rows, load_kivi_rows
+from kv_reduce.analysis.compare_kv_quantizer_geometry import join_geometry_rows, load_kivi_rows
 
 
 class QuantizerGeometryComparisonTest(unittest.TestCase):

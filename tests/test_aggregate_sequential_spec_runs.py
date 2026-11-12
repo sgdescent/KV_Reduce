@@ -2,7 +2,7 @@ import random
 import unittest
 from pathlib import Path
 
-from aggregate_sequential_spec_runs import (
+from kv_reduce.analysis.aggregate_sequential_spec_runs import (
     aggregate,
     bootstrap_paired_ratio_difference,
     bootstrap_ratio_ci,

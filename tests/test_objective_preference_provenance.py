@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aggregate_kivi_objective_preferences import load_quality_rows, load_spec_rows
+from kv_reduce.analysis.aggregate_kivi_objective_preferences import load_quality_rows, load_spec_rows
 
 
 def write_csv(path: Path, rows):

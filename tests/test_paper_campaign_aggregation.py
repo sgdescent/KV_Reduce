@@ -3,8 +3,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from paper.aggregate_campaign import collect_campaign, pair_sort_key
-from paper.campaign_provenance import sample_count_status
+from kv_reduce.analysis.aggregate_campaign import collect_campaign, pair_sort_key
+from kv_reduce.analysis.campaign_provenance import sample_count_status
 
 
 class PaperCampaignAggregationTest(unittest.TestCase):

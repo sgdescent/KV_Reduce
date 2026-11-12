@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from aggregate_value_precision_quality_sweep import enforce_full_run
+from kv_reduce.analysis.aggregate_value_precision_quality_sweep import enforce_full_run
 
 
 class ValuePrecisionQualityAggregationTest(unittest.TestCase):

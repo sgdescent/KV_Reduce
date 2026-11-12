@@ -1,19 +1,20 @@
-# Add .venv and __pycache__ to the gitignore
-.venv/
+# Python and local environments
+.venv*/
 __pycache__/
-
-# Experiment artifacts (regenerate with probe scripts)
-outputs/
-logs/
-wandb/
-# Local environments and machine-specific files
-.DS_Store
-._*
-.env
-.env.*
-!.env.example
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.env
+.env.*
+!.env.example
+
+# Experiment outputs, logs and W&B runs
+outputs/
+logs/
+wandb/
 slurm-*.out
 slurm-*.err
+
+# OS files
+.DS_Store
+._*

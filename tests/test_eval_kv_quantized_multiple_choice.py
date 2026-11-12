@@ -3,7 +3,7 @@ import unittest
 import torch
 from transformers import DynamicCache
 
-from eval_kv_quantized_multiple_choice import (
+from kv_reduce.experiments.eval_kv_quantized_multiple_choice import (
     PASSKEY_VARIANT_CONFUSABLE,
     assemble_confusable_passkey_prompt_ids,
     assemble_passkey_prompt_ids,

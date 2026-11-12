@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from paper.aggregate_objective_campaign import (
+from kv_reduce.analysis.aggregate_objective_campaign import (
     bootstrap_macro_mean_ci,
     collect_final_rows,
     collect_meta_rows,

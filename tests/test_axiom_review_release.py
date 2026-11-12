@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import unittest
 
-from analyze_axiom_review import DEFAULT_DATA, analyze, compare, read_rows, validate
+from kv_reduce.analysis.analyze_axiom_review import DEFAULT_DATA, analyze, compare, read_rows, validate
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -66,7 +66,7 @@ class ReviewMetricsTest(unittest.TestCase):
 
 class LauncherTest(unittest.TestCase):
     def invoke(self, script, task, out):
-        return subprocess.run(['bash',str(ROOT/'scripts/axiom'/script),str(task),'--dry-run'],cwd='/',env={**os.environ,'OUT_ROOT':str(out)},text=True,capture_output=True)
+        return subprocess.run(['bash',str(ROOT/'scripts/axiom_review'/script),str(task),'--dry-run'],cwd='/',env={**os.environ,'OUT_ROOT':str(out)},text=True,capture_output=True)
 
     def test_quality_matrix_and_paths_with_spaces(self):
         with tempfile.TemporaryDirectory(prefix='axiom test ') as out:

@@ -1,6 +1,6 @@
 import unittest
 
-from aggregate_kivi_objective_preferences import aggregate_preferences
+from kv_reduce.analysis.aggregate_kivi_objective_preferences import aggregate_preferences
 
 
 def spec_row(accept_rate: float, proposed_tokens: int = 100):

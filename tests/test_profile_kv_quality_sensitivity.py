@@ -1,6 +1,6 @@
 import unittest
 
-from profile_kv_quality_sensitivity import build_parser
+from kv_reduce.experiments.profile_kv_quality_sensitivity import build_parser
 
 
 class ProfileKvQualitySensitivityTest(unittest.TestCase):

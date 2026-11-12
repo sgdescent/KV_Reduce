@@ -1,7 +1,7 @@
 # Contributing
 
-This repository contains research code and historical experiments. Start with the
-AXIOM reproduction guide before changing a benchmark protocol.
+This repository contains research code for a published paper. Read
+[docs/REPRODUCING.md](docs/REPRODUCING.md) before changing a benchmark protocol.
 
 ## Report a problem
 
@@ -15,18 +15,19 @@ its BF16 baseline. This is documented, not resolved by the paper-facing release.
 
 ## Validate a change
 
-CPU analysis checks need only `requirements-analysis.txt`:
+The released-results check needs only `requirements-analysis.txt`:
 
 ```bash
+python -m kv_reduce.analysis.analyze_axiom_review --check
 python -m unittest discover -s tests -p 'test_axiom_review_release.py' -v
-python analyze_axiom_review.py --check
 ```
 
-With PyTorch installed, run the cache and statistics checks:
+The full unit-test suite runs on CPU, as in CI:
 
 ```bash
-python -m unittest discover -s tests -p 'test_packed_kv_cache.py' -v
-python -m unittest discover -s tests -p 'test_spec_kv_statistics.py' -v
+python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+python -m pip install transformers==5.3.0 numpy matplotlib pytest
+python -m pytest
 ```
 
 GPU tests and full experimental reruns are separate. A passing CPU suite does not

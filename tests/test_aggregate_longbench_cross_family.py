@@ -1,6 +1,6 @@
 import unittest
 
-from aggregate_longbench_cross_family import hierarchical_macro_ci, pair_effects
+from kv_reduce.analysis.aggregate_longbench_cross_family import hierarchical_macro_ci, pair_effects
 
 
 class LongBenchCrossFamilyAggregationTest(unittest.TestCase):

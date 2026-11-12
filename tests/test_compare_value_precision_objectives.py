@@ -1,7 +1,7 @@
 import math
 import unittest
 
-from compare_value_precision_objectives import (
+from kv_reduce.analysis.compare_value_precision_objectives import (
     pareto_configs,
     rankdata,
     select_max_savings,

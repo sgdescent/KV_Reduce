@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aggregate_kv_passkey_cross_family import (
+from kv_reduce.analysis.aggregate_kv_passkey_cross_family import (
     aggregate_contrasts,
     collect_rows,
     make_plot,

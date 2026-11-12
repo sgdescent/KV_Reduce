@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from compare_target_draft_kv_quality import (
+from kv_reduce.analysis.compare_target_draft_kv_quality import (
     aggregate_role_differences,
     collect_role_rows,
 )

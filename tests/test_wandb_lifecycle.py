@@ -3,7 +3,7 @@ import types
 import unittest
 from unittest import mock
 
-import benchmark_spec_kv_quantization as benchmark
+import kv_reduce.experiments.benchmark_spec_kv_quantization as benchmark
 
 
 class WandbLifecycleTest(unittest.TestCase):

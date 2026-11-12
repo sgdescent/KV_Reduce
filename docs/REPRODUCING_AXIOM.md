@@ -1,7 +1,8 @@
-# Reproduce the AXIOM review experiments
+# Reproduce the AXIOM review experiments (Appendix E)
 
-This guide covers the **October 19, 2026 review campaign**, not every historical
-experiment in the repository. No script in this guide changes the manuscript.
+This guide covers the **October 19, 2026 review campaign**: 256-token continuations
+and the end-to-end packed prototype. [REPRODUCING.md](REPRODUCING.md) covers the
+other paper experiments. No script in this guide changes the manuscript.
 
 ## CPU analysis
 
@@ -9,7 +10,7 @@ From the repository root:
 
 ```bash
 python -m pip install -r requirements-analysis.txt
-python analyze_axiom_review.py --check
+python -m kv_reduce.analysis.analyze_axiom_review --check
 python -m unittest discover -s tests -p 'test_axiom_review_release.py' -v
 ```
 
@@ -31,21 +32,20 @@ The packed prototype imports Triton and Transformers' Qwen2 internals; arbitrary
 library upgrades are not a supported compatibility claim.
 
 Recorded quality-run versions were PyTorch **2.10.0+cu128** and Transformers
-**5.3.0**. `requirements-axiom.txt` also records packages read from the environment
+**5.3.0**. `requirements.txt` also records packages read from the environment
 on November 10. Those later observations are not a complete historical lockfile.
 Use Python 3.13 to match the documented campaign environment when practical.
 
 ```bash
-python3.13 -m venv .venv-gpu
-source .venv-gpu/bin/activate
+python3.13 -m venv .venv
+source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
-python -m pip install -r requirements-axiom.txt
+python -m pip install -r requirements.txt
 ```
 
 Select a driver compatible with that CUDA wheel. Other GPUs, drivers and package
-versions can change numerical behavior and timing. The root `requirements.txt` is
-historical and intentionally broad; prefer the AXIOM requirements for these runs.
+versions can change numerical behavior and timing.
 
 Models and FineWeb-Edu are downloaded from their upstream sources. Follow their
 access and usage terms. The original campaign did not pin model or dataset revision
@@ -54,26 +54,13 @@ Record revisions, software, hardware and launch arguments for new runs.
 
 ## Small quality example
 
-GPU inference uses a separate environment. Follow [installation and hardware notes](#gpu-environment) first; the packed prototype requires Linux, CUDA and Triton.
+The [README example](../README.md#small-example) is a two-prompt smoke run of the
+quality evaluator. It is not a reproduction of the reported scientific result. The
+quality evaluator uses **fake quantization**; its timing and memory estimates must
+not be presented as packed-cache serving performance.
 
-```bash
-python benchmark_spec_kv_quantization.py \
-  --big_model Qwen/Qwen2.5-3B \
-  --small_model Qwen/Qwen2.5-1.5B \
-  --big_device cuda:0 --small_device cuda:0 \
-  --attn_implementation sdpa \
-  --dataset_name HuggingFaceFW/fineweb-edu --dataset_config sample-10BT \
-  --eval_split train --stream_eval --shuffle_eval --seed 0 \
-  --prompt_len 1024 --num_prompts 2 --warmup_prompts 1 --skip_prompts 100 \
-  --max_new_tokens 32 --draft_steps 4 --target_verification_mode sequential \
-  --quant_configs 'none;k4v4' --key_quant_axis per_channel \
-  --key_group_size 32 --key_residual_length 0 --value_quant_scheme affine \
-  --out_dir outputs/axiom-quality-smoke
-```
-
-This is a smoke workload, not a reproduction of the reported scientific result. The quality evaluator uses **fake quantization**; its timing and memory estimates must not be presented as packed-cache serving performance.
-
-For the six full quality settings and two packed benchmarks, see the [reproduction guide](#quality-matrix). Launchers refuse to overwrite existing run directories.
+For the six full quality settings and two packed benchmarks, see the
+[quality matrix](#quality-matrix). Launchers refuse to overwrite existing run directories.
 
 
 ## Quality matrix
@@ -93,8 +80,8 @@ Key groups contain 32 **tokens** per channel; values use per-token affine quanti
 | 5 | 16,384 | 128 | 0 |
 
 ```bash
-bash scripts/axiom/quality.sh 0 --dry-run
-bash scripts/axiom/quality.sh 0
+bash scripts/axiom_review/quality.sh 0 --dry-run
+bash scripts/axiom_review/quality.sh 0
 ```
 
 Run the other task IDs separately when you intend to reproduce the full matrix.
@@ -104,9 +91,14 @@ rejected, including incomplete runs, so a retry must use a new output parent.
 
 The quality evaluator uses sequential verification and fake quantization. Its
 latency is not a packed serving benchmark, and its target calls do not demonstrate
-acceleration. The paper-facing release integrates the historical `review_spec.py`
-round logging into `benchmark_spec_kv_quantization.py`; the initial release copy
-is byte-identical to that campaign evaluator.
+acceleration. The campaign evaluator `review_spec.py` is byte-identical to
+`benchmark_spec_kv_quantization.py` at commit `f908626`; the repository
+reorganization later moved it to `kv_reduce/experiments/` and changed only its
+import lines. To check the hash recorded in `provenance.json`:
+
+```bash
+git show f908626:benchmark_spec_kv_quantization.py | sha256sum  # 95b9f6ac...
+```
 
 ## Packed prototype matrix
 
@@ -116,11 +108,11 @@ is byte-identical to that campaign evaluator.
 | 1 | 16,384 | 12 | 256 |
 
 ```bash
-bash scripts/axiom/packed.sh 0 --dry-run
+bash scripts/axiom_review/packed.sh 0 --dry-run
 # Small CUDA smoke run: 1 scored prompt, 1 warmup, 32 generated tokens.
-python packed_review.py --smoke --out outputs/axiom-packed-smoke
+python -m kv_reduce.experiments.packed_review --smoke --out outputs/axiom-packed-smoke
 # Full task; choose a fresh output directory.
-bash scripts/axiom/packed.sh 0
+bash scripts/axiom_review/packed.sh 0
 ```
 
 The script runs append/crop/commit and attention checks before model evaluation.
@@ -148,8 +140,8 @@ partition/account and activate your GPU environment before submission.
 
 ```bash
 mkdir -p logs
-sbatch --array=0-5%2 scripts/axiom/review.slurm quality
-sbatch --array=0-1%1 scripts/axiom/review.slurm packed
+sbatch --array=0-5%2 scripts/axiom_review/review.slurm quality
+sbatch --array=0-1%1 scripts/axiom_review/review.slurm packed
 ```
 
 The template requests 1 GPU, 4 CPU cores, 48 GiB host memory and up to 12 hours per

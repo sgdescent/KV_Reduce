@@ -1,14 +1,15 @@
-# PyTorch: install the build that matches your CUDA/driver from https://pytorch.org/get-started/locally/
-# Example: pip install torch --index-url https://download.pytorch.org/whl/cu124
-torch>=2.1.0
-
-transformers>=4.40.0
-accelerate>=0.26.0
-datasets>=2.16.0
+# GPU experiments (Linux + CUDA). Install the CUDA build of torch first, e.g.
+#   pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+# Pins were read from the campaign environment on 2026-11-10; only torch and
+# transformers were recorded in run metadata. Reconstruction aid, not a lockfile.
+torch==2.10.0
+transformers==5.3.0
+datasets==4.8.2
+accelerate==1.13.0
+triton==3.6.0
+numpy==2.4.3
 safetensors>=0.4.0
 sentencepiece>=0.1.99
-
-tqdm>=4.66.0
-numpy>=1.24.0
-matplotlib>=3.7.0
-wandb>=0.16.0
+# Not recorded in the campaign environment: plots and launcher logging.
+matplotlib>=3.7
+wandb>=0.16

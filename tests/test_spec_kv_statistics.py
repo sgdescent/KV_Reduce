@@ -1,6 +1,6 @@
 import unittest
 
-from spec_kv_statistics import acceptance_contrast, acceptance_ratio, bootstrap_mean_ci
+from kv_reduce.spec_kv_statistics import acceptance_contrast, acceptance_ratio, bootstrap_mean_ci
 
 
 def row(accepted: int, proposed: int):

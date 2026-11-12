@@ -1,6 +1,6 @@
 import unittest
 
-from aggregate_kv_passkey import paired_accuracy_differences, parse_int_list
+from kv_reduce.analysis.aggregate_kv_passkey import paired_accuracy_differences, parse_int_list
 
 
 class PasskeyAggregationTest(unittest.TestCase):

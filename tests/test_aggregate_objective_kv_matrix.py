@@ -7,12 +7,12 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from aggregate_objective_kv_matrix import (
+from kv_reduce.analysis.aggregate_objective_kv_matrix import (
     audit_cell_coverage,
     hierarchical_bootstrap_mean_ci,
     load_manifest_cells,
 )
-from prepare_objective_kv_matrix import matched_byte_target
+from kv_reduce.allocation.prepare_objective_kv_matrix import matched_byte_target
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -171,7 +171,8 @@ class ObjectiveMatrixAggregationTest(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "search_kv_bit_allocation.py"),
+                    "-m",
+                    "kv_reduce.allocation.search_kv_bit_allocation",
                     "--profile_csv",
                     str(profile),
                     "--risk_field",
@@ -231,7 +232,8 @@ class ObjectiveMatrixAggregationTest(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "prepare_objective_kv_matrix.py"),
+                    "-m",
+                    "kv_reduce.allocation.prepare_objective_kv_matrix",
                     "--quality_profile_csv",
                     str(quality_profile),
                     "--acceptance_profile_csv",

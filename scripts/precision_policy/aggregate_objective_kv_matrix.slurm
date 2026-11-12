@@ -1,0 +1,21 @@
+#!/bin/bash
+#SBATCH --job-name=kv_obj_matrix_agg
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
+#SBATCH --time=00:30:00
+#SBATCH --output=logs/%x-%j.out
+#SBATCH --error=logs/%x-%j.err
+
+set -euo pipefail
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
+if [[ -f .venv/bin/activate ]]; then
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+fi
+python3 -u -m kv_reduce.analysis.aggregate_objective_kv_matrix \
+  --matrix_dir "${MATRIX_DIR:?Set MATRIX_DIR}" \
+  --out_dir "${OUT_DIR:?Set OUT_DIR}" \
+  --require_complete \
+  --require_exact_target

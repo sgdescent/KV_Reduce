@@ -6,17 +6,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from acceptance_risk_statistics import paired_drop_statistics
-from aggregate_objective_kv_matrix import classify_exactness
-from benchmark_spec_kv_quantization import (
+from kv_reduce.acceptance_risk_statistics import paired_drop_statistics
+from kv_reduce.analysis.aggregate_objective_kv_matrix import classify_exactness
+from kv_reduce.experiments.benchmark_spec_kv_quantization import (
     alias_config_result,
     build_joint_quant_configs,
     joint_quant_layout_signature,
     last_token_logits_kwargs,
 )
-from kv_cache_quantization import kv_bit_layout_signature, parse_csv_ints, parse_quant_config_specs
-from prepare_objective_kv_matrix import evaluation_skip_blocks, heuristic_component_bits
-from profile_spec_kv_sensitivity import (
+from kv_reduce.kv_cache_quantization import kv_bit_layout_signature, parse_csv_ints, parse_quant_config_specs
+from kv_reduce.allocation.prepare_objective_kv_matrix import evaluation_skip_blocks, heuristic_component_bits
+from kv_reduce.experiments.profile_spec_kv_sensitivity import (
     build_parser as build_spec_sensitivity_parser,
     wandb_candidate_prompt_offset,
     wandb_candidate_summary_step,
@@ -295,7 +295,8 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
                 subprocess.run(
                     [
                         sys.executable,
-                        str(REPO_ROOT / "search_kv_bit_allocation.py"),
+                        "-m",
+                        "kv_reduce.allocation.search_kv_bit_allocation",
                         "--profile_csv",
                         str(profile),
                         "--num_layers",
@@ -329,7 +330,8 @@ class ObjectiveKVPipelineTest(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "search_kv_bit_allocation.py"),
+                    "-m",
+                    "kv_reduce.allocation.search_kv_bit_allocation",
                     "--profile_csv",
                     str(profile),
                     "--risk_field",

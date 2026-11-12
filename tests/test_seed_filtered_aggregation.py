@@ -1,6 +1,6 @@
 import unittest
 
-from aggregate_value_precision_sweep import parse_seed_filter
+from kv_reduce.analysis.aggregate_value_precision_sweep import parse_seed_filter
 
 
 class SeedFilteredAggregationTest(unittest.TestCase):

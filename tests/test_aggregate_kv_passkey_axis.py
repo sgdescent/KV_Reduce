@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / "aggregate_kv_passkey_axis.py"
+MODULE = "kv_reduce.analysis.aggregate_kv_passkey_axis"
 CONFIGS = ("none", "k4v4", "k4v2", "k2v4", "k2v2")
 
 
@@ -64,7 +64,8 @@ class AggregatePasskeyAxisTest(unittest.TestCase):
         return subprocess.run(
             [
                 sys.executable,
-                str(SCRIPT),
+                "-m",
+                MODULE,
                 "--per_channel_root",
                 str(per_channel),
                 "--per_token_root",

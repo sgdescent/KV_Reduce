@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from aggregate_paired_geometry_sweep import allocation_contrast, collect, paired_values
+from kv_reduce.analysis.aggregate_paired_geometry_sweep import allocation_contrast, collect, paired_values
 
 
 class PairedGeometryAggregationTest(unittest.TestCase):

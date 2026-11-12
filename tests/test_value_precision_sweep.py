@@ -2,7 +2,7 @@ import unittest
 
 from pathlib import Path
 
-from aggregate_value_precision_sweep import (
+from kv_reduce.analysis.aggregate_value_precision_sweep import (
     aggregate_prompt_effects,
     parse_config_bits,
     parse_config_set,

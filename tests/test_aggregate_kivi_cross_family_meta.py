@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aggregate_kivi_cross_family_meta import (
+from kv_reduce.analysis.aggregate_kivi_cross_family_meta import (
     aggregate_configs,
     collect_pair_rows,
     summarize_preferences,

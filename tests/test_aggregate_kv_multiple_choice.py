@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 
-from aggregate_kv_multiple_choice import (
+from kv_reduce.analysis.aggregate_kv_multiple_choice import (
     paired_metric_differences,
     parse_int_list,
     parse_string_list,

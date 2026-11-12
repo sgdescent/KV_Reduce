@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from packed_kv_cache import (
+from kv_reduce.packed_kv_cache import (
     pack_kivi_kv,
     pack_per_channel_grouped_affine,
     pack_per_token_affine,

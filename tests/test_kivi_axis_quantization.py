@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import torch
 
-from benchmark_spec_kv_quantization import estimate_total_kv_memory
-from kv_cache_quantization import (
+from kv_reduce.experiments.benchmark_spec_kv_quantization import estimate_total_kv_memory
+from kv_reduce.kv_cache_quantization import (
     AFFINE_QUANT,
     PER_CHANNEL_AXIS,
     PER_TOKEN_AXIS,
