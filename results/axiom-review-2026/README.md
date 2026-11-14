@@ -33,9 +33,10 @@ The generated files are already committed in [figures/](figures/):
 | [Rejection positions](figures/rejection_positions.pdf) | Where draft proposals first fail verification |
 
 These are figures for the **new review campaign**. They do not replace or reproduce
-all figures in the original six-model paper. Frozen inputs for the paper's
-other results are elsewhere in `results/`; some older full experiment outputs have not
-been added to this archive. The manuscript itself has not been edited.
+all figures in the original six-model paper, which reports this campaign in
+Appendix E. Only some of the paper's other results have frozen outputs elsewhere in
+`results/` (see [docs/REPRODUCING.md](../../docs/REPRODUCING.md)); the rest are not in
+the repository.
 
 ## Original output files
 

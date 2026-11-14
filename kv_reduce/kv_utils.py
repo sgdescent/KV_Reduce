@@ -86,6 +86,11 @@ def get_num_kv_heads(config) -> int:
 
 
 def get_head_dim(config) -> int:
+    # Prefer the config's head_dim: some models set it independently, e.g.
+    # Qwen3-4B has hidden_size / num_attention_heads = 80 but head_dim = 128.
+    head_dim = getattr(config, "head_dim", None)
+    if head_dim:
+        return int(head_dim)
     return int(config.hidden_size // config.num_attention_heads)
 
 

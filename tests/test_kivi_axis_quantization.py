@@ -161,6 +161,26 @@ class KiviAxisQuantizationTest(unittest.TestCase):
             per_channel["quantized_cache_bytes"],
         )
 
+    def test_memory_estimate_uses_config_head_dim(self) -> None:
+        shape = dict(num_hidden_layers=36, num_key_value_heads=8, num_attention_heads=32)
+        configs = (
+            # Qwen3-4B: hidden_size / num_attention_heads is 80, but head_dim is 128.
+            SimpleNamespace(**shape, hidden_size=2560, head_dim=128),
+            # Without head_dim (missing or None), fall back to 4096 / 32 = 128.
+            SimpleNamespace(**shape, hidden_size=4096),
+            SimpleNamespace(**shape, hidden_size=4096, head_dim=None),
+        )
+        for config in configs:
+            memory = estimate_model_kv_cache_bytes(
+                config=config,
+                seq_len=1024,
+                dtype_name="bf16",
+                k_bits_by_layer=[16] * 36,
+                v_bits_by_layer=[16] * 36,
+            )
+            # Keys and values: 36 layers x 8 KV heads x 1024 tokens x 128 dims x 2 bytes.
+            self.assertEqual(memory["native_cache_bytes"], 2 * 36 * 8 * 1024 * 128 * 2)
+
     def test_joint_memory_estimate_quantizes_target_and_draft(self) -> None:
         config = SimpleNamespace(
             num_hidden_layers=2,

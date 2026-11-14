@@ -1,6 +1,6 @@
 # Reproducing the experiments
 
-Each paper result has SLURM launchers under `scripts/` and a CPU aggregation step. Raw run outputs are not in the repository. Frozen data behind the paper's numbers is in `results/`.
+Each paper result has SLURM launchers under `scripts/` and a CPU aggregation step. Raw run outputs are not in the repository, except Appendix E's. Some results have frozen outputs in `results/`, named in their sections below; the others must be rerun.
 
 Install the GPU environment first (see the [README](../README.md#setup)). All paths below are relative to the repository root.
 

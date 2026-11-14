@@ -8,15 +8,15 @@ Speculative decoding stores two KV caches, one for the target model and one for 
 
 ## Main results
 
-- **Quantizer geometry decides the key/value split.** With a naive per-token quantizer, K8V4 beats equal-memory K4V8 by 10.87 acceptance points across six model pairs. With grouped per-channel keys, the gap is −0.25 points.
-- **K4V4 removes two thirds of the draft cache.** Across six target/draft pairs, draft-cache bytes drop by 66.13% and combined target + draft KV by 22.64%. Acceptance moves from 57.93% to 57.14%.
+- **Quantizer geometry decides the key/value split.** With a naive per-token quantizer, K8V4 beats equal-memory K4V8 by 10.87 acceptance points across six model pairs. With a KIVI-inspired layout (grouped per-channel keys, affine values and a BF16 residual window), the gap is −0.25 points.
+- **K4V4 removes two thirds of the draft cache.** Across six target/draft pairs, draft-cache bytes drop by 66.20% and combined target + draft KV by 23.95%. Acceptance moves from 57.93% to 57.14%.
 - **The storage savings are real, but not yet a speedup.** Bit-packed K4V4 stores a 32K-token Qwen2.5-1.5B cache in 260.2 MiB instead of 896.0 MiB. The end-to-end prototype is slower than BF16 speculative decoding and does not lower peak GPU memory.
 
 ## Setup
 
 Run every command from the repository root. Python entry points are modules, e.g. `python -m kv_reduce.experiments.benchmark_spec_kv_quantization --help`.
 
-**CPU check of the released results** (no GPU or model downloads):
+**CPU check of Appendix E's released results** (no GPU or model downloads):
 
 ```bash
 python -m pip install -r requirements-analysis.txt
@@ -63,7 +63,7 @@ This writes per-prompt rows (`benchmark_rows.csv`) and a summary of acceptance, 
 | `kv_reduce/allocation/` | Build mixed-precision K/V policies from sensitivity profiles (CPU) |
 | `kv_reduce/analysis/` | Aggregate runs into the paper's statistics (CPU) |
 | `scripts/` | SLURM launchers, one folder per experiment ([how to use them](docs/REPRODUCING.md#launchers)) |
-| `results/` | Frozen data behind the paper's numbers; `axiom-review-2026/` also holds Appendix E's raw outputs and figures |
+| `results/` | Frozen outputs for the introduction's noise test, §5.2, Table 3 and Appendices D–E; `axiom-review-2026/` also holds Appendix E's raw outputs and figures. Other results must be rerun |
 | `tests/` | CPU unit tests (`pytest`) |
 
 ## Paper → code
@@ -84,11 +84,11 @@ Main-code paths are relative to `kv_reduce/`.
 | App. E: 256-token runs, end-to-end prototype | `scripts/axiom_review/` | `experiments/packed_review.py` |
 | App. F: choosing a precision policy | `scripts/precision_policy/` | `allocation/search_kv_bit_allocation.py` |
 
-[docs/REPRODUCING.md](docs/REPRODUCING.md) gives the commands, aggregation steps and frozen outputs for each row.
+[docs/REPRODUCING.md](docs/REPRODUCING.md) gives the commands and aggregation steps for each row, and names the frozen outputs where they exist.
 
 ## Limitations
 
-The packed decoder is a research prototype. It is slower than BF16 speculative decoding and does not reduce peak GPU memory. Its batched verifier has unresolved output mismatches, also with a BF16 draft cache; all sequential checks pass. Acceptance intervals that include zero do not establish equivalence. See [correctness and scope](docs/AXIOM_RESULTS.md#correctness-and-scope).
+The packed decoder is a research prototype. It is slower than BF16 speculative decoding and does not reduce peak GPU memory. Its batched verifier has unresolved output mismatches, also with a BF16 draft cache; all sequential checks pass. Tables 3–4 and the Appendix F Spearman grid also used batched verification (paper, Appendix A). Acceptance intervals that include zero do not establish equivalence. See [correctness and scope](docs/AXIOM_RESULTS.md#correctness-and-scope).
 
 ## Citation
 
