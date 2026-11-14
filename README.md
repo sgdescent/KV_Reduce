@@ -104,4 +104,4 @@ The packed decoder is a research prototype. It is slower than BF16 speculative d
 
 ## License
 
-Code is released under the [MIT License](LICENSE). Models and datasets keep their upstream terms (paper, Table 10); none are redistributed here. [Contributions](CONTRIBUTING.md) are welcome.
+Code is released under the [MIT License](LICENSE). Models and datasets keep their upstream terms (paper, Table 10). No model weights are redistributed here; the raw outputs in `results/axiom-review-2026/` include the token IDs of their FineWeb-Edu prompts. [Contributions](CONTRIBUTING.md) are welcome.
