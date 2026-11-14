@@ -1,0 +1,727 @@
+\documentclass{article}
+
+\usepackage[dblblindworkshop,final]{neurips_2026}
+\workshoptitle{AXIOM Foundations of Efficient Deep Learning}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{flafter}
+\usepackage{placeins}
+\usepackage{microtype}
+\usepackage{xcolor}
+\definecolor{paperlink}{HTML}{1F4E79}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=paperlink,
+  citecolor=paperlink,
+  urlcolor=paperlink
+}
+\urlstyle{same}
+
+\title{Memory-Efficient Speculative Decoding with Quantized Draft KV Cache}
+
+\author{%
+  Saksham Gupta\thanks{Equal contribution.} \\
+  Carnegie Mellon University \\
+  \texttt{sakshamg@andrew.cmu.edu} \\
+  \And
+  Michael Li\footnotemark[1] \\
+  Carnegie Mellon University \\
+  \texttt{ml7@andrew.cmu.edu} \\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Speculative decoding reduces generation cost, but it stores two KV caches: one
+for the target model and one for the draft model. We reduce this extra memory by
+quantizing the draft cache. The target cache and verifier remain in BF16, so that compression cannot change the target model's final
+correction rule. We first study how
+to divide precision between keys and values. A naive per-token quantizer makes
+keys appear much more sensitive: splitting 12 bits per token, K8V4 beats K4V8 by 10.87\%. However, with grouped
+per-channel keys, the gap becomes -0.25\%. A controlled Qwen test confirms
+that changing only the key quantizer can erase or reverse the preferred bit
+split. Hence, we propose K4V4 quantization where keys are quantized per-channel while values are quantized per-token. Across six model pairs, our method reduces draft cache memory by 66.13\%, and combined memory across both caches by 22.64\%. Acceptance only drops relatively by 1.36\%, from 57.93\% to 57.14\%. In summary, quantized draft caches can make speculative decoding more memory efficient, but key and value precision must be chosen together with the quantizer layout, as a predictive principle for efficient AI design.
+\end{abstract}
+
+\section{Introduction}
+
+Speculative Decoding (SD) improves LLM inference latency by letting a small \emph{draft} model propose tokens that a larger \emph{target} model verifies in parallel ~\citep{leviathan2023speculative,
+chen2023speculative}. Draft tokens are accepted sequentially until the first rejection, at which point a corrected token is sampled from the target model and generation continues from there. This maintains the target output rule while reducing the number of expensive target forward passes.
+
+However, standard SD maintains a KV cache for each model, increasing memory pressure as context length and batch size grow. Let $\text{Mem}_T$ and $\text{Mem}_D$ be the target and draft cache sizes.
+Standard SD stores $\text{Mem}_T+\text{Mem}_D$. We instead store $\text{Mem}_T+\widehat \text{Mem}_D$,
+where $\widehat \text{Mem}_D$ is the low-precision draft cache size. Note that the target cache remains unchanged. Quantization may reduce draft model acceptance, but it will not affect target model performance.
+
+The main design question is how to quantize keys and values. Attention computes $O=AVW_O$ with $A=\operatorname{softmax}(QK^\top/\sqrt{d_h}+M)$~\citep{vaswani2023attention}. Keys control where we read, while values contain the information returned by reads. Based on empirical investigation, it is tempting to conclude that keys
+always need more precision as they are more sensitive to noise. For example, with Gaussian noise with $\sigma = 0.03$, key noise reduced top-1 agreement to 61.7\%, while value noise retained 99.2\% agreement.
+
+We organize our study around three research questions. \textbf{(1) Key and value precision.} Is the apparent need for higher key precision intrinsic to attention, or is it caused by quantizer geometry and outlier handling? \textbf{(2) Memory and acceptance.} How much SD memory can draft-only KV cache quantization save without materially reducing token acceptance? \textbf{(3) Generalization and practical savings.} Do these memory-quality tradeoffs hold across model families, long contexts, and retrieval workloads, and do they translate into real packed-storage savings?
+
+\section{Related Work}
+
+In standard autoregressive inference, KV cache quantization successfully mitigates memory costs, though precision allocation is often heuristically driven. For example, KIVI applies an asymmetric strategy of per-channel quantization for keys and per-token quantization for values \citep{liu2024kivi}, whereas Quantize What Counts argues for allocating higher precision to keys based on the distinct geometries of key and value representations \citep{hariri2026quantize}. Other approaches optimize bit allocation dynamically: KVTuner searches for layer-wise precision pairings \citep{li2025kvtuner}, RateQuant distributes bits across attention heads via rate-distortion theory \citep{zuo2026ratequant}, and RoPE-Aware techniques allocate precision across frequency blocks \citep{liang2026blockgtq}. We build on KIVI's geometry and study asymmetric bit splitting (e.g., K8V4 vs. K4V8) in conjunction with it.
+
+While QuantSpec introduces hierarchical KV quantization for self-speculative decoding \citep{tiwari2025quantspec}, our work addresses a different paradigm. We study standard two-model speculative decoding, specifically targeting the quantization of the draft model's cache. By evaluating the trade-off between total memory savings and candidate acceptance rates, we isolate how key-quantizer geometry alters conclusions about the optimal precision balance between keys and values.
+
+\section{Draft Cache Quantization}
+
+Let K$a$V$b$ denote $a$-bit keys and $b$-bit values. We first compare K8V4 against K4V8 to test whether keys or values need more bits. Our simple baseline uses one symmetric scale for each token and KV head. For a
+$b$-bit group $G$, symmetric scale $s_G$ is computed as follows:
+\begin{equation}
+ s_G=\frac{\max_{x\in G}|x|}{2^{b-1}-1},\qquad
+ \widehat x=s_G\operatorname{clip}(\operatorname{round}(x/s_G)).
+ \label{eq:symmetric}
+\end{equation}
+This baseline lets channel-specific key outliers set the scale for the full
+vector. Inspired by KIVI, our layout instead uses 32-token per-channel key groups
+and per-token affine value groups within each head~\citep{liu2024kivi}, as
+shown in Figure~\ref{fig:quantizer-geometry}. We provide novel experiments to justify this. Keys also use affine groups, and the newest 128 key tokens remain in BF16 (Appendix~\ref{app:protocol}). We count payload bits, BF16
+scales, zero-points, and the BF16 residual window in every memory result.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=0.8\linewidth,trim=0 125 0 140,clip]{figures/quantizer_geometry_explainer_clean.png}
+  \caption{\textbf{Quantizer geometry.} Draft keys share scales by channel,
+  while draft values share scales by token. K8V4 and K4V8 allocate equal
+  average payload precision. Note that only the draft cache is quantized; the target
+  cache remains in BF16. Our scales are affine, not symmetric as drawn.}
+  \label{fig:quantizer-geometry}
+\end{figure}
+
+The target verifier also remains in BF16. We measure draft-token acceptance,
+KL from BF16 draft logits, top-1 agreement, and retrieval accuracy.
+
+\section{Evaluation}
+
+We test six target and draft pairs across Qwen2.5~\citep{yang2024qwen25},
+Qwen3~\citep{yang2025qwen3}, Llama 3~\citep{grattafiori2024llama3}, OLMo
+2~\citep{olmo2025furious}, and SmolLM2~\citep{allal2025smollm2}. Model sizes
+range from 360M to 8B parameters. Across six model pairs, we evaluate 576
+FineWeb-Edu prompts~\citep{penedo2024fineweb}. We use greedy decoding. The draft proposes up to four
+tokens per round and generates 16 tokens total. Every prompt is tested with BF16,
+K8V4, K4V8, and K4V4.
+
+We study the effect of the quantization scheme with a 1.5B and 3B pair from Qwen2.5. We keep the models, prompts, value quantizer, and bit budget fixed, and change only the key quantizer. We also run 192 paired passkey examples at 16K context. Finally, we test 256-token continuations and an end-to-end packed prototype with the same pair at 1K and 16K context (Appendix~\ref{app:followup}). Full
+model details and confidence interval procedures are in
+Appendix~\ref{app:protocol}.
+
+\section{Results}
+
+\subsection{RQ1: Are keys intrinsically more precision-sensitive?}
+
+We demonstrate that the apparent need for higher key precision depends strongly on quantizer geometry, and is not necessarily an intrinsic property of attention. When using a naive per-token symmetric quantizer, keys appear highly sensitive: K8V4 outperforms an equal-mean-bit K4V8 by 10.87\% on average. However, switching to grouped per-channel keys eliminates this advantage, shifting the contrast to -0.25\% and dropping all within-pair gaps below 1\% (Figure~\ref{fig:geometry}a).
+
+A controlled Qwen intervention, which strictly isolates the key quantizer, confirms this behavior. Changing the key geometry shifts the K8V4 versus K4V8 gap from +28.70\% to -0.33\%, and reverses the aggressive K4V2 versus K2V4 contrast from +15.05\% to -3.66\%. This interaction extends to 16K retrieval tasks (Figure~\ref{fig:geometry}b), where modifying key geometry shrinks the K4V2 versus K2V4 accuracy gap from +81.25\% to +16.15\%. Ultimately, bit width and quantizer geometry must be co-designed; keys do not universally demand more precision. Appendix~\ref{app:geometry} contains more details.
+
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=\linewidth]{figures/geometry_interaction.pdf}
+  \caption{\textbf{Quantizer geometry changes the K/V conclusion.} (a) Each
+  line follows one model pair while models and bit budgets remain fixed.
+  Positive values favor more key bits. (b) On 192 paired Qwen2.5 passkey
+  examples, grouped per-channel keys recover most of the failure of K2V4 and
+  sharply reduce the apparent key-bit advantage.}
+  \label{fig:geometry}
+\end{figure}
+\FloatBarrier
+
+\subsection{RQ2: How much memory can draft-only quantization save?}
+
+Using K4V4 as our balanced operating point, we find it safely removes approximately two-thirds of draft cache memory. Across all six evaluated model pairs, K4V4 reduces draft cache bytes by 66.13\% and the combined target-plus-draft KV memory by 22.64\% (11.30\% to 30.96\% across pairs).
+
+Importantly, this compression incurs minimal degradation to candidate generation. The cross-family acceptance rate drops relatively by an average of only 1.36\%, from 57.93\% to 57.14\% (Figure~\ref{fig:memory-acceptance}a), while maintaining a draft-logit KL divergence of 0.00730 and a top-1 agreement of 95.99\%. With 256-token continuations on one Qwen2.5 pair, the absolute acceptance change ranges from -0.59\% to +0.33\%, and the outputs match target-only greedy decoding under a sequential verifier (Appendix~\ref{app:followup}).
+
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=\linewidth]{figures/memory_acceptance_landscape.pdf}
+  \caption{\textbf{Memory and acceptance.} (a) K4V4 total KV saving and paired
+  acceptance change across six target/draft pairs. Error bars are paired 95\%
+  CIs; the star is the equal-model macro. (b) Actual bit-packed draft cache
+  storage, including quantizer metadata and the BF16 residual window. The
+  absolute saving grows with retained context.}
+  \label{fig:memory-acceptance}
+\end{figure}
+\FloatBarrier
+
+\subsection{RQ3: Does the result generalize and produce real savings?}
+
+The memory-quality tradeoffs of K4V4 hold across six model pairs and extended context windows. For 16K and 32K context lengths with the Qwen2.5 3B/1.5B pair, K4V4 yields roughly a 31\% reduction in combined total KV memory, with average absolute acceptance drops of only 0.94\% and 0.73\%, respectively. We provide detailed results in Appendix~\ref{app:geometry} and Appendix~\ref{app:retrieval}.
+
+These theoretical byte reductions translate directly into physical packed-storage savings. At 32K context, a standard Qwen2.5-1.5B BF16 cache requires 896.0 MiB per sequence, whereas our packed K4V4 implementation consumes just 260.2 MiB, offering savings of 635.8 MiB (Figure~\ref{fig:memory-acceptance}b). However, these savings do not yet translate into a serving benefit. In an end-to-end prototype with the same pair at 1K and 16K context, packed K4V4 stores 67\% to 71\% fewer draft cache bytes, but it is 18\% to 33\% slower than BF16 speculative decoding, which is slower than target-only decoding. Peak GPU memory is also unchanged, and the prototype still builds the BF16 draft cache during prefill. Its batched verifier reproduces target-only outputs for only 2 to 5 prompts per setting, even with a BF16 draft, so we treat these timings as preliminary (Appendix~\ref{app:followup}). Appendix~\ref{app:objectives} covers policy selection.
+
+
+\section{Discussion}
+
+\textbf{Conclusion.} Our results show that draft-only KV cache quantization can substantially reduce
+the KV cache memory overhead of two-model speculative decoding while preserving draft
+acceptance. K4V4 removes approximately two thirds of draft cache memory, while
+the target verifier and its correction rule remain unchanged. The results also
+show that key and value precision cannot be evaluated independently of
+quantizer geometry,
+providing a predictive principle for the design of future quantization systems.
+
+\textbf{Limitations.} Our longest-context experiments have fewer prompts than the 1K study. The
+retrieval task is partly synthetic. Fake quantization measures quality but not
+production speed. Our packed prototype is still slower than BF16
+speculative decoding and does not yet lower peak GPU memory, so we do not claim an end-to-end speedup. The 256-token and prototype experiments cover one model pair at batch size one, and the batched verifier is not yet exact. We do not measure key outliers directly, and keys and values may differ intrinsically in settings we do not test.
+
+\textbf{Future work.} Future work could replace static bit assignments with serving-time adaptive
+computation, building predictive models for runtime quantization that select key and value precision by layer, context region, or
+request. Realizing this approach
+will also require an exact batched verifier, streaming prefill, fused packed-cache attention kernels, and end-to-end evaluation
+in production inference systems.
+
+\clearpage
+\bibliography{references}
+\bibliographystyle{plainnat}
+
+\clearpage
+\appendix
+
+\section{Experimental Details}
+\label{app:protocol}
+
+\paragraph{Model pairs and data.}
+Table~\ref{tab:app-models} lists the six model pairs. Only the draft cache is
+quantized. The target model verifies tokens with its original BF16 cache. Each
+run prefills a 1,024-token FineWeb-Edu prompt, proposes up to four tokens per
+round, and generates 16 tokens. Across six model pairs, we evaluate 576 prompts.
+Every prompt is tested with BF16, K8V4, K4V8, and K4V4.
+Prompts are consecutive 1,024-token blocks from the streamed
+\texttt{sample-10BT} training split. We tokenize with the target tokenizer
+without special tokens and place an end-of-sequence token between documents.
+Each pair uses three disjoint shards of 32 prompts at fixed stream offsets. The
+Qwen3 checkpoints are instruction-tuned, and all others are base models. All
+models read raw text without chat templates.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \caption{Primary speculative-decoding model pairs (Hugging Face checkpoint
+  identifiers).}
+  \label{tab:app-models}
+  \begin{tabular}{lll}
+    \toprule
+    Family & Target & Draft \\
+    \midrule
+    Qwen2.5 & \texttt{Qwen/Qwen2.5-3B} & \texttt{Qwen/Qwen2.5-1.5B} \\
+    Qwen2.5 & \texttt{Qwen/Qwen2.5-7B} & \texttt{Qwen/Qwen2.5-3B} \\
+    Qwen3 & \texttt{Qwen/Qwen3-8B} & \texttt{Qwen/Qwen3-4B} \\
+    Llama 3 & \texttt{meta-llama/Llama-3.1-8B} & \texttt{meta-llama/Llama-3.2-3B} \\
+    OLMo 2 & \texttt{allenai/OLMo-2-1124-7B} & \texttt{allenai/OLMo-2-0425-1B} \\
+    SmolLM2 & \texttt{HuggingFaceTB/SmolLM2-1.7B} & \texttt{HuggingFaceTB/SmolLM2-360M} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Decoding protocol.}
+All speculative decoding experiments use greedy decoding at batch size one. In
+each round, the draft proposes up to four argmax tokens. The target accepts the
+longest proposal prefix that matches its own argmax tokens. The target
+then emits a correction token at the first disagreement, or a bonus token after
+a fully accepted proposal. We crop the draft cache to the committed prefix, which
+discards rejected entries, and append the emitted token to both caches.
+Generation has a fixed length without early stopping. Acceptance excludes
+correction and bonus tokens. The sequential verifier advances the target one
+accepted token at a time and makes one target call per emitted token, so it
+measures draft quality but not target-call savings. The batched verifier scores
+a proposal in one target call and rolls the target cache back. The
+cross-family K4V4 study and the quality results in Appendix~\ref{app:followup} use
+the sequential verifier. The prototype uses the batched verifier.
+
+\paragraph{Quantizer geometries.}
+The simple quantizer (Equation~\ref{eq:symmetric}) uses one scale for each
+token and KV head, for keys and values. The stronger
+quantizer uses KIVI's per-channel key and per-token value geometry
+\citep{liu2024kivi} with affine groups (Equation~\ref{eq:affine}). In our implementation, keys are grouped over 32 tokens,
+values are grouped within each token and head, and the newest 128 key tokens
+remain in BF16. In the controlled test, we remove this residual window and
+change only the key quantizer (per-token symmetric versus per-channel
+affine). We never update model weights.
+
+\paragraph{Quantizer specification.}
+An affine $b$-bit group $G$ has zero-point $m_G=\min_{x\in G}x$ and scale $s_G$:
+\begin{equation}
+ s_G=\frac{\max_{x\in G}x-m_G}{2^{b}-1},\qquad
+ \widehat x=m_G+s_G\operatorname{clip}\big(\operatorname{round}((x-m_G)/s_G),\,0,\,2^{b}-1\big).
+ \label{eq:affine}
+\end{equation}
+Consider one layer with keys and values of shape $H\times L\times d$, with $H$
+KV heads, $L$ committed tokens, and $d$ channels. We use K$a$V$b$ with group
+size $g=32$ and residual length $R=128$. For keys, we set
+$P=g\lfloor\max(0,L-R)/g\rfloor$. A key group covers one head, one channel, and
+$g$ consecutive tokens. We apply Equation~\ref{eq:affine} with $a$ bits to each
+newly completed group below $P$. Tokens at or beyond $P$ remain in BF16, and we
+never pad or requantize incomplete groups. For values, we apply
+Equation~\ref{eq:affine} with $b$ bits to the $d$ channels of each new token and
+head. Values have no residual window. During a speculative round, $P$ is
+frozen, so we only quantize committed keys. We compute statistics in FP32 and
+floor ranges at $10^{-8}$. We round to nearest with ties to even. The
+symmetric baseline clips to $\pm(2^{b-1}-1)$. Quality experiments use fake
+quantization, which writes dequantized tensors back into the BF16 cache and
+computes bytes analytically. The packed implementation stores two 4-bit payload
+entries per byte in row-major \texttt{uint8} tensors. Metadata and residual
+keys remain in BF16.
+
+\paragraph{Byte accounting.}
+We count packed values, BF16 scales, zero-points, and the BF16 residual window.
+Let $\text{Mem}_T$ be the target cache, $\text{Mem}_D$ be the native draft cache, and
+$\widehat \text{Mem}_D$ be the quantized draft cache. Total memory saving is
+\begin{equation}
+  \operatorname{saved}_{\mathrm{total}}
+  =1-\frac{\text{Mem}_T+\widehat \text{Mem}_D}{\text{Mem}_T+\text{Mem}_D}.
+\end{equation}
+The draft cache shrinks by 66\% to 71\%, depending on experimental factors. The target cache does not shrink, so the combined saving across both caches is smaller.
+For each pair, the total saving equals the draft saving times the draft's share
+of the combined BF16 cache (Table~\ref{tab:app-k4v4-generalization}). All
+savings refer to KV cache bytes, not model weights or activations.
+
+\paragraph{Metrics and uncertainty.}
+Acceptance is the fraction of proposed draft tokens accepted by the target.
+Acceptance differences are absolute unless marked as relative.
+We also measure KL from the BF16 draft, top-1 agreement, and exact retrieval
+accuracy. KL is $\mathrm{KL}(p\,\|\,q)$, where $p$ and $q$ are the draft's
+next-token distributions with a BF16 and a quantized cache on teacher-forced
+continuations. We average it over positions and prompts, and then equally over
+model pairs. Top-1 agreement is the fraction of these positions with the same
+argmax.
+Confidence intervals use 10,000 paired bootstrap samples. For the
+cross-family average, we resample model pairs first and prompts second.
+
+\paragraph{Verifier audit.}
+The target still checks every proposed token, so draft quantization does not
+change the mathematical correction rule. We also compare every run with an
+independent target path. The full matrix passes 38,400 target checks. We flag
+near ties when the target's top-1 margin is at most $10^{-3}$. A non-tie target
+mismatch causes us to reject the run. These counts cover the 16-token
+experiments, and Appendix~\ref{app:followup} reports the checks for the
+256-token experiments. Note that a BF16 target cache preserves the correction
+rule, but it does not guarantee bit-identical outputs from a batched verifier.
+
+\paragraph{Reproducibility details.}
+The paper and appendix specify the quantizers, cached evaluation protocol,
+model and dataset sources, byte accounting, metrics, uncertainty procedure,
+and verifier audit. We release the
+implementation, exact SLURM launchers, pinned environment, tests, aggregation
+code, frozen figure inputs, and output schemas under the MIT License at \href{https://github.com/sgdescent/KV_Reduce}{github.com/sgdescent/KV\_Reduce}. Models
+and datasets will continue to be fetched from their official sources and will
+not be redistributed.
+
+\section{Cross-Family Generalization and Mechanism Ablations}
+\label{app:geometry}
+
+This section separates two experimental roles. The cross-family study tests
+whether the K4V4 operating point and the K/V contrast generalize beyond one
+Qwen pair. The controlled Qwen intervention then isolates mechanism by changing
+only the key quantizer. Group-size and residual-window sweeps are implementation
+ablations rather than additional generalization claims.
+
+\paragraph{Cross-family generalization test.}
+Table~\ref{tab:app-k4v4-generalization} reports the K4V4 operating point for
+all six speculative model pairs. The purpose of this experiment is to expose
+model-family variation. Four pair-level confidence intervals include zero;
+Qwen3 and SmolLM2 show small resolved losses. All six central estimates remain
+within 2\%, while combined savings vary with the relative
+size of the target cache and draft cache, from 30.96\% at a 46.7\%
+draft share to 11.30\% at a 17.2\% draft share.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \caption{Cross-family K4V4 generalization. Acceptance changes are absolute \%
+  differences from the BF16 draft cache. BF16 and K4V4 are acceptance rates in \%.}
+  \label{tab:app-k4v4-generalization}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{lrrrrrr}
+    \toprule
+    Target / draft & BF16 & K4V4 & $\Delta$ acceptance (95\% CI) & Draft saved & Draft share & Total saved \\
+    \midrule
+    Qwen2.5 3B/1.5B & 59.78 & 59.02 & $-0.76\ [-2.23,+0.66]$ & 66.33\% & 43.8\% & 29.02\% \\
+    Qwen2.5 7B/3B & 61.80 & 62.08 & $+0.28\ [-0.98,+1.47]$ & 66.33\% & 39.1\% & 25.96\% \\
+    Qwen3 8B/4B & 54.06 & 52.39 & $-1.67\ [-3.12,-0.30]$ & 65.87\% & 38.5\% & 25.33\% \\
+    Llama 3.1/3.2 & 64.95 & 65.09 & $+0.13\ [-1.27,+1.60]$ & 66.33\% & 46.7\% & 30.96\% \\
+    OLMo 2 7B/1B & 54.03 & 53.17 & $-0.86\ [-1.98,+0.18]$ & 66.33\% & 20.0\% & 13.27\% \\
+    SmolLM2 1.7B/360M & 52.95 & 51.10 & $-1.85\ [-3.21,-0.54]$ & 65.55\% & 17.2\% & 11.30\% \\
+    \midrule
+    Equal-model macro & 57.93 & 57.14 & $-0.79\ [-1.63,+0.04]$ & 66.13\% & 34.2\% & 22.64\% \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+\FloatBarrier
+
+\paragraph{Cross-family quantizer-geometry test.}
+Table~\ref{tab:app-geometry} gives every equal-memory K8V4 versus K4V8 result.
+The per-token quantizer makes extra key bits look valuable for Qwen, Qwen3, and
+SmolLM. With grouped per-channel keys, every difference is below 1\%.
+The models, prompts, and bit budgets are unchanged.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \caption{Absolute acceptance contrasts in \%. ``Shift'' is grouped
+  per-channel minus per-token. Brackets give paired 95\% CIs for each
+  within-pair contrast.}
+  \label{tab:app-geometry}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{lrrr}
+    \toprule
+    Target / draft & Per-token $\Delta$ & Grouped-key $\Delta$ & Shift \\
+    \midrule
+    Qwen2.5 3B/1.5B & $+31.18\ [23.33,39.00]$ & $+0.20\ [-1.28,1.68]$ & $-30.99$ \\
+    Qwen2.5 7B/3B & $+12.51\ [7.54,17.84]$ & $+0.18\ [-1.09,1.50]$ & $-12.33$ \\
+    Qwen3 8B/4B & $+10.91\ [4.61,17.27]$ & $-0.58\ [-1.88,0.64]$ & $-11.49$ \\
+    Llama 3.1/3.2 & $+1.13\ [-1.91,4.28]$ & $-0.44\ [-1.94,1.06]$ & $-1.57$ \\
+    OLMo 2 7B/1B & $-0.19\ [-2.30,2.05]$ & $-0.80\ [-2.22,0.45]$ & $-0.61$ \\
+    SmolLM2 1.7B/360M & $+9.69\ [5.36,14.31]$ & $-0.06\ [-0.98,0.84]$ & $-9.75$ \\
+    \midrule
+    Macro & $+10.87\ [3.75,19.68]$ & $-0.25\ [-0.56,0.04]$ & $-11.12\ [-19.71,-4.25]$ \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+\paragraph{Controlled Qwen test.}
+Table~\ref{tab:app-factorial} keeps the models, prompts, value quantizer, bit
+budget, and decoding loop fixed. Only the key quantizer changes. The K4V2
+versus K2V4 result changes sign, so the preferred bit split also changes.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \caption{Qwen key-axis intervention. Values are absolute \%
+  contrasts with paired 95\% CIs.}
+  \label{tab:app-factorial}
+  \begin{tabular}{lrr}
+    \toprule
+    Contrast & Per-token keys & Grouped per-channel keys \\
+    \midrule
+    K8V4 $-$ K4V8 & $+28.70\ [26.10,31.38]$ & $-0.33\ [-1.26,0.62]$ \\
+    K4V2 $-$ K2V4 & $+15.05\ [13.58,16.65]$ & $-3.66\ [-5.80,-1.56]$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Granularity and residual-window controls.}
+We also test key groups of 16, 32, 64, and 128 tokens. The K4V2 versus K2V4
+differences are $-5.83$\%, $-2.94$\%, $-1.57$\%, and $-1.87$\%.
+Smaller groups work better at low precision. We test BF16 residual windows of 0, 32, 128, and
+256 tokens as well. A longer window gives no clear K4V4 acceptance gain.
+Removing it increases draft cache saving from 66.33\% to 70.56\%.
+Our 256-token experiments also show no clear acceptance gain from the window
+(Appendix~\ref{app:followup}), so we treat 128 tokens as a configuration
+choice rather than an optimum.
+
+\section{Long-Context Generalization and Retrieval Stress Tests}
+\label{app:retrieval}
+
+\paragraph{Powered 16K retrieval.}
+Table~\ref{tab:app-passkey} reports 192 examples per model. Each example is a
+16,384-token prompt. The prompt hides 16 records of the form ``Archive record
+[tag]: the access code is [six digits]'' at even spacing in filler text and
+then asks for the code of one tagged record. The 15 distractor codes differ
+from the correct code in one digit. We query the 3rd, 9th, or 15th record.
+We count an example as retrieved when the correct code has the highest
+length-normalized log-likelihood among the 16 candidates. We run each draft
+model alone on three seeds of 64 examples. Qwen2.5 benefits
+from giving keys more bits. Llama and Qwen3 do not show the same effect. On
+Qwen2.5, per-token K4V2 and K2V4 retrieve 166 and 10 examples. Grouped-key K4V2
+and K2V4 retrieve 189 and 158. The key quantizer changes the gap by an absolute 65.10\%
+(95\% CI $[56.77,73.44]$).
+
+\begin{table}[ht]
+  \centering
+  \small
+  \caption{Associative-passkey accuracy at 16K with grouped per-channel keys.}
+  \label{tab:app-passkey}
+  \begin{tabular}{lrrrr}
+    \toprule
+    Draft model & BF16 & K4V2 & K2V4 & $\Delta$ (\%) \\
+    \midrule
+    Qwen2.5-1.5B & 186/192 & 189/192 & 158/192 & $+16.15$ \\
+    Llama-3.2-3B & n/a & 185/192 & 183/192 & $+1.04$ \\
+    Qwen3-4B & 191/192 & 192/192 & 192/192 & $0.00$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+We also run a natural LongBench passage-retrieval task~\citep{bai2024longbench}
+on three 7B to 8B instruction models (Qwen2.5-7B-Instruct,
+Llama-3.1-8B-Instruct, and Qwen3-8B). The task is
+\texttt{passage\_retrieval\_en}, which asks for the source paragraph of an
+abstract among 30 Wikipedia paragraphs. We use the LongBench prompt template
+without a chat template and truncate prompts in the middle to at most 32,752
+tokens. We score the 30 answers by length-normalized log-likelihood on 72
+examples per model. K4V2 matches the BF16 average. K2V4 is
+3.24\% lower, but its confidence interval includes zero. Qwen2.5 drives
+most of this gap.
+
+\paragraph{Long-context speculative decoding.}
+Table~\ref{tab:app-long} uses PG-19 prefixes~\citep{rae2020compressive} with the Qwen2.5 3B/1.5B pair.
+Prompts are consecutive token blocks from the streamed PG-19 training split. We
+use three disjoint shards of 12 prompts at 16K and 8 prompts at 32K. At 16K
+and 32K, K4V4 saves about 71\% of the draft cache and 31\% of total KV memory.
+Acceptance drops by less than 1\% on average. The 16K confidence interval
+is slightly below zero. The 32K interval includes zero.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \caption{K4V4 at long context. Acceptance changes are absolute \%
+  differences from BF16 draft KV.}
+  \label{tab:app-long}
+  \begin{tabular}{rrrrr}
+    \toprule
+    Context & Prompts & Draft saved & Combined saved & $\Delta$ acceptance \\
+    \midrule
+    16K & 36 & 70.83\% & 30.99\% & $-0.94\ [-2.06,-0.13]$ \\
+    32K & 24 & 70.96\% & 31.04\% & $-0.73\ [-2.99,1.28]$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Memory Implementation}
+\label{app:systems}
+
+\paragraph{Packed storage.}
+Figure~\ref{fig:memory-acceptance}b uses a real packed cache with
+\texttt{uint8} payloads, BF16 metadata, and a BF16 residual window. The measured
+tensors use 28 layers, two KV heads, and head dimension 128. This confirms that
+the estimated saving we report is present in stored tensors rather than only in
+theoretical bit counts. At 32,768 tokens, the 896.00 MiB BF16 cache becomes
+260.20 MiB. Keys take 111.56 MiB of 4-bit payload, 27.89 MiB of BF16 scales and
+zero-points, and 1.75 MiB for the BF16 residual window. Values take 112.00 MiB
+of 4-bit payload and 7.00 MiB of BF16 scales and zero-points. This metadata costs
+$2\cdot 16/32=1$ bit per quantized key element and $2\cdot 16/128=0.25$ bits
+per value element, so a 4-bit payload does not give a 75\% saving. The packed cache
+needs no padding or alignment bytes. We exclude temporary kernel workspace.
+
+\paragraph{Kernel diagnostic.}
+A Triton prototype reads the packed cache without first rebuilding a full BF16
+cache. At 32K, it takes 0.708 ms per layer. Rebuilding the cache first takes
+1.448 ms. Native BF16 SDPA takes only 0.103 ms. The prototype proves that packed
+attention is possible, but it does not yet provide an end-to-end speedup.
+
+\section{Longer Continuations and End-to-End Packed Prototype}
+\label{app:followup}
+
+\paragraph{Protocol.}
+We also test 256-token continuations with the Qwen2.5 3B/1.5B pair, using
+greedy decoding, a proposal length of four, and batch size one. Prompts come
+from the streamed FineWeb-Edu \texttt{sample-10BT} training split after a
+seeded shuffle and 100 skipped blocks. The quality study covers 1K context with
+prompt seeds 0 and 1, and 16K context with seed 0, each with residual windows
+of 0 and 128 tokens. Every setting tests BF16, K8V4, K4V8, and K4V4 on the same
+24 prompts with fake quantization and the sequential verifier. The two residual
+settings share prompts and BF16 baselines, so the six settings are not
+independent. All use grouped per-channel keys.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \caption{Acceptance in \% for 256-token continuations with 24 prompts per
+  row. Differences are absolute \% with paired 95\% CIs. The last column
+  compares K4V4 at residual windows of 128 and 0.}
+  \label{tab:app-followup-quality}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{rrrrrrrrr}
+    \toprule
+    Context & Residual & Seed & BF16 & K8V4 & K4V8 & K4V4 & K4V4 $-$ BF16 & K4V4: residual 128 $-$ 0 \\
+    \midrule
+    1K & 0 & 0 & 76.69 & 77.25 & 77.01 & 76.61 & $-0.08\ [-1.18,+0.94]$ & \\
+    1K & 0 & 1 & 74.01 & 74.18 & 73.58 & 73.45 & $-0.56\ [-1.30,+0.17]$ & \\
+    1K & 128 & 0 & 76.69 & 77.44 & 76.61 & 77.02 & $+0.33\ [-0.43,+1.06]$ & $+0.408\ [-0.379,+1.290]$ \\
+    1K & 128 & 1 & 74.01 & 73.79 & 73.55 & 73.42 & $-0.59\ [-1.34,+0.20]$ & $-0.033\ [-0.614,+0.629]$ \\
+    16K & 0 & 0 & 79.62 & 79.54 & 79.64 & 79.20 & $-0.42\ [-1.42,+0.52]$ & \\
+    16K & 128 & 0 & 79.62 & 79.92 & 79.42 & 79.55 & $-0.07\ [-1.04,+0.95]$ & $+0.351\ [-0.358,+1.110]$ \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+\paragraph{Acceptance and residual window.}
+Table~\ref{tab:app-followup-quality} reports the mean of per-prompt acceptance.
+This weights prompts equally, so it can differ from the pooled acceptance of
+the cross-family study. Confidence intervals use a paired bootstrap over prompts.
+The K4V4 change ranges from $-0.59$\% to $+0.33$\%, and every interval includes
+zero. These exploratory intervals are not adjusted for multiple comparisons, so
+we do not claim equivalence. The differences between residual windows of 128
+and 0 tokens also include zero, so the window gives no clear acceptance gain.
+
+\paragraph{Accepted prefixes and target calls.}
+The accepted prefix is the number of draft tokens accepted before the first
+rejection in a round, excluding the correction or bonus token. We average it
+within each prompt and then across prompts. Across the six settings, BF16
+accepts 2.95 to 3.17 tokens per round and K4V4 accepts 2.92 to 3.17. The paired
+differences range from $-0.027$ to $+0.018$ tokens, and all six 95\% CIs
+include zero. With K4V4, every proposed token is accepted in 62.8\% to 71.6\%
+of rounds. The first rejection falls on the first, second, third, and fourth
+proposed token in 10.8\% to 13.5\%, 7.6\% to 10.4\%, 5.7\% to 7.6\%, and 3.9\%
+to 5.9\% of rounds. This agrees with the acceptance result, but it does not
+show a speedup. The sequential verifier makes 257 target calls for 256 tokens,
+so these runs measure draft quality and correctness rather than target-call
+savings.
+
+\paragraph{End-to-end packed prototype.}
+We also run an end-to-end prototype with real packed tensors. The prototype
+uses the packed cache and Triton kernel of Appendix~\ref{app:systems} with the
+batched verifier, and packs key groups only after rollback.
+Table~\ref{tab:app-followup-systems} compares target-only decoding, BF16
+speculative decoding (SD), and packed K4V4 on 24 prompts at 1K and 12 prompts
+at 16K. Latency is the mean wall-clock time per continuation, including prefill
+but excluding warmup and the extra sequential audits. Savings compare stored
+draft cache bytes with the BF16 draft cache, not with total GPU memory. Peak
+memory is peak allocated GPU memory. We measure the target-only value before
+loading the draft.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \caption{End-to-end prototype with 256-token continuations at batch size one.
+  $\Delta$ is the paired latency increase over BF16 SD with a 95\% CI. ``Exact''
+  counts outputs that equal target-only greedy decoding.}
+  \label{tab:app-followup-systems}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{llrrrrr}
+    \toprule
+    Context & Configuration & Latency (s) & $\Delta$ vs.\ BF16 SD (s) & Draft bytes saved & Peak allocated (GiB) & Exact \\
+    \midrule
+    1K & Target only & 7.10 & -- & -- & 5.98 & reference \\
+    1K & BF16 SD & 9.68 & -- & 0.00\% & 8.87 & 3/24 \\
+    1K & Packed K4V4, residual 0 & 12.77 & $+3.09\ [2.77,3.42]$ & 70.45\% & 8.87 & 4/24 \\
+    1K & Packed K4V4, residual 128 & 12.87 & $+3.18\ [2.73,3.77]$ & 67.05\% & 8.87 & 5/24 \\
+    \midrule
+    16K & Target only & 8.65 & -- & -- & 7.69 & reference \\
+    16K & BF16 SD & 14.54 & -- & 0.00\% & 10.76 & 2/12 \\
+    16K & Packed K4V4, residual 0 & 17.20 & $+2.66\ [2.30,3.03]$ & 71.05\% & 10.76 & 2/12 \\
+    16K & Packed K4V4, residual 128 & 17.46 & $+2.92\ [2.55,3.22]$ & 70.78\% & 10.76 & 2/12 \\
+    \bottomrule
+  \end{tabular}}
+\end{table}
+
+At 1K, packed K4V4 is 31.9\% and 32.9\% slower than BF16 SD with residual
+windows of 0 and 128 tokens. At 16K, it is 18.3\% and 20.1\% slower. BF16 SD is
+itself slower than target-only decoding, so the prototype
+trades runtime for storage and does not give a speedup. Peak allocated memory
+is the same as for BF16 SD. The prototype first builds the BF16 draft cache
+during prefill and then packs it, so smaller stored tensors need not lower the
+peak. We did not profile other contributors.
+
+\paragraph{Correctness.}
+With the sequential verifier, all 576 evaluations of the quality study (six
+settings, four configurations, and 24 prompts) reproduce target-only greedy
+decoding exactly. All 94 sequential audits recorded in the packed runs also
+pass. The batched verifier behaves differently. At 1K, it matches target-only
+greedy decoding on 3, 4, and 5 of 24 sequences for BF16, residual 0, and
+residual 128. At 16K, it matches on 2 of 12 sequences for each configuration. A
+mismatch means that at least one token differs. The BF16 baseline also
+mismatches, so quantization alone cannot explain the difference. We have not
+yet found the cause, and we do not assume that the mismatches are harmless near
+ties, so we treat the timings as preliminary. The timings also come from a
+shared node and one model pair. We do not measure production throughput,
+maximum batch size, or concurrent serving.
+
+\section{Choosing a Precision Policy}
+\label{app:objectives}
+
+We ask whether precision should be chosen using speculative acceptance or
+ordinary draft quality. The two measures are strongly correlated. Spearman
+correlation is 0.964 at 1K and 0.878 at 4K. At mild budgets, both methods choose
+the same policy. At a three-bit budget, the acceptance-trained choice is an absolute 0.48\% worse
+(95\% CI $[-0.98,-0.05]$) and has higher KL. Direct
+acceptance is still the final serving metric, but we do not find a benefit from
+an acceptance-only allocator.
+
+\section{Compute and Asset Disclosure}
+\label{app:disclosure}
+
+\paragraph{Compute.}
+GPU jobs used one or two NVIDIA RTX A5000 accelerators with 24 GiB of device
+memory, 8 CPU cores, and 64 GiB of host memory. At most four GPUs ran
+concurrently. SLURM accounting gives 229.45 total GPU-hours: 224.77 for
+completed allocations and 4.68 for failed, cancelled, or timed-out
+allocations. Table~\ref{tab:app-compute} separates the major paper-facing
+experiment families. The remaining 85.56 GPU-hours cover robustness,
+verification, proposal-length sweeps, and preliminary experiments. CPU-only
+aggregation is excluded from GPU-hours. The recorded environment used Python
+3.13.7, PyTorch 2.10.0 with CUDA 12.8, Transformers 5.3.0, and Datasets 4.8.2.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \caption{Measured compute for major experiment families. GPU-hours include
+  model loading and equal wall time multiplied by allocated GPUs. The
+  experiments of Appendix~\ref{app:followup} are not included.}
+  \label{tab:app-compute}
+  \begin{tabular}{lrr}
+    \toprule
+    Experiment family & GPU allocations & GPU-hours \\
+    \midrule
+    Cross-family speculative and quality & 107 & 33.24 \\
+    Key geometry and residual controls & 47 & 4.60 \\
+    Passkey retrieval, layers, and policy & 95 & 13.14 \\
+    LongBench retrieval & 18 & 2.51 \\
+    Long-context speculative and quality & 19 & 1.90 \\
+    Objective and precision matrix & 710 & 88.35 \\
+    Packed-cache storage and kernels & 29 & 0.16 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Third-party assets.}
+Table~\ref{tab:app-assets} summarizes the upstream terms for every model family
+and dataset used in reported results; the corresponding upstream sources are
+cited in the paper. No model weights or dataset records are redistributed.
+Llama reproduction requires separate gated access and compliance with Meta's
+version-specific acceptable-use terms.
+
+\begin{table}[ht]
+  \centering
+  \small
+  \caption{Upstream licenses and terms for reported third-party assets.}
+  \label{tab:app-assets}
+  \begin{tabular}{lp{0.57\linewidth}}
+    \toprule
+    Asset & License or access terms \\
+    \midrule
+    Qwen2.5 1.5B, 7B & Apache License 2.0 \\
+    Qwen2.5 7B-Instruct; Qwen3 4B, 8B & Apache License 2.0 \\
+    Qwen2.5 3B & Qwen Research License \\
+    Llama 3.1 8B(-Instruct); Llama 3.2 3B & Llama Community License,
+      acceptable-use terms, and gated access \\
+    OLMo 2 7B, 1B; SmolLM2 1.7B, 360M & Apache License 2.0 \\
+    FineWeb-Edu & Open Data Commons Attribution License (ODC-By) v1.0 \\
+    PG-19 & Apache License 2.0 for the upstream benchmark compilation \\
+    LongBench & MIT License \\
+    Synthetic passkey & Generated by our released evaluator; no external records \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{What We Do Not Claim}
+\label{app:scope}
+
+We do not make the following claims.
+
+\begin{itemize}
+  \item We do not claim that one key and value bit split works for every model.
+  \item We do not claim that our current packed kernel is faster than BF16 SDPA.
+  \item We do not claim lower peak GPU memory or faster decoding.
+  \item We do not claim that the 128-token residual window improves acceptance.
+  \item We do not claim that our results hold under stochastic sampling.
+  \item We do not quantize the target cache in the main method.
+  \item We treat BF16 near ties separately from true target mismatches.
+  \item We reject incomplete runs before computing aggregate results.
+\end{itemize}
+
+% Remove checklist for camera ready
+% \clearpage
+% \input{checklist}
+
+\end{document}
