@@ -26,6 +26,6 @@ Camera-ready rules from the AXIOM call for papers:
 - Keep `\workshoptitle{AXIOM Foundations of Efficient Deep Learning}` as the
   call for papers writes it, without a colon.
 
-The current build is twelve pages: four content pages, two reference pages,
-and six appendix pages. Page 4 has about one line free, so any addition to the
-main text needs an offsetting cut.
+The current build is thirteen pages: four content pages, two reference pages,
+and seven appendix pages. Page 4 is full, so any addition to the main text
+needs an offsetting cut.
